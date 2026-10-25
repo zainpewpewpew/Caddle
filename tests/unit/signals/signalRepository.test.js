@@ -1,0 +1,294 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { openDatabase } from '../../../backend/database/connection.js';
+import { migrate } from '../../../backend/database/migrate.js';
+import { SignalRepositoryError, createSignalRepository, transition } from '../../../backend/signals/index.js';
+
+// Data uji deterministik — sintetis, bukan data pasar nyata.
+const T0 = Date.UTC(2026, 0, 5, 10, 0);
+const TF_MS = { '5m': 5 * 60_000, '15m': 15 * 60_000, '1h': 60 * 60_000 };
+
+const SA_V1 = { key: 'SA', version: 1, name: 'Silent Accumulation', definition: { window: 48, conditions: ['flat_range', 'volume_rise'] } };
+const PVA_V1 = { key: 'PVA', version: 1, name: 'Progressive Volume Accumulation', definition: { window: 24 } };
+
+function candle(i, close, timeframe = '5m') {
+  const ms = TF_MS[timeframe];
+  return {
+    symbol: 'BTCUSDT', timeframe, openTime: T0 + i * ms, closeTime: T0 + (i + 1) * ms - 1,
+    open: close, high: close + 0.2, low: close - 0.2, close, volume: 100, quoteVolume: 100 * close,
+    trades: 10, takerBuyVolume: 50, takerBuyQuoteVolume: 50 * close, isClosed: true, source: 'ws',
+  };
+}
+// PatternResult palsu sesuai kontrak docs/07 §6.
+const result = (pattern, o = {}) => ({
+  pattern, version: 1, detected: true, patternScore: 70, earlyScore: 40, conditions: [],
+  invalidationPrice: 95, evaluatedAt: 0, riskFlags: [], insufficientData: false, ...o,
+});
+const off = (pattern) => result(pattern, { detected: false, patternScore: 20, earlyScore: 10, invalidationPrice: null });
+
+function input(i, close, { cls = 'SA', sa = {}, pva = {}, timeframe = '5m', market = {}, alignment = 'PARTIALLY_CONFIRMED' } = {}) {
+  const hasSa = cls === 'SA' || cls === 'BOTH';
+  const hasPva = cls === 'PVA' || cls === 'BOTH';
+  return {
+    candle: candle(i, close, timeframe),
+    patterns: { classification: cls, sa: hasSa ? result('SA', sa) : off('SA'), pva: hasPva ? result('PVA', pva) : off('PVA') },
+    context: { alignment },
+    market: { atr: 1, rvol: 1, resistance: 104, ...market },
+  };
+}
+
+/** Skenario lengkap: QUIET → EARLY → (tetap) → MOMENTUM → BREAKOUT → (tetap) → EXPIRED. */
+const LIFECYCLE = [
+  input(0, 100),
+  input(1, 100.2, { sa: { earlyScore: 75 } }),
+  input(2, 100.5),
+  input(3, 101.3),
+  input(4, 104.8, { market: { rvol: 2.5 } }),
+  input(5, 105.1),
+  input(6, 105),
+];
+const PARAMS = { expiryBars: { BREAKOUT: 2 } };
+
+function setup(path = ':memory:') {
+  const db = openDatabase(path);
+  migrate(db, { now: () => new Date(0) });
+  const insert = db.prepare(`INSERT OR IGNORE INTO symbols (symbol, base_asset, quote_asset, contract_type, status, first_seen_at, last_seen_at)
+    VALUES (?, ?, 'USDT', 'PERPETUAL', 'TRADING', 0, 0)`);
+  insert.run('BTCUSDT', 'BTC');
+  insert.run('ETHUSDT', 'ETH');
+  return { db, repo: createSignalRepository(db, { clock: () => T0 }) };
+}
+
+/** Menjalankan transisi dan menyimpan hasilnya — seperti yang dilakukan worker. */
+async function drive(repo, steps, { symbol = 'BTCUSDT', timeframe = '5m', prev = null, params = PARAMS } = {}) {
+  let snap = prev;
+  const results = [];
+  for (const step of steps) {
+    const r = transition(snap, step, params);
+    const saved = await repo.save({ symbol, timeframe, snapshot: r.next, event: r.event });
+    results.push({ ...r, saved });
+    snap = r.next;
+  }
+  return { snap, results };
+}
+
+const tempDirs = [];
+afterEach(() => {
+  while (tempDirs.length) rmSync(tempDirs.pop(), { recursive: true, force: true });
+});
+
+describe('repositori sinyal', () => {
+  it('UNIT-SREP-001 ensurePatternDefinition idempoten per (pattern_key, version)', async () => {
+    const { db, repo } = setup();
+    const id = await repo.ensurePatternDefinition(SA_V1);
+    // Urutan kunci berbeda = definisi yang sama.
+    expect(await repo.ensurePatternDefinition({ ...SA_V1, definition: { conditions: ['flat_range', 'volume_rise'], window: 48 } })).toBe(id);
+    expect(db.prepare("SELECT COUNT(*) n FROM pattern_definitions WHERE pattern_key = 'SA'").get().n).toBe(1);
+    expect(db.prepare('SELECT status, created_at, activated_at FROM pattern_definitions WHERE id = ?').get(id))
+      .toEqual({ status: 'active', created_at: T0, activated_at: T0 });
+    const v2 = await repo.ensurePatternDefinition({ ...SA_V1, version: 2, definition: { window: 36 } });
+    expect(v2).not.toBe(id);
+    await expect(repo.ensurePatternDefinition({ ...SA_V1, definition: { window: 12 } })).rejects.toMatchObject({ code: 'DEFINITION_CONFLICT' });
+  });
+
+  it('NEG-SREP-001 definisi pola tidak valid ditolak sebelum menyentuh database', async () => {
+    const { repo } = setup();
+    await expect(repo.ensurePatternDefinition({ ...SA_V1, key: 'sa' })).rejects.toThrow(RangeError);
+    await expect(repo.ensurePatternDefinition({ ...SA_V1, key: "SA'; DROP TABLE signals; --" })).rejects.toThrow(RangeError);
+    await expect(repo.ensurePatternDefinition({ ...SA_V1, version: 0 })).rejects.toThrow(RangeError);
+    await expect(repo.ensurePatternDefinition({ ...SA_V1, definition: [] })).rejects.toThrow(TypeError);
+    await expect(repo.ensurePatternDefinition({ ...SA_V1, name: ' ' })).rejects.toThrow(RangeError);
+    await expect(repo.ensurePatternDefinition({ ...SA_V1, status: 'live' })).rejects.toThrow(RangeError);
+  });
+
+  it('POS-SREP-001 siklus hidup lengkap tersimpan: sinyal, snapshot, event, closed_at', async () => {
+    const { db, repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    const { results } = await drive(repo, LIFECYCLE);
+    expect(results.map((r) => r.next.state)).toEqual(['QUIET', 'EARLY_BULLISH', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'BREAKOUT', 'EXPIRED']);
+    expect(results[0].saved).toMatchObject({ opened: true, saved: true });
+    const ids = new Set(results.map((r) => r.saved.id));
+    expect(ids.size).toBe(1);
+
+    const row = db.prepare('SELECT * FROM signals').get();
+    expect(row).toMatchObject({
+      classification: 'SA', state: 'EXPIRED', first_detected_at: T0 + TF_MS['5m'] - 1, first_detected_price: 100,
+      invalidation_price: 95, closed_at: T0 + 7 * TF_MS['5m'] - 1, final_outcome: 'EXPIRED:BREAKOUT', timeframe: '5m',
+    });
+    const events = db.prepare('SELECT from_state, to_state, candle_time, occurred_at, detail_json FROM signal_events ORDER BY id').all();
+    expect(events.map((e) => `${e.from_state}>${e.to_state}`)).toEqual([
+      'NO_PATTERN>QUIET', 'QUIET>EARLY_BULLISH', 'EARLY_BULLISH>MOMENTUM_BUILDING', 'MOMENTUM_BUILDING>BREAKOUT', 'BREAKOUT>EXPIRED',
+    ]);
+    expect(events[3]).toMatchObject({ candle_time: T0 + 4 * TF_MS['5m'], occurred_at: T0 + 5 * TF_MS['5m'] - 1 });
+    expect(JSON.parse(events[3].detail_json)).toMatchObject({ reason: 'BREAKOUT_CONFIRMED', rvol: 2.5, resistance: 104 });
+    expect(await repo.getOpen({ symbol: 'BTCUSDT', timeframe: '5m' })).toBeNull();
+
+    const [h] = await repo.history({ symbol: 'BTCUSDT', limit: 10 });
+    expect(h).toMatchObject({ state: 'EXPIRED', patternKey: 'SA', patternVersion: 1, peakState: 'BREAKOUT', finalOutcome: 'EXPIRED:BREAKOUT' });
+    expect(h.events.map((e) => e.toState)).toEqual(['QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'EXPIRED']);
+    expect(h.events[0].detail.reason).toBe('PATTERN_DETECTED');
+  });
+
+  it('UNIT-SREP-002 NO_PATTERN/NONE tidak pernah disimpan; terminal tanpa event = no-op', async () => {
+    const { db, repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    const idle = transition(null, input(0, 100, { cls: 'NONE' }));
+    expect(await repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: idle.next, event: idle.event })).toMatchObject({ saved: false, id: null });
+    expect(db.prepare('SELECT COUNT(*) n FROM signals').get().n).toBe(0);
+    // CHECK skema juga menolak klasifikasi NONE secara langsung.
+    expect(() => db.prepare(`INSERT INTO signals (symbol_id, timeframe, pattern_definition_id, classification, state, first_detected_at,
+      first_detected_price, updated_at) VALUES (1, '5m', 1, 'NONE', 'QUIET', 0, 1, 0)`).run()).toThrow(/CHECK/);
+
+    const { snap } = await drive(repo, [input(0, 100), input(1, 90)]);
+    expect(snap.state).toBe('INVALIDATED');
+    expect(await repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: snap, event: null })).toMatchObject({ saved: false });
+    expect(db.prepare('SELECT COUNT(*) n FROM signal_events').get().n).toBe(2);
+  });
+
+  it('UNIT-SREP-003 getOpen mengembalikan snapshot yang identik dengan hasil transition', async () => {
+    const { repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    const { snap } = await drive(repo, LIFECYCLE.slice(0, 5));
+    const restored = await repo.getOpen({ symbol: 'BTCUSDT', timeframe: '5m' });
+    expect(restored).toEqual({ id: expect.any(Number), ...snap });
+    expect(await repo.getOpen({ symbol: 'BTCUSDT', timeframe: '15m' })).toBeNull();
+    expect(await repo.getOpen({ symbol: 'XRPUSDT', timeframe: '5m' })).toBeNull();
+  });
+
+  it('POS-SREP-002 persistensi & restart (file DB sementara): hasil sama dengan proses tanpa restart', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lr-signals-'));
+    tempDirs.push(dir);
+    const file = join(dir, 'signals.db');
+
+    // Proses 1: jalankan separuh skenario lalu "crash" (tutup koneksi).
+    const first = setup(file);
+    await first.repo.ensurePatternDefinition(SA_V1);
+    await drive(first.repo, LIFECYCLE.slice(0, 4));
+    first.db.close();
+
+    // Proses 2: buka ulang, migrasi idempoten, lanjutkan dari getOpen. Candle terakhir dikirim ulang (duplikat) → diabaikan.
+    const second = setup(file);
+    expect(migrate(second.db).applied).toEqual([]);
+    await second.repo.ensurePatternDefinition(SA_V1);
+    const prev = await second.repo.getOpen({ symbol: 'BTCUSDT', timeframe: '5m' });
+    expect(prev).toMatchObject({ state: 'MOMENTUM_BUILDING', lastCandleTime: T0 + 3 * TF_MS['5m'], firstDetectedPrice: 100 });
+    const resumed = await drive(second.repo, [LIFECYCLE[3], ...LIFECYCLE.slice(4)], { prev });
+    expect(resumed.results[0].event).toBeNull();
+    const historyAfterRestart = await second.repo.history({ limit: 5 });
+    second.db.close();
+
+    // Referensi: proses tanpa restart.
+    const ref = setup();
+    await ref.repo.ensurePatternDefinition(SA_V1);
+    const uninterrupted = await drive(ref.repo, LIFECYCLE);
+    expect(resumed.snap).toEqual({ id: expect.any(Number), ...uninterrupted.snap });
+    const strip = (h) => h.map(({ id: _id, events, ...rest }) => ({ ...rest, events: events.map(({ id: _e, ...e }) => e) }));
+    expect(strip(historyAfterRestart)).toEqual(strip(await ref.repo.history({ limit: 5 })));
+  });
+
+  it('UNIT-SREP-004 perubahan versi pola: sinyal lama tetap mereferensikan versi lamanya', async () => {
+    const { db, repo } = setup();
+    const v1 = await repo.ensurePatternDefinition(SA_V1);
+    const first = await drive(repo, [input(0, 100), input(1, 100.3, { sa: { version: 2 } }), input(2, 94, { sa: { version: 2 } })]);
+    expect(first.snap).toMatchObject({ state: 'INVALIDATED', patternVersion: 1 });
+    const v2 = await repo.ensurePatternDefinition({ ...SA_V1, version: 2, definition: { window: 36 } });
+    await drive(repo, [input(3, 96, { sa: { version: 2, invalidationPrice: 93 } })], { prev: first.snap });
+    const rows = db.prepare('SELECT state, pattern_definition_id FROM signals ORDER BY id').all();
+    expect(rows).toEqual([{ state: 'INVALIDATED', pattern_definition_id: v1 }, { state: 'QUIET', pattern_definition_id: v2 }]);
+    const hist = await repo.history({ symbol: 'BTCUSDT', limit: 10 });
+    expect(hist.map((h) => [h.state, h.patternVersion])).toEqual([['QUIET', 2], ['INVALIDATED', 1]]);
+  });
+
+  it('UNIT-SREP-005 listActive memfilter timeframe, klasifikasi, state, dan skor minimum', async () => {
+    const { repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    await repo.ensurePatternDefinition(PVA_V1);
+    await drive(repo, [input(0, 100, { sa: { patternScore: 82, earlyScore: 80 } })]); // BTC 5m SA EARLY 82
+    await drive(repo, [input(0, 50, { cls: 'PVA', timeframe: '15m', pva: { patternScore: 55, invalidationPrice: 45 } })], { symbol: 'ETHUSDT', timeframe: '15m' }); // ETH 15m PVA QUIET 55
+    await drive(repo, [input(0, 100, { cls: 'BOTH', timeframe: '1h', sa: { patternScore: 60 }, pva: { patternScore: 71 } }),
+      input(1, 101.5, { cls: 'BOTH', timeframe: '1h' })], { timeframe: '1h' }); // BTC 1h BOTH MOMENTUM 70
+    await drive(repo, [input(0, 50, { cls: 'SA', sa: { invalidationPrice: 45 } }), input(1, 40)], { symbol: 'ETHUSDT' }); // ETH 5m tertutup
+
+    const all = await repo.listActive();
+    expect(all.map((s) => [s.symbol, s.timeframe, s.classification, s.state, s.patternScore])).toEqual([
+      ['BTCUSDT', '5m', 'SA', 'EARLY_BULLISH', 82],
+      ['BTCUSDT', '1h', 'BOTH', 'MOMENTUM_BUILDING', 70],
+      ['ETHUSDT', '15m', 'PVA', 'QUIET', 55],
+    ]);
+    expect(all[1].patternKey).toBe('PVA');
+    expect((await repo.listActive({ timeframe: '15m' })).map((s) => s.symbol)).toEqual(['ETHUSDT']);
+    expect((await repo.listActive({ classification: 'BOTH' })).map((s) => s.timeframe)).toEqual(['1h']);
+    expect((await repo.listActive({ state: 'EARLY_BULLISH' })).map((s) => s.timeframe)).toEqual(['5m']);
+    expect((await repo.listActive({ minScore: 70 })).map((s) => s.patternScore)).toEqual([82, 70]);
+    expect(await repo.listActive({ minScore: 70, timeframe: '15m' })).toEqual([]);
+    expect((await repo.listActive({ limit: 1 })).length).toBe(1);
+  });
+
+  it('NEG-SREP-002 filter tidak valid ditolak (termasuk upaya injeksi SQL)', async () => {
+    const { repo } = setup();
+    await expect(repo.listActive({ timeframe: "5m' OR 1=1 --" })).rejects.toThrow(RangeError);
+    await expect(repo.listActive({ classification: 'NONE' })).rejects.toThrow(RangeError);
+    await expect(repo.listActive({ state: 'INVALIDATED' })).rejects.toThrow(RangeError);
+    await expect(repo.listActive({ minScore: 101 })).rejects.toThrow(RangeError);
+    await expect(repo.listActive({ minScore: '50' })).rejects.toThrow(RangeError);
+    await expect(repo.listActive({ symbol: 'BTCUSDT' })).rejects.toThrow(TypeError);
+    await expect(repo.history({ limit: 0 })).rejects.toThrow(RangeError);
+    await expect(repo.history({ limit: 501 })).rejects.toThrow(RangeError);
+    await expect(repo.history({ symbol: 'btc' })).rejects.toThrow(RangeError);
+    await expect(repo.getOpen({ symbol: 'BTCUSDT', timeframe: '4h' })).rejects.toThrow(RangeError);
+  });
+
+  it('NEG-SREP-003 save menolak keadaan yang tidak konsisten', async () => {
+    const { repo } = setup();
+    const opening = transition(null, input(0, 100));
+    const save = (o) => repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: opening.next, event: opening.event, ...o });
+
+    await expect(save()).rejects.toMatchObject({ code: 'UNKNOWN_PATTERN_DEFINITION' });
+    await repo.ensurePatternDefinition(SA_V1);
+    await expect(save({ symbol: 'XRPUSDT' })).rejects.toMatchObject({ code: 'UNKNOWN_SYMBOL' });
+    await expect(save({ timeframe: '4h' })).rejects.toThrow(RangeError);
+    await expect(save({ event: { ...opening.event, toState: 'BREAKOUT' } })).rejects.toThrow(RangeError);
+    await expect(save({ snapshot: { ...opening.next, patternScore: 150 } })).rejects.toThrow(RangeError);
+    await expect(save({ snapshot: { ...opening.next, riskFlags: ['MOON'] } })).rejects.toThrow(RangeError);
+
+    // Pembaruan tanpa sinyal terbuka.
+    const later = transition(opening.next, input(1, 100.1));
+    await expect(repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: later.next, event: later.event })).rejects.toMatchObject({ code: 'NO_OPEN_SIGNAL' });
+
+    await save();
+    await expect(save()).rejects.toMatchObject({ code: 'OPEN_SIGNAL_EXISTS' });
+    await repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: later.next, event: later.event });
+    // Snapshot lebih lama dari yang tersimpan (penulis lain sudah lebih maju).
+    await expect(repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: opening.next, event: null })).rejects.toMatchObject({ code: 'STALE_SNAPSHOT' });
+    // Snapshot dari sinyal lain (firstDetectedAt berbeda).
+    await expect(repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: { ...later.next, firstDetectedAt: 1 }, event: null }))
+      .rejects.toMatchObject({ code: 'SNAPSHOT_MISMATCH' });
+    expect(new SignalRepositoryError('x', 'Y')).toBeInstanceOf(Error);
+  });
+
+  it('EDGE-SREP-001 kegagalan di tengah save di-rollback seluruhnya', async () => {
+    const { db, repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    const r = transition(null, input(0, 100));
+    const badEvent = { ...r.event, detail: { bad: 10n } }; // BigInt tidak dapat diserialisasi → gagal setelah INSERT sinyal
+    await expect(repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: r.next, event: badEvent })).rejects.toThrow(TypeError);
+    expect(db.prepare('SELECT COUNT(*) n FROM signals').get().n).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) n FROM signal_events').get().n).toBe(0);
+  });
+
+  it('EDGE-SREP-002 simpan ulang snapshot yang sama idempoten; penjelasan dipertahankan bila tidak dikirim', async () => {
+    const { db, repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    const r = transition(null, input(0, 100));
+    const explanation = [{ factor: 'PATTERN:SA:flat_range', contribution: 70, detail: 'Rentang sempit' }];
+    await repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: r.next, event: r.event, explanation });
+    await repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: r.next, event: null });
+    await repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: r.next, event: null });
+    expect(db.prepare('SELECT COUNT(*) n FROM signal_events').get().n).toBe(1);
+    const [active] = await repo.listActive();
+    expect(active.explanation).toEqual(explanation);
+    expect(active.updatedAt).toBe(r.next.lastEvaluatedAt);
+  });
+});
