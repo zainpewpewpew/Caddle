@@ -95,6 +95,24 @@ describe('klien REST Binance — endpoint & parsing', () => {
     expect(candles[0]).toMatchObject({ open: 94000.1, quoteVolume: 14325678.12345, trades: 2310 });
   });
 
+  it('UNIT-BNR-012 getKlines: isClosed diukur dari jam saat request DIMULAI dikurangi margin 2 d — request 100 ms sebelum close yang dijawab 100 ms sesudahnya → candle itu false; candle yang tutup 1,5 d sebelum request → false (margin 0 → true)', async () => {
+    const start = Date.UTC(2026, 0, 1, 0, 0, 0);
+    // Snapshot Binance diambil saat request tiba (candle ke-3 masih berjalan); jam baru melewati closeTime saat respons kembali.
+    let ctx = null;
+    ctx = makeClient([() => {
+      ctx.time.advance(200);
+      return okKlines();
+    }], { start: start + 3 * FIVE_MIN - 100 });
+    const candles = await ctx.client.getKlines({ symbol: 'BTCUSDT', timeframe: '5m', limit: 3 });
+    expect(candles.map((c) => c.isClosed)).toEqual([true, true, false]);
+
+    // Candle ke-2 tutup 1,5 d sebelum request (< margin default 2 d) → belum dianggap final.
+    const early = makeClient([okKlines()], { start: start + 2 * FIVE_MIN + 1_500 });
+    expect((await early.client.getKlines({ symbol: 'BTCUSDT', timeframe: '5m', limit: 3 })).map((c) => c.isClosed)).toEqual([true, false, false]);
+    const strict = makeClient([okKlines()], { start: start + 2 * FIVE_MIN + 1_500, client: { closeMarginMs: 0 } });
+    expect((await strict.client.getKlines({ symbol: 'BTCUSDT', timeframe: '5m', limit: 3 })).map((c) => c.isClosed)).toEqual([true, true, false]);
+  });
+
   it('UNIT-BNR-003 getKlines default limit 500; startTime/endTime opsional tidak dikirim', async () => {
     const { client, fetch } = makeClient([response(200, [])]);
     expect(await client.getKlines({ symbol: '1000PEPEUSDT', timeframe: '1h' })).toEqual([]);
@@ -379,6 +397,14 @@ describe('klien REST Binance — sampel waktu server (sinkronisasi jam)', () => 
 });
 
 describe('klien REST Binance — allowlist host & opsi', () => {
+  it('NEG-BNR-014 closeMarginMs bukan bilangan bulat 0..60000 ditolak saat pembuatan klien', () => {
+    const base = { fetch: createFakeFetch([]), sleep: async () => {} };
+    for (const closeMarginMs of [-1, 1.5, 60_001, '2000', null]) {
+      expect(() => createBinanceRestClient({ ...base, closeMarginMs })).toThrow(RangeError);
+    }
+    expect(() => createBinanceRestClient({ ...base, closeMarginMs: 0 })).not.toThrow();
+  });
+
   it('NEG-BNR-011 baseUrl di luar allowlist / tidak aman ditolak saat pembuatan klien', () => {
     const fetch = createFakeFetch([]);
     for (const baseUrl of [

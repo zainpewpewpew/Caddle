@@ -756,10 +756,11 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     await scanner.start();
     await driver.runUntil(END);
 
-    // Tepat satu backfill per simbol: 60..63 yang hilang + 64 (candle WS pemicu) dalam satu request.
+    // Tepat satu backfill per simbol: hanya 60..63 yang hilang. Candle WS pemicu (64) baru tutup 0,5 detik
+    // sebelumnya (< margin penutupan) sehingga TIDAK diminta lewat REST — salinan final WS-nya yang dipakai.
     const backfill = binance.klineCalls().slice(6);
     expect(backfill).toHaveLength(2);
-    expect(backfill).toEqual(expect.arrayContaining([klineParams(SA, '5m', at5m(60), 5), klineParams(DOWN, '5m', at5m(60), 5)]));
+    expect(backfill).toEqual(expect.arrayContaining([klineParams(SA, '5m', at5m(60), 4), klineParams(DOWN, '5m', at5m(60), 4)]));
 
     // Analisis menerima candle backfill sekaligus dan berurutan, sebelum candle live berikutnya.
     const series = analysed.filter((a) => a.symbol === SA && a.timeframe === '5m');
@@ -772,7 +773,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
 
     for (const symbol of [SA, DOWN]) {
       expect(await storedSeries(repos, symbol, '5m')).toEqual(expectedSeries(symbol, '5m', [
-        [0, BOOT - 1, 'rest'], [BOOT, 59, 'ws'], [60, 64, 'rest'], [65, LAST, 'ws'],
+        [0, BOOT - 1, 'rest'], [BOOT, 59, 'ws'], [60, 63, 'rest'], [64, LAST, 'ws'],
       ]));
       expect(await repos.candles.findGaps({ symbol, timeframe: '5m', from: T0, to: at5m(LAST) })).toEqual([]);
     }
@@ -1141,7 +1142,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       id: expect.any(Number), at: at5m(62) - 200, source: 'validation',
       message: `${SA} 5m: 1 candle ditolak: candle ditandai tertutup sebelum closeTime terlewati`,
     }]);
-    expect(binance.klineCalls().slice(6)).toEqual([klineParams(SA, '5m', at5m(61), 2)]);
+    expect(binance.klineCalls().slice(6)).toEqual([klineParams(SA, '5m', at5m(61), 1)]);
     const series = analysed.filter((a) => a.symbol === SA && a.timeframe === '5m');
     expect(series.map((a) => [a.reason, a.candles.map((c) => c.openTime)])).toEqual([
       ...range(BOOT, 60).map((i) => ['live', [at5m(i)]]),
@@ -1149,7 +1150,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       ...range(63, LAST).map((i) => ['live', [at5m(i)]]),
     ]);
     expect(await storedSeries(repos, SA, '5m')).toEqual(expectedSeries(SA, '5m', [
-      [0, BOOT - 1, 'rest'], [BOOT, 60, 'ws'], [61, 62, 'rest'], [63, LAST, 'ws'],
+      [0, BOOT - 1, 'rest'], [BOOT, 60, 'ws'], [61, 61, 'rest'], [62, LAST, 'ws'],
     ]));
 
     const reference = referenceReplay(SA, LIQ_SA);
@@ -1293,13 +1294,14 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(summarizeWorker(status, timers.clock() + 240_000).scanner).toMatchObject({ status: 'stale', heartbeatAgeMs: 240_000, candleLagMs: null });
   });
 
-  it('INT-WRK-017 perakitan produksi (worker/assemble.js), jam server 4 m 54 d di DEPAN jam lokal → candle 5m #48 yang sudah tertutup menurut server (belum menurut jam lokal) ikut di-bootstrap: isClosed REST & validasi repositori memakai serverClock.now; candle #49 yang masih berjalan ditolak repositori', async () => {
-    const SKEW = M5 - 6_000;
+  it('INT-WRK-017 perakitan produksi (worker/assemble.js), jam server 4 m 56 d di DEPAN jam lokal → candle 5m #48 yang sudah tertutup menurut server (belum menurut jam lokal) ikut di-bootstrap: isClosed REST & validasi repositori memakai serverClock.now; candle #49 yang masih berjalan ditolak repositori', async () => {
+    // Jam server 3 d setelah candle #48 tutup (> margin penutupan 2 d, sehingga REST boleh mengambilnya).
+    const SKEW = M5 - 4_000;
     const { scanner, repos, binance, serverClock, logs } = await setup({ serverSkewMs: SKEW });
     await scanner.start();
     expect(serverClock.offsetMs()).toBe(SKEW);
-    // Jam lokal START = T0 + 48×5m + 7 d (candle #48 belum tertutup); jam server = T0 + 49×5m + 1 d (sudah).
-    expect(serverClock.now()).toBe(at5m(BOOT + 1) + 1_000);
+    // Jam lokal START = T0 + 48×5m + 7 d (candle #48 belum tertutup); jam server = T0 + 49×5m + 3 d (sudah).
+    expect(serverClock.now()).toBe(at5m(BOOT + 1) + 3_000);
     for (const symbol of [SA, DOWN]) {
       expect(await storedSeries(repos, symbol, '5m')).toEqual(expectedSeries(symbol, '5m', [[0, BOOT, 'rest']]));
     }
@@ -1423,7 +1425,8 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     await driver.runUntil(at5m(62) + 10_000);
 
     const fails = binance.calls.filter((c) => c.path === '/fapi/v1/klines').slice(6);
-    expect(fails.map((c) => c.params)).toEqual(Array.from({ length: 4 }, () => klineParams(SA, '5m', at5m(60), 2)));
+    // Candle WS pemicu (61) baru tutup 0,5 detik sebelumnya (< margin penutupan) → REST hanya meminta 60.
+    expect(fails.map((c) => c.params)).toEqual(Array.from({ length: 4 }, () => klineParams(SA, '5m', at5m(60), 1)));
     // Jeda antar percobaan = backoff eksponensial dengan jitter tetap (random 0,5): 375, 750, 1500 ms.
     expect(fails.slice(1).map((c, i) => c.at - fails[i].at)).toEqual([375, 750, 1_500]);
     expect((await repos.ingestion.getStatus()).recentErrors).toEqual([expect.objectContaining({
@@ -1442,9 +1445,10 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       ...range(63, LAST).map((i) => ['live', [at5m(i)]]),
     ]);
     // Candle 61 sudah tersimpan dari WS saat backfill pertama gagal; salinan REST-nya identik sehingga
-    // repositori tidak menulis ulang (source tetap 'ws'). 60 dan 62 baru masuk lewat REST.
+    // repositori tidak menulis ulang (source tetap 'ws'). 60 baru masuk lewat REST; 62 = candle WS pemicu
+    // yang baru tutup (< margin penutupan, tidak diminta lewat REST).
     expect(await storedSeries(repos, SA, '5m')).toEqual(expectedSeries(SA, '5m', [
-      [0, BOOT - 1, 'rest'], [BOOT, 59, 'ws'], [60, 60, 'rest'], [61, 61, 'ws'], [62, 62, 'rest'], [63, LAST, 'ws'],
+      [0, BOOT - 1, 'rest'], [BOOT, 59, 'ws'], [60, 60, 'rest'], [61, LAST, 'ws'],
     ]));
     const reference = referenceReplay(SA, LIQ_SA);
     expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));

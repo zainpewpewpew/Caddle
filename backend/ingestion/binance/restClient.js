@@ -4,6 +4,7 @@
 // di modul ini dan parameter query divalidasi ketat. Semua dependensi I/O diinjeksi.
 
 import { TIMEFRAMES } from '../../market/contracts.js';
+import { CLOSE_MARGIN_MS } from '../backfill.js';
 import { BinanceApiError, ERROR_CODES, sanitizeText } from './errors.js';
 import { parseBookTickers, parseExchangeInfo, parseKlines, parseServerTime, parseTickers24h } from './parse.js';
 import { ENDPOINT_WEIGHTS, USED_WEIGHT_HEADER, createWeightLimiter, klinesWeight, parseUsedWeightHeader } from './rateLimiter.js';
@@ -91,9 +92,10 @@ function validateKlinesQuery({ symbol, timeframe, startTime, endTime, limit = DE
  *   fetch?: typeof globalThis.fetch, baseUrl?: string, clock?: () => number,
  *   sleep?: (ms: number) => Promise<void>, logger?: { warn?: Function },
  *   maxWeightPerMinute?: number, timeoutMs?: number, maxRetries?: number,
- *   allowedHosts?: readonly string[], random?: () => number,
+ *   allowedHosts?: readonly string[], random?: () => number, closeMarginMs?: number,
  * }} [options]
  *   - `clock`: jam (sebaiknya tersinkron dengan waktu server) untuk isClosed & jendela bobot.
+ *   - `closeMarginMs`: margin keamanan penutupan kline (default CLOSE_MARGIN_MS, 0..60000) — lihat getKlines.
  *   - `allowedHosts`: hanya untuk tes; produksi memakai default ['fapi.binance.com'].
  *   - `random`: sumber jitter backoff (default Math.random); injeksi agar tes deterministik.
  */
@@ -109,6 +111,7 @@ export function createBinanceRestClient({
   allowedHosts = DEFAULT_ALLOWED_HOSTS,
   // Math.random HANYA untuk jitter backoff (menyebar waktu retry), bukan untuk keamanan.
   random = Math.random,
+  closeMarginMs = CLOSE_MARGIN_MS,
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('fetch wajib fungsi');
   if (typeof clock !== 'function' || typeof sleep !== 'function' || typeof random !== 'function') {
@@ -116,6 +119,9 @@ export function createBinanceRestClient({
   }
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1) throw new RangeError('timeoutMs harus bilangan bulat ≥ 1');
   if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 10) throw new RangeError('maxRetries harus bilangan bulat 0..10');
+  if (!Number.isInteger(closeMarginMs) || closeMarginMs < 0 || closeMarginMs > 60_000) {
+    throw new RangeError('closeMarginMs harus bilangan bulat 0..60000');
+  }
   const origin = resolveBaseUrl(baseUrl, allowedHosts);
   const limiter = createWeightLimiter({ maxWeightPerMinute, clock, sleep });
   const log = (fields, message) => { if (typeof logger?.warn === 'function') logger.warn(fields, message); };
@@ -273,16 +279,20 @@ export function createBinanceRestClient({
     },
 
     /**
-     * Ambil kline; isClosed = closeTime < clock(), source 'rest'.
+     * Ambil kline; source 'rest'. isClosed = closeTime < (clock() saat request DIMULAI − closeMarginMs):
+     * snapshot Binance diambil setelah request dikirim, jadi hanya candle yang sudah tertutup sebelum itu
+     * (dengan margin untuk galat jam & finalisasi bursa) yang pasti final. Jam dibaca SEBELUM antrean
+     * limiter/retry — membaca jam setelah respons akan menandai snapshot candle berjalan sebagai tertutup.
      * @param {{ symbol: string, timeframe: '5m'|'15m'|'1h', startTime?: number, endTime?: number, limit?: number }} query
      * @returns {Promise<import('../../market/contracts.js').Candle[]>}
      */
     async getKlines(query) {
       const q = validateKlinesQuery(query);
+      const closedBefore = clock() - closeMarginMs;
       const body = await request(PATHS.klines, {
         symbol: q.symbol, interval: q.timeframe, startTime: q.startTime, endTime: q.endTime, limit: q.limit,
       }, klinesWeight(q.limit));
-      return parseKlines(body, { symbol: q.symbol, timeframe: q.timeframe, now: clock() });
+      return parseKlines(body, { symbol: q.symbol, timeframe: q.timeframe, now: closedBefore });
     },
 
     /** @returns {Promise<import('./parse.js').Ticker24h[]>} semua simbol */

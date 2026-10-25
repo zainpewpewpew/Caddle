@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createBinanceRestClient } from '../../../backend/ingestion/binance/restClient.js';
 import { createKlineStream } from '../../../backend/ingestion/binance/wsClient.js';
 import { TIMEFRAME_MS } from '../../../backend/market/contracts.js';
 import { DEFAULT_SCANNER_SETTINGS } from '../../../backend/settings/scannerSettings.js';
@@ -484,7 +485,8 @@ describe('event WebSocket', () => {
     timers.setNow(LAST_CLOSED + 4 * M5 + 900);
     streams.current().push(candle('BTCUSDT', '5m', LAST_CLOSED + 3 * M5, { source: 'ws' }));
     await flush();
-    expect(rest.klineCalls().at(-1)).toEqual({ symbol: 'BTCUSDT', timeframe: '5m', startTime: LAST_CLOSED + M5, endTime: LAST_CLOSED + 4 * M5 - 1, limit: 3 });
+    // Candle WS pemicu (+3) baru tutup 0,9 detik lalu (< margin penutupan) → REST hanya +1..+2; +3 dari salinan WS.
+    expect(rest.klineCalls().at(-1)).toEqual({ symbol: 'BTCUSDT', timeframe: '5m', startTime: LAST_CLOSED + M5, endTime: LAST_CLOSED + 3 * M5 - 1, limit: 2 });
     const kinds = log.map((e) => e[0]);
     expect(kinds.indexOf('klines')).toBeLessThan(kinds.indexOf('analysis'));
     expect(analysed).toHaveLength(1);
@@ -575,6 +577,79 @@ describe('event WebSocket', () => {
     await flush();
     expect(analysed).toHaveLength(1);
     await scanner.stop();
+  });
+});
+
+describe('margin penutupan candle REST (jam worker sedikit di depan Binance)', () => {
+  /**
+   * Klien REST ASLI di atas fetch palsu yang memodelkan Binance (SINTETIS, tanpa jaringan): jam server =
+   * jam worker − aheadMs; candle yang masih berjalan menurut server dikirim parsial (volume 3, bukan 10).
+   */
+  function binanceKlines(clock, aheadMs) {
+    const calls = [];
+    const fetch = async (href) => {
+      const url = new URL(href);
+      const q = Object.fromEntries(url.searchParams);
+      calls.push(q);
+      const ms = TIMEFRAME_MS[q.interval];
+      const serverNow = clock() - aheadMs;
+      const rows = [];
+      for (let t = Number(q.startTime); t <= Number(q.endTime) && t <= serverNow; t += ms) {
+        const closed = t + ms - 1 < serverNow;
+        rows.push([t, '100', '101', '99', '100.5', closed ? '10' : '3', t + ms - 1, '1000', 5, '1', '100', '0']);
+      }
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => rows };
+    };
+    return { calls, client: createBinanceRestClient({ fetch, clock, sleep: async () => {}, random: () => 0.5 }) };
+  }
+
+  it('UNIT-SCN-020 jam worker 300 ms di depan Binance, reconnect 100 ms setelah batas 5m dengan stream tertinggal → REST tidak meminta candle yang baru tutup, snapshot parsialnya tidak pernah tersimpan/dianalisis sebagai tertutup; candle itu masuk lewat kline final WS', async () => {
+    const ctx = setup({ symbols: ['BTCUSDT'] });
+    const { scanner, streams, repos, analysed, timers, rest } = ctx;
+    await scanner.start();
+    const binance = binanceKlines(timers.clock, 300);
+    rest.getKlines = (q) => binance.client.getKlines(q);
+    const s = streams.current();
+    s.opts.onState({ event: 'state', state: 'reconnecting' });
+    const boundary = LAST_CLOSED + 3 * M5; // candle +2 tutup di sini (menurut jam worker)
+    timers.setNow(boundary + 100); // menurut Binance: boundary − 200 ms → candle +2 masih berjalan
+    s.opts.onState({ event: 'state', state: 'open' });
+    await flush();
+
+    expect(binance.calls).toEqual([{
+      symbol: 'BTCUSDT', interval: '5m', startTime: String(LAST_CLOSED + M5), endTime: String(LAST_CLOSED + 2 * M5 - 1), limit: '1',
+    }]);
+    const stored = repos.store.get('BTCUSDT:5m');
+    expect(stored.has(LAST_CLOSED + 2 * M5)).toBe(false);
+    expect(analysed).toEqual([expect.objectContaining({ reason: 'reconnect' })]);
+    expect(analysed.flatMap((a) => a.candles).map((c) => [c.openTime, c.volume])).toEqual([[LAST_CLOSED + M5, 10]]);
+
+    // Kline final WS candle +2 (bendera x bursa) → disimpan & dianalisis sebagai 'live', lengkap.
+    timers.setNow(boundary + 400);
+    s.push({ ...candle('BTCUSDT', '5m', LAST_CLOSED + 2 * M5, { source: 'ws' }), volume: 10 });
+    await flush();
+    expect(analysed.map((a) => [a.reason, ot(a.candles)])).toEqual([['reconnect', [LAST_CLOSED + M5]], ['live', [LAST_CLOSED + 2 * M5]]]);
+    expect(stored.get(LAST_CLOSED + 2 * M5)).toMatchObject({ volume: 10, source: 'ws' });
+    await scanner.stop();
+  });
+
+  it('UNIT-SCN-021 rencana REST (bootstrap, gap, sweep) berakhir di candle tertutup terakhir pada (clock − closeMarginMs); options.closeMarginMs 0 → tanpa margin; nilai tidak valid ditolak', async () => {
+    const ctx = setup({ symbols: ['BTCUSDT'], options: { closeMarginMs: 0 } });
+    ctx.timers.setNow(LAST_CLOSED + M5 + 500); // candle LAST_CLOSED tutup 0,5 d lalu
+    await ctx.scanner.start();
+    expect(ctx.rest.klineCalls().map((r) => r.endTime)).toEqual([LAST_CLOSED + M5 - 1]);
+    await ctx.scanner.stop();
+
+    const def = setup({ symbols: ['BTCUSDT'] });
+    def.timers.setNow(LAST_CLOSED + M5 + 500);
+    await def.scanner.start();
+    expect(def.rest.klineCalls().map((r) => r.endTime)).toEqual([LAST_CLOSED - 1]);
+    await def.scanner.stop();
+
+    const base = { rest: def.rest, repos: def.repos, streamFactory: def.streams.factory, getSettings: async () => ({}), discoverSymbols: fakeDiscover };
+    for (const closeMarginMs of [-1, 0.5, 60_001, '2000']) {
+      expect(() => createScanner({ ...base, options: { closeMarginMs } })).toThrow(RangeError);
+    }
   });
 });
 

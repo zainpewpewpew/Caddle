@@ -7,6 +7,16 @@ import { TIMEFRAME_MS } from '../market/contracts.js';
 /** Batas `limit` endpoint /fapi/v1/klines Binance USDT-M Futures. */
 export const MAX_KLINES_PER_REQUEST = 1500;
 
+/**
+ * Margin keamanan penutupan candle (ms). Jam worker = jam lokal + offset terukur (serverClock) dengan
+ * galat ≤ RTT/2 (≤ 500 ms) ditambah drift antarsinkronisasi; Binance juga dapat memfinalkan kline
+ * sedikit setelah closeTime. Karena itu kline REST dianggap tertutup hanya bila
+ * closeTime < (waktu server saat request DIMULAI − margin), dan rencana backfill/gap/sweep berakhir di candle
+ * tertutup terakhir pada (waktu server − margin) — snapshot candle yang masih berjalan tidak pernah tersimpan
+ * sebagai tertutup; candle terbaru diserahkan ke WS (kline final x=true) atau sweep berikutnya.
+ */
+export const CLOSE_MARGIN_MS = 2_000;
+
 function intervalMs(timeframe) {
   const ms = TIMEFRAME_MS[timeframe];
   if (ms === undefined) throw new RangeError(`Timeframe tidak dikenal: ${timeframe}`);

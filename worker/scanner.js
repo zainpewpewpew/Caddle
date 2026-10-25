@@ -19,7 +19,7 @@
 // Semua timer lewat setTimer/clearTimer injeksi.
 
 import { TIMEFRAMES, TIMEFRAME_MS, expectedCloseTime } from '../backend/market/contracts.js';
-import { MAX_KLINES_PER_REQUEST, lastClosedOpenTime, planBackfill, planGapFill } from '../backend/ingestion/backfill.js';
+import { CLOSE_MARGIN_MS, MAX_KLINES_PER_REQUEST, lastClosedOpenTime, planBackfill, planGapFill } from '../backend/ingestion/backfill.js';
 
 export const SCANNER_DEFAULTS = Object.freeze({
   heartbeatMs: 30_000,
@@ -27,6 +27,10 @@ export const SCANNER_DEFAULTS = Object.freeze({
   discoveryRetryMs: 60_000,
   restConcurrency: 3,
   provisionalThrottleMs: 1_000,
+  // Margin keamanan penutupan (CLOSE_MARGIN_MS): rencana REST (backfill, gap, sweep) hanya mencakup candle yang
+  // tertutup sebelum (clock() − margin), sama dengan margin isClosed klien REST — candle yang baru saja tutup
+  // diserahkan ke kline final WS atau sweep berikutnya.
+  closeMarginMs: CLOSE_MARGIN_MS,
   // Candle dianggap "terlewat" bila sudah tertutup lebih lama dari grace ini tanpa diterima.
   sweepGraceMs: 30_000,
   reconnectSweepGraceMs: 5_000,
@@ -190,6 +194,11 @@ export function createScanner({
   if (typeof clock !== 'function' || typeof localClock !== 'function') throw new TypeError('clock dan localClock wajib berupa fungsi');
   if (listOpenSeries !== null && typeof listOpenSeries !== 'function') throw new TypeError('listOpenSeries harus fungsi atau null');
   const cfg = { ...SCANNER_DEFAULTS, ...options };
+  if (!Number.isInteger(cfg.closeMarginMs) || cfg.closeMarginMs < 0 || cfg.closeMarginMs > 60_000) {
+    throw new RangeError('options.closeMarginMs harus bilangan bulat 0..60000');
+  }
+  /** Acuan rencana REST: waktu server dikurangi margin penutupan. */
+  const settledNow = () => clock() - cfg.closeMarginMs;
   const limiter = createLimiter(cfg.restConcurrency);
 
   let phase = 'idle';
@@ -358,7 +367,7 @@ export function createScanner({
     const fresh = st.lastOpenTime === null;
     const plan = planBackfill({
       lastOpenTime: st.lastOpenTime,
-      now: clock(),
+      now: settledNow(),
       timeframe: st.timeframe,
       maxCandles: fresh ? settings.bootstrapCandles : cfg.maxGapCandles,
     });
@@ -380,7 +389,7 @@ export function createScanner({
     if (from > st.lastOpenTime) return 0;
     const gaps = await repos.candles.findGaps({ symbol: st.symbol, timeframe: st.timeframe, from, to: st.lastOpenTime });
     if (!Array.isArray(gaps) || gaps.length === 0) return 0;
-    const plan = planGapFill({ gaps, timeframe: st.timeframe, now: clock(), mergeWithin: cfg.gapMergeWithin });
+    const plan = planGapFill({ gaps, timeframe: st.timeframe, now: settledNow(), mergeWithin: cfg.gapMergeWithin });
     let n = 0;
     for (const req of plan) {
       const candles = mergeClosed(st, await fetchKlines(st, req)).filter((c) => c.openTime <= st.lastOpenTime);
@@ -505,13 +514,16 @@ export function createScanner({
 
   // ---------- sweep kesegaran data ----------
 
-  /** Menjadwalkan sinkronisasi REST untuk stream yang tertinggal dari candle tertutup terakhir. */
+  /**
+   * Menjadwalkan sinkronisasi REST untuk stream yang tertinggal dari candle tertutup terakhir.
+   * Grace minimal = margin penutupan, agar stream tidak disinkronkan untuk candle yang belum boleh diambil REST.
+   */
   function sweep(reason, graceMs) {
-    const now = clock();
+    const now = clock() - Math.max(graceMs, cfg.closeMarginMs);
     const tasks = [];
     for (const st of streams.values()) {
       if (st.syncing) continue;
-      const expected = lastClosedOpenTime(now - graceMs, st.timeframe);
+      const expected = lastClosedOpenTime(now, st.timeframe);
       if (st.lastOpenTime !== null && st.lastOpenTime >= expected) continue;
       st.syncing = true;
       tasks.push(enqueue(st, async () => {

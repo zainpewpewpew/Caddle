@@ -7,6 +7,7 @@ import { createAnalysisPipeline } from '../backend/analysis/pipeline.js';
 import { createRepositories } from '../backend/database/repositories/index.js';
 import { createBinanceRestClient } from '../backend/ingestion/binance/restClient.js';
 import { createKlineStream } from '../backend/ingestion/binance/wsClient.js';
+import { CLOSE_MARGIN_MS } from '../backend/ingestion/backfill.js';
 import { createServerClock } from '../backend/ingestion/serverClock.js';
 import { discoverSymbols } from '../backend/ingestion/symbolDiscovery.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY } from '../backend/settings/scannerSettings.js';
@@ -67,7 +68,9 @@ export function assembleWorker({
   // merujuk lewat fungsi yang baru dipanggil kemudian, jadi tidak ada dependensi melingkar saat konstruksi.
   const serverClock = createServerClock({ getServerTime: (opts) => rest.sampleServerTime(opts), clock, logger });
   const repos = createRepositories(db, { clock: serverClock.now });
-  const rest = createBinanceRestClient({ fetch, clock: serverClock.now, sleep: restSleep, random: restRandom, logger });
+  // Margin penutupan yang sama untuk isClosed kline REST dan rencana backfill/gap/sweep scanner.
+  const closeMarginMs = scannerOptions?.closeMarginMs ?? CLOSE_MARGIN_MS;
+  const rest = createBinanceRestClient({ fetch, clock: serverClock.now, sleep: restSleep, random: restRandom, logger, closeMarginMs });
 
   const getSettings = async () => (await repos.settings.get(SCANNER_SETTINGS_KEY))?.value ?? DEFAULT_SCANNER_SETTINGS;
 
@@ -110,7 +113,7 @@ export function assembleWorker({
     logger,
     setTimer,
     clearTimer,
-    options: scannerOptions,
+    options: { ...scannerOptions, closeMarginMs },
   });
 
   return { serverClock, repos, rest, pipeline, scanner, getSettings };
