@@ -101,3 +101,5 @@ Diambil dari aplikasi yang berjalan (server E2E, database kosong) dengan Playwri
 | System Health | [health.png](tangkapan-layar/health.png) |
 | Design System | [design-system.png](tangkapan-layar/design-system.png) |
 | Overview (mobile 390px) | [mobile-overview.png](tangkapan-layar/mobile-overview.png) |
+
+Tangkapan layar ini diambil sebelum produk berganti nama menjadi **AlphaLens** (2026-10-25), jadi masih menampilkan nama dan logo lama "Long Radar".
