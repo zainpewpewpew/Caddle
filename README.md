@@ -22,13 +22,13 @@ Detail: [docs/03-rencana-implementasi.md](docs/03-rencana-implementasi.md).
 ## Teknologi
 
 - **Frontend:** HTML5, CSS3, Vanilla JavaScript (ES Modules), tanpa framework dan tanpa bundler. TradingView Lightweight Charts direncanakan di Milestone 4.
-- **Backend:** Node.js 22 LTS, Fastify 5, JSON Schema validation, arsitektur modular monolith.
+- **Backend:** Node.js 22 atau 24 (LTS), Fastify 5, JSON Schema validation, arsitektur modular monolith.
 - **Database:** SQLite (better-sqlite3) dengan migrasi berversi dan lapisan repositori — disiapkan untuk migrasi ke PostgreSQL.
 - **Pengujian:** Vitest (unit/integrasi), Playwright (E2E), ESLint, npm audit, Semgrep.
 
 ## Menjalankan secara lokal
 
-Prasyarat: Node.js 22.12+ (LTS).
+Prasyarat: Node.js 22.12+ atau 24 (keduanya LTS; diuji di 22.22.0 dan 24.15.0). Node 25+ belum didukung.
 
 ```bash
 git clone https://github.com/zainpewpewpew/Caddle.git

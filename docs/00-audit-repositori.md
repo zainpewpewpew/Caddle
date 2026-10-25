@@ -18,7 +18,7 @@ Konsekuensinya, Milestone 1 adalah **greenfield**. Agar pull request dapat dibuk
 
 | Komponen | Versi | Catatan |
 |---|---|---|
-| Node.js | 22.22.0 | LTS. `engines` dipin `>=22.12 <23`. |
+| Node.js | 22.22.0 | LTS. `engines` `>=22.12 <25` (Node 22 dan 24 LTS; suite lengkap juga diverifikasi di 24.15.0). |
 | npm | 10.9.4 | |
 | SQLite (via better-sqlite3) | 3.53.4 | Binary prebuilt terpasang tanpa kompilasi. |
 | Chromium (Playwright) | build 1243 | Terpasang di lingkungan; `@playwright/test` dipin 1.63.0 agar cocok. |
