@@ -3,6 +3,8 @@
 // - setiap pasangan simbol×timeframe punya antrean sendiri → urutan candle terjaga;
 // - request REST dibatasi paralelismenya (default 3);
 // - lompatan openTime (gap, mis. setelah reconnect) di-backfill via REST SEBELUM analisis;
+// - timeframe yang dipilih di pengaturan dianalisis; HTF yang dibutuhkan konteksnya (HIGHER_TIMEFRAMES) selalu
+//   ikut diingesti sebagai seri konteks saja (disimpan, tidak pernah memicu analisis) walau tidak dipilih;
 // - duplikat/out-of-order tetap disimpan (idempoten) tetapi tidak memicu analisis ulang;
 // - sweep berkala menambal stream yang tertinggal (fallback bila WS diam);
 // - rediscovery periodik menangani simbol baru & delisting; simbol/timeframe yang berhenti dipantau
@@ -18,7 +20,7 @@
 // jamnya sendiri — heartbeat `at`, recordRun, recordError, lastIngestionAt — dan throttle internal.
 // Semua timer lewat setTimer/clearTimer injeksi.
 
-import { TIMEFRAMES, TIMEFRAME_MS, expectedCloseTime } from '../backend/market/contracts.js';
+import { HIGHER_TIMEFRAMES, TIMEFRAMES, TIMEFRAME_MS, expectedCloseTime } from '../backend/market/contracts.js';
 import { CLOSE_MARGIN_MS, MAX_KLINES_PER_REQUEST, lastClosedOpenTime, planBackfill, planGapFill } from '../backend/ingestion/backfill.js';
 
 export const SCANNER_DEFAULTS = Object.freeze({
@@ -123,9 +125,13 @@ function normalizeSettings(raw) {
   if (raw === null || typeof raw !== 'object') throw new TypeError('pengaturan scanner tidak valid');
   const timeframes = TIMEFRAMES.filter((tf) => Array.isArray(raw.timeframes) && raw.timeframes.includes(tf));
   if (timeframes.length === 0) throw new RangeError('pengaturan scanner tanpa timeframe valid');
+  // Seri yang diingesti = timeframe terpilih ∪ HTF konteksnya; hanya `timeframes` yang dianalisis.
+  const ingestTimeframes = TIMEFRAMES.filter((tf) => timeframes.includes(tf)
+    || timeframes.some((base) => HIGHER_TIMEFRAMES[base].includes(tf)));
   return {
     raw,
     timeframes,
+    ingestTimeframes,
     bootstrapCandles: clampInt(raw.refresh?.bootstrapCandles, 1, MAX_KLINES_PER_REQUEST, 500),
     backfillIntervalMs: clampInt(raw.refresh?.restBackfillIntervalSec, 30, 3600, 300) * 1000,
   };
@@ -296,11 +302,13 @@ export function createScanner({
     return track(run);
   }
 
-  function newStreamState(symbol, timeframe) {
+  function newStreamState(symbol, timeframe, analyze) {
     return {
       key: streamKey(symbol, timeframe),
       symbol,
       timeframe,
+      // false = seri konteks HTF saja (timeframe tidak dipilih): disimpan, tidak pernah memicu analisis.
+      analyze,
       lastOpenTime: null,
       lastCloseTime: null,
       chain: Promise.resolve(),
@@ -343,7 +351,7 @@ export function createScanner({
     st.lastOpenTime = last.openTime;
     st.lastCloseTime = last.closeTime;
     if (latestCloseTime === null || last.closeTime > latestCloseTime) latestCloseTime = last.closeTime;
-    if (!emit || !isActive(st)) return;
+    if (!emit || !isActive(st) || !st.analyze) return;
     try {
       await onClosedCandles({ symbol: st.symbol, timeframe: st.timeframe, candles: fresh, reason });
     } catch (err) {
@@ -678,28 +686,40 @@ export function createScanner({
 
   /**
    * Menyesuaikan set stream dengan target; stream baru di-bootstrap. Mengembalikan jumlah candle.
-   * `stopped` (dari syncSymbols) + stream yang dilepas → onMonitoringStopped setelah stream lama berhenti.
-   * `statusBySymbol` (status exchangeInfo discovery ini; null pada fallback DB) → rekonsiliasi sinyal terbuka.
+   * Per simbol diingesti `settings.ingestTimeframes` (terpilih ∪ HTF konteksnya); hanya timeframe terpilih
+   * yang dianalisis (`st.analyze`). Timeframe yang tidak lagi dianalisis — streamnya dilepas ATAU tetap berjalan
+   * sebagai konteks HTF — dilaporkan bersama `stopped` (dari syncSymbols) → onMonitoringStopped setelah stream
+   * lama berhenti. `statusBySymbol` (status exchangeInfo discovery ini; null pada fallback DB) → rekonsiliasi
+   * sinyal terbuka.
    */
   async function applyTarget(target, stopped = new Map(), at = clock(), statusBySymbol = null) {
+    const analyzed = new Set(settings.timeframes);
     const desired = new Map();
     for (const symbol of target) {
-      for (const timeframe of settings.timeframes) desired.set(streamKey(symbol, timeframe), { symbol, timeframe });
+      for (const timeframe of settings.ingestTimeframes) {
+        desired.set(streamKey(symbol, timeframe), { symbol, timeframe, analyze: analyzed.has(timeframe) });
+      }
     }
     const removed = [...streams.keys()].filter((k) => !desired.has(k));
-    const removedStreams = removed.map((k) => streams.get(k));
+    // Seri yang berhenti dianalisis: stream analisis yang dilepas + stream yang turun menjadi konteks saja.
+    const unanalyzed = removed.map((k) => streams.get(k)).filter((st) => st.analyze);
     for (const k of removed) streams.delete(k);
     const added = [];
     for (const [k, d] of desired) {
-      if (streams.has(k)) continue;
-      const st = newStreamState(d.symbol, d.timeframe);
+      const existing = streams.get(k);
+      if (existing) {
+        if (existing.analyze && !d.analyze) unanalyzed.push(existing);
+        existing.analyze = d.analyze;
+        continue;
+      }
+      const st = newStreamState(d.symbol, d.timeframe, d.analyze);
       streams.set(k, st);
       added.push(st);
     }
     monitored = [...target];
     if (added.length > 0 || removed.length > 0 || (stream === null && streams.size > 0)) replaceStream();
     // Stream lama sudah dilepas (candle baru untuknya diabaikan) → aman menutup sinyal terbukanya.
-    const notified = notifyStopped(stopped, removedStreams, target, at);
+    const notified = notifyStopped(stopped, unanalyzed, target, at);
     const counts = await Promise.all(added.map((st) => {
       let n = 0;
       return enqueue(st, async () => { n = await bootstrapStream(st); }).then(() => n);

@@ -1405,6 +1405,27 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(problems(logs)).toEqual([]);
   });
 
+  it('INT-WRK-025 pengaturan hanya 5m (15m/1h tidak dipilih) → 15m/1h tetap diingesti sebagai konteks HTF: snapshot 5m (alignment, risk flag, penjelasan) = replay murni dengan konteks HTF; 15m/1h tidak pernah dianalisis', async () => {
+    const { scanner, repos, binance, driver, saves, settles, analysed, logs } = await setup({
+      market: LONG_MARKET, settleMs: 3_000, delayOf: htfLate, settings: { ...withSettings(), timeframes: ['5m'] },
+    });
+    await scanner.start();
+    expect(scanner.status()).toMatchObject({ symbols: 2, streams: 6 });
+    expect(binance.klineCalls().map((p) => p.interval).sort()).toEqual(['15m', '15m', '1h', '1h', '5m', '5m']);
+    await driver.runUntil(END);
+
+    expect(await storedSeries(repos, SA, '1h')).toEqual(expectedSeries(SA, '1h', [[0, PRE_BARS / 12 + 3, 'rest'], [PRE_BARS / 12 + 4, PRE_BARS / 12 + 5, 'ws']], LONG_MARKET));
+    const reference = referenceReplay(SA, LIQ_SA, { market: LONG_MARKET });
+    expect(new Set(referenceSaves(reference).map((s) => s.alignment)).size).toBeGreaterThan(1);
+    expect(savesOf(saves, SA)).toEqual(referenceSaves(reference));
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(new Set(analysed.map((a) => a.timeframe))).toEqual(new Set(['5m']));
+    expect(saves.filter((s) => s.timeframe !== '5m')).toEqual([]);
+    // HTF tersimpan tepat waktu → settle hanya sekali per batas 15m per simbol, sama seperti semua timeframe dipilih.
+    expect(settles).toHaveLength(18);
+    expect(problems(logs)).toEqual([]);
+  });
+
   it('INT-WRK-010 kontrol: tanpa settleMs, candle HTF yang tiba belakangan membuat snapshot 5m di batas jam berbeda dari replay (race yang ditutup settleMs)', async () => {
     const { scanner, driver, saves, settles } = await setup({ market: LONG_MARKET, settleMs: 0, delayOf: htfLate });
     await scanner.start();

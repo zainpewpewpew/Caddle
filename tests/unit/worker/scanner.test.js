@@ -276,6 +276,8 @@ function setup({
 }
 
 const ot = (list) => list.map((c) => c.openTime);
+// Request klines untuk satu timeframe (timeframe terpilih 5m juga menarik 15m/1h sebagai konteks HTF).
+const klinesOf = (rest, timeframe = '5m') => rest.klineCalls().filter((r) => r.timeframe === timeframe);
 const recordedErrors = (repos) => repos.ingestion.recordError.mock.calls.map(([e]) => e);
 
 describe('bootstrap', () => {
@@ -288,11 +290,15 @@ describe('bootstrap', () => {
     expect(repos.symbols.upsertFromExchange).toHaveBeenCalledWith(rest.exchange, START);
     expect(repos.symbols.setMonitored).toHaveBeenCalledWith(['BTCUSDT', 'ETHUSDT'], START);
 
+    // 15m tidak dipilih, tetapi HTF konteks 5m → ikut diingesti (seri konteks saja).
     const klines = rest.klineCalls();
-    expect(klines).toHaveLength(4);
+    expect(klines).toHaveLength(6);
     expect(klines).toContainEqual({ symbol: 'BTCUSDT', timeframe: '5m', startTime: LAST_CLOSED - 4 * M5, endTime: LAST_CLOSED + M5 - 1, limit: 5 });
     const lastClosedH1 = Math.floor(START / H1) * H1 - H1;
     expect(klines).toContainEqual({ symbol: 'ETHUSDT', timeframe: '1h', startTime: lastClosedH1 - 4 * H1, endTime: lastClosedH1 + H1 - 1, limit: 5 });
+    const M15 = TIMEFRAME_MS['15m'];
+    const lastClosedM15 = Math.floor(START / M15) * M15 - M15;
+    expect(klines).toContainEqual({ symbol: 'BTCUSDT', timeframe: '15m', startTime: lastClosedM15 - 4 * M15, endTime: lastClosedM15 + M15 - 1, limit: 5 });
 
     // hanya candle tertutup, urut naik, satu batch per stream
     for (const [list] of repos.candles.upsertClosed.mock.calls) {
@@ -303,14 +309,14 @@ describe('bootstrap', () => {
 
     expect(streams.created).toHaveLength(1);
     expect(streams.current().started).toBe(true);
-    expect(streams.current().keys().sort()).toEqual(['BTCUSDT:1h', 'BTCUSDT:5m', 'ETHUSDT:1h', 'ETHUSDT:5m']);
+    expect(streams.current().keys().sort()).toEqual(['BTCUSDT:15m', 'BTCUSDT:1h', 'BTCUSDT:5m', 'ETHUSDT:15m', 'ETHUSDT:1h', 'ETHUSDT:5m']);
     // bootstrap awal = histori murni → tidak memicu analisis
     expect(analysed).toHaveLength(0);
 
     expect(repos.ingestion.recordRun).toHaveBeenCalledTimes(1);
-    expect(repos.ingestion.recordRun.mock.calls[0][0]).toEqual({ startedAt: START, finishedAt: START, symbols: 2, candles: 20, errors: 0 });
+    expect(repos.ingestion.recordRun.mock.calls[0][0]).toEqual({ startedAt: START, finishedAt: START, symbols: 2, candles: 30, errors: 0 });
     expect(scanner.status()).toMatchObject({
-      state: 'running', symbols: 2, streams: 4, errors: 0, queue: 0, scanDurationMs: 0,
+      state: 'running', symbols: 2, streams: 6, errors: 0, queue: 0, scanDurationMs: 0,
       candleLagMs: START - (LAST_CLOSED + M5 - 1), lastIngestionAt: START, reconnects: 0,
     });
     await scanner.stop();
@@ -321,7 +327,7 @@ describe('bootstrap', () => {
     const { scanner, rest, repos } = setup({ symbols: ['BTCUSDT'], bootstrapCandles: 5 });
     repos.seed('BTCUSDT', '5m', [0, 1, 2, 3].map((i) => LAST_CLOSED - (6 - i) * M5));
     await scanner.start();
-    expect(rest.klineCalls()).toEqual([
+    expect(klinesOf(rest)).toEqual([
       { symbol: 'BTCUSDT', timeframe: '5m', startTime: LAST_CLOSED - 2 * M5, endTime: LAST_CLOSED + M5 - 1, limit: 3 },
     ]);
     await scanner.stop();
@@ -333,7 +339,7 @@ describe('bootstrap', () => {
     repos.seed('BTCUSDT', '5m', [5, 4, 1, 0].map((i) => LAST_CLOSED - i * M5));
     await scanner.start();
     expect(repos.candles.findGaps).toHaveBeenCalledWith({ symbol: 'BTCUSDT', timeframe: '5m', from: LAST_CLOSED - 5 * M5, to: LAST_CLOSED });
-    expect(rest.klineCalls()).toEqual([
+    expect(klinesOf(rest)).toEqual([
       { symbol: 'BTCUSDT', timeframe: '5m', startTime: LAST_CLOSED - 3 * M5, endTime: LAST_CLOSED - M5 - 1, limit: 2 },
     ]);
     expect(repos.store.get('BTCUSDT:5m').size).toBe(6);
@@ -354,14 +360,14 @@ describe('bootstrap', () => {
     const started = scanner.start();
     await flush();
     expect(active).toBe(3);
-    expect(scanner.status().queue).toBe(10);
+    expect(scanner.status().queue).toBe(15); // 5 simbol × (5m, 15m, + 1h konteks HTF)
     while (waiters.length) {
       waiters.shift()();
       await flush();
     }
     await started;
     expect(peak).toBe(3);
-    expect(repos.candles.upsertClosed).toHaveBeenCalledTimes(10);
+    expect(repos.candles.upsertClosed).toHaveBeenCalledTimes(15);
     expect(scanner.status().queue).toBe(0);
     await scanner.stop();
   });
@@ -375,9 +381,10 @@ describe('bootstrap', () => {
     expect(errs[0]).toMatchObject({ at: START, source: 'bootstrap' });
     expect(errs[0].message).toMatch(/ETHUSDT 5m: HTTP 500/);
     expect(repos.store.get('BTCUSDT:5m').size).toBe(5);
-    expect(scanner.status()).toMatchObject({ state: 'running', errors: 1, streams: 2 });
+    // ETHUSDT 5m + konteks 15m/1h gagal (3 error; pesan sama di-throttle → 1 baris tercatat).
+    expect(scanner.status()).toMatchObject({ state: 'running', errors: 3, streams: 6 });
     expect(streams.current().keys()).toContain('ETHUSDT:5m');
-    expect(repos.ingestion.recordRun.mock.calls[0][0]).toMatchObject({ errors: 1, candles: 5 });
+    expect(repos.ingestion.recordRun.mock.calls[0][0]).toMatchObject({ errors: 3, candles: 15 });
 
     // heartbeat tetap jalan
     const beats = repos.ingestion.heartbeat.mock.calls.length;
@@ -397,13 +404,13 @@ describe('bootstrap', () => {
     await scanner.start();
     expect(recordedErrors(repos)[0]).toMatchObject({ source: 'discovery' });
     expect(repos.symbols.setMonitored).not.toHaveBeenCalled();
-    expect(streams.current().keys()).toEqual(['BTCUSDT:5m']);
+    expect(streams.current().keys()).toEqual(['BTCUSDT:5m', 'BTCUSDT:15m', 'BTCUSDT:1h']);
     expect(scanner.status()).toMatchObject({ state: 'running', symbols: 1 });
 
     rest.failDiscovery = false;
     await timers.advance(60_000);
     expect(repos.symbols.setMonitored).toHaveBeenLastCalledWith(['BTCUSDT', 'ETHUSDT'], START + 60_000);
-    expect(streams.current().keys().sort()).toEqual(['BTCUSDT:5m', 'ETHUSDT:5m']);
+    expect(streams.current().keys().sort()).toEqual(['BTCUSDT:15m', 'BTCUSDT:1h', 'BTCUSDT:5m', 'ETHUSDT:15m', 'ETHUSDT:1h', 'ETHUSDT:5m']);
     await scanner.stop();
   });
 
@@ -637,13 +644,13 @@ describe('margin penutupan candle REST (jam worker sedikit di depan Binance)', (
     const ctx = setup({ symbols: ['BTCUSDT'], options: { closeMarginMs: 0 } });
     ctx.timers.setNow(LAST_CLOSED + M5 + 500); // candle LAST_CLOSED tutup 0,5 d lalu
     await ctx.scanner.start();
-    expect(ctx.rest.klineCalls().map((r) => r.endTime)).toEqual([LAST_CLOSED + M5 - 1]);
+    expect(klinesOf(ctx.rest).map((r) => r.endTime)).toEqual([LAST_CLOSED + M5 - 1]);
     await ctx.scanner.stop();
 
     const def = setup({ symbols: ['BTCUSDT'] });
     def.timers.setNow(LAST_CLOSED + M5 + 500);
     await def.scanner.start();
-    expect(def.rest.klineCalls().map((r) => r.endTime)).toEqual([LAST_CLOSED - 1]);
+    expect(klinesOf(def.rest).map((r) => r.endTime)).toEqual([LAST_CLOSED - 1]);
     await def.scanner.stop();
 
     const base = { rest: def.rest, repos: def.repos, streamFactory: def.streams.factory, getSettings: async () => ({}), discoverSymbols: fakeDiscover };
@@ -668,12 +675,12 @@ describe('rediscovery & delisting', () => {
     const second = streams.current();
     expect(second).not.toBe(first);
     expect(first.stopped).toBe(true);
-    expect(second.keys().sort()).toEqual(['BTCUSDT:5m', 'SOLUSDT:5m']);
+    expect(second.keys().sort()).toEqual(['BTCUSDT:15m', 'BTCUSDT:1h', 'BTCUSDT:5m', 'SOLUSDT:15m', 'SOLUSDT:1h', 'SOLUSDT:5m']);
     const after = rest.klineCalls().slice(before);
-    expect(after.filter((r) => r.symbol === 'SOLUSDT')).toHaveLength(1);
+    expect(after.filter((r) => r.symbol === 'SOLUSDT').map((r) => r.timeframe)).toEqual(['5m', '15m', '1h']);
     expect(after.some((r) => r.symbol === 'ETHUSDT')).toBe(false);
     expect(repos.ingestion.recordRun).toHaveBeenCalledTimes(2);
-    expect(scanner.status()).toMatchObject({ symbols: 2, streams: 2 });
+    expect(scanner.status()).toMatchObject({ symbols: 2, streams: 6 });
 
     // event terlambat untuk simbol delisted diabaikan
     repos.candles.upsertClosed.mockClear();
@@ -689,7 +696,7 @@ describe('rediscovery & delisting', () => {
     rest.exchange = [symbolInfo('BTCUSDT'), { ...symbolInfo('XRPUSDT'), contractType: 'CURRENT_QUARTER' }];
     await timers.advance(3_600_000);
     expect(repos.symbols.markDelisted).toHaveBeenCalledWith(['ETHUSDT'], START + 3_600_000);
-    expect(streams.current().keys()).toEqual(['BTCUSDT:5m']);
+    expect(streams.current().keys()).toEqual(['BTCUSDT:5m', 'BTCUSDT:15m', 'BTCUSDT:1h']);
     await scanner.stop();
   });
 
@@ -763,7 +770,8 @@ describe('rediscovery & delisting', () => {
     await timers.advance(3_600_000);
     expect(stops.at(-1)).toEqual({ symbol: 'BTCUSDT', timeframes: ['1h'], reason: 'MONITORING_STOPPED', at: START + 3_600_000 });
     expect(recordedErrors(repos)).toEqual([{ at: START + 3_600_000, source: 'monitoring', message: 'DB terkunci' }]);
-    expect(scanner.status()).toMatchObject({ state: 'running', streams: 1 });
+    // 1h tidak lagi dianalisis (sinyalnya ditutup), tetapi tetap diingesti sebagai konteks HTF 5m.
+    expect(scanner.status()).toMatchObject({ state: 'running', streams: 3 });
 
     rest.failDiscovery = true;
     await timers.advance(3_600_000);
@@ -771,6 +779,48 @@ describe('rediscovery & delisting', () => {
     await scanner.stop();
     const base = { rest, repos, streamFactory: ctx.streams.factory, getSettings: async () => ({}), discoverSymbols: fakeDiscover };
     expect(() => createScanner({ ...base, onMonitoringStopped: 'tutup' })).toThrow(TypeError);
+  });
+
+  it('UNIT-SCN-023 HTF konteks selalu diingesti: pengaturan 5m saja → stream & bootstrap 5m+15m+1h, candle 15m/1h tersimpan tetapi hanya 5m yang dianalisis; ganti ke 15m → 5m dilepas (MONITORING_STOPPED [5m]), 15m mulai dianalisis; kembali ke 5m → 15m turun jadi konteks (MONITORING_STOPPED [15m], stream tetap)', async () => {
+    const stops = [];
+    const { scanner, rest, repos, streams, timers, analysed, settings } = setup({
+      symbols: ['BTCUSDT'], timeframes: ['5m'], onMonitoringStopped: async (e) => { stops.push(e); },
+    });
+    await scanner.start();
+    expect(streams.current().keys()).toEqual(['BTCUSDT:5m', 'BTCUSDT:15m', 'BTCUSDT:1h']);
+    expect(rest.klineCalls().map((r) => r.timeframe)).toEqual(['5m', '15m', '1h']);
+
+    const M15 = TIMEFRAME_MS['15m'];
+    const last15 = Math.max(...repos.store.get('BTCUSDT:15m').keys());
+    timers.setNow(last15 + 2 * M15 + 500);
+    streams.current().push(candle('BTCUSDT', '15m', last15 + M15, { source: 'ws' }));
+    streams.current().push(candle('BTCUSDT', '5m', LAST_CLOSED + M5, { source: 'ws' }));
+    await flush();
+    expect(repos.store.get('BTCUSDT:15m').get(last15 + M15)).toMatchObject({ source: 'ws' });
+    expect(analysed.map((a) => [a.timeframe, a.reason])).toEqual([['5m', 'live']]);
+    await timers.advance(30 * 60_000); // sweep REST juga mengisi 15m/1h, tetap tanpa analisis HTF
+    expect(new Set(analysed.map((a) => a.timeframe))).toEqual(new Set(['5m']));
+    expect(stops).toEqual([]);
+
+    settings.timeframes = ['15m'];
+    await timers.advance(START + 3_600_000 - timers.clock()); // rediscovery
+    expect(stops).toEqual([{ symbol: 'BTCUSDT', timeframes: ['5m'], reason: 'MONITORING_STOPPED', at: START + 3_600_000 }]);
+    expect(streams.current().keys()).toEqual(['BTCUSDT:15m', 'BTCUSDT:1h']);
+    analysed.length = 0;
+    await timers.advance(45 * 60_000); // sweep berikutnya
+    expect(analysed.length).toBeGreaterThan(0);
+    expect(new Set(analysed.map((a) => a.timeframe))).toEqual(new Set(['15m']));
+
+    settings.timeframes = ['5m'];
+    await timers.advance(START + 7_200_000 - timers.clock());
+    expect(stops.at(-1)).toEqual({ symbol: 'BTCUSDT', timeframes: ['15m'], reason: 'MONITORING_STOPPED', at: START + 7_200_000 });
+    expect(streams.current().keys()).toEqual(['BTCUSDT:15m', 'BTCUSDT:1h', 'BTCUSDT:5m']);
+    analysed.length = 0;
+    await timers.advance(45 * 60_000);
+    expect(analysed.length).toBeGreaterThan(0);
+    expect(new Set(analysed.map((a) => a.timeframe))).toEqual(new Set(['5m']));
+    expect(stops).toHaveLength(2);
+    await scanner.stop();
   });
 
   it('UNIT-SCN-018 listOpenSeries (level-triggered): seri bersinyal terbuka yang tidak dipantau dilaporkan tiap discovery berhasil — timeframe di luar pengaturan → MONITORING_STOPPED [tf], TRADING tak terpilih → MONITORING_STOPPED, hilang dari exchangeInfo → SYMBOL_DELISTED; callback gagal dicoba lagi siklus berikutnya; discovery gagal → tidak ada pelepasan', async () => {
@@ -904,7 +954,7 @@ describe('heartbeat, status, stop', () => {
     const beats = repos.ingestion.heartbeat.mock.calls.map(([b]) => b);
     expect(beats.map((b) => b.at)).toEqual([START + 30_000, START + 60_000, START + 90_000]);
     expect(beats.every((b) => b.state.state === 'running')).toBe(true);
-    expect(beats[0].state).toMatchObject({ symbols: 2, streams: 2, errors: 0 });
+    expect(beats[0].state).toMatchObject({ symbols: 2, streams: 6, errors: 0 });
     await scanner.stop();
   });
 
@@ -994,7 +1044,7 @@ describe('heartbeat, status, stop', () => {
     const logger = { ...silentLogger, warn: (fields, msg) => warns.push(msg) };
     const { scanner, repos, timers } = setup({ serverClock, logger });
     await scanner.start();
-    expect(scanner.status()).toMatchObject({ state: 'degraded', clockFault: 'OFFSET_OUT_OF_RANGE', ws: 'open', streams: 2 });
+    expect(scanner.status()).toMatchObject({ state: 'degraded', clockFault: 'OFFSET_OUT_OF_RANGE', ws: 'open', streams: 6 });
     expect(repos.ingestion.heartbeat.mock.calls.at(-1)[0].state).toMatchObject({ state: 'degraded', clockFault: 'OFFSET_OUT_OF_RANGE' });
     expect(recordedErrors(repos)).toEqual([{ at: START, source: 'clock', message: 'selisih jam lokal vs server 900000 ms melebihi batas' }]);
     expect(warns).toContain('jam host menyimpang dari waktu server Binance melebihi batas; worker degraded (periksa NTP host)');
@@ -1026,7 +1076,7 @@ describe('heartbeat, status, stop', () => {
     expect(repos.ingestion.recordRun).toHaveBeenCalledWith(expect.objectContaining({ startedAt: START + AHEAD, finishedAt: START + AHEAD }));
     expect(recordedErrors(repos)).toEqual([expect.objectContaining({ at: START + AHEAD, source: 'bootstrap' })]);
     // Waktu pasar tetap jam server: bootstrap berakhir di candle tertutup terakhir menurut clock (bukan +2 menit).
-    expect(rest.klineCalls().map((r) => r.endTime)).toEqual([LAST_CLOSED + M5 - 1]);
+    expect(klinesOf(rest).map((r) => r.endTime)).toEqual([LAST_CLOSED + M5 - 1]);
     expect(repos.symbols.setMonitored).toHaveBeenCalledWith(['BTCUSDT'], START);
 
     rest.failKlines.clear();
@@ -1098,7 +1148,8 @@ describe('integrasi dengan klien WebSocket nyata (WebSocket palsu)', () => {
     const { scanner, analysed, timers, log, rest } = ctx;
     await scanner.start();
     const s1 = ws.instances[0];
-    expect(s1.url).toBe('wss://fstream.binance.com/stream?streams=btcusdt@kline_5m');
+    // 5m terpilih + konteks HTF 15m/1h dalam satu combined stream.
+    expect(s1.url).toBe('wss://fstream.binance.com/stream?streams=btcusdt@kline_5m/btcusdt@kline_15m/btcusdt@kline_1h');
     s1.fire('open');
     await flush();
 
