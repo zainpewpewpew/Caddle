@@ -1,4 +1,4 @@
-// Pattern #001 — Silent Accumulation (SA), versi 1.
+// Pattern #001 — Silent Accumulation (SA), versi 2 (lihat PATTERN_VERSION).
 // Struktur bullish awal (higher low terkonfirmasi, EMA7 naik, kenaikan harga kecil) saat volume
 // relatif masih senyap (RVOL rendah) dan volatilitas terkendali. Fungsi murni; tidak memanggil
 // detektor PVA. Skor bukan probabilitas — lihat conditions.js.

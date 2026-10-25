@@ -46,7 +46,7 @@ describe('Pattern #001 Silent Accumulation', () => {
   it('UNIT-PSA-001 bentuk output persis kontrak PatternResult §6', () => {
     const r = detectSilentAccumulation(silentAccumulationCandles(1));
     expect(Object.keys(r)).toEqual(RESULT_KEYS);
-    expect(r).toMatchObject({ pattern: 'SA', version: 1 });
+    expect(r).toMatchObject({ pattern: 'SA', version: 2 });
     expect(r.conditions.map((c) => c.id)).toEqual([...GATE_CONDITIONS, ...SA_CONDITIONS].map((c) => c.id));
     for (const c of r.conditions) {
       expect(Object.keys(c)).toEqual(['id', 'label', 'passed', 'value', 'threshold', 'weight']);

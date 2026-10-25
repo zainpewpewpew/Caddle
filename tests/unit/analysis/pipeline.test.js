@@ -130,7 +130,7 @@ describe('analyzeAt (murni)', () => {
 
   it('UNIT-PIPE-004 definisi pola berversi memuat parameter efektif & kondisi', () => {
     const defs = patternDefinitions();
-    expect(defs.map((d) => [d.key, d.version])).toEqual([['SA', 1], ['PVA', 1]]);
+    expect(defs.map((d) => [d.key, d.version])).toEqual([['SA', 2], ['PVA', 2]]);
     expect(defs[0].definition.params.minScore).toBe(85);
     expect(defs[0].definition.requiredCandles).toBe(63);
     expect(defs[1].definition.conditions.some((c) => c.id === 'noSpikeDominance')).toBe(true);

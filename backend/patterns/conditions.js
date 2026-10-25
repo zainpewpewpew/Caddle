@@ -12,7 +12,12 @@
 import { RISK_FLAGS, TIMEFRAME_MS } from '../market/contracts.js';
 import { atr, confirmedAt, ema, findSwings, normalizedSlope, trailingHigherLows } from '../indicators/index.js';
 
-export const PATTERN_VERSION = 1;
+/**
+ * Versi metodologi pola (SA & PVA). Sinyal merujuk pattern_definitions lewat key + versi, jadi
+ * setiap perubahan perilaku deteksi/skor WAJIB menaikkan versi. v2: earlyScore diukur dari awal
+ * struktur (maxRunAtr 6); PVA menambah kondisi growthNotSingleSpike; batas warm-up 300 candle.
+ */
+export const PATTERN_VERSION = 2;
 export const EMA_FAST = 7;
 export const EMA_SLOW = 25;
 export const ATR_PERIOD = 14;

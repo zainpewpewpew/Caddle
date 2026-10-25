@@ -44,7 +44,7 @@ describe('Pattern #002 Progressive Volume Accumulation', () => {
   it('UNIT-PPVA-001 bentuk output kontrak §6, bobot total 100 (wajib 75), skor dapat dijelaskan', () => {
     const r = detectProgressiveVolume(progressiveVolumeCandles(1));
     expect(Object.keys(r)).toEqual(['pattern', 'version', 'detected', 'patternScore', 'earlyScore', 'conditions', 'invalidationPrice', 'evaluatedAt', 'riskFlags', 'insufficientData']);
-    expect(r).toMatchObject({ pattern: 'PVA', version: 1, insufficientData: false });
+    expect(r).toMatchObject({ pattern: 'PVA', version: 2, insufficientData: false });
     expect(r.conditions.map((c) => c.id)).toEqual([...GATE_CONDITIONS, ...PVA_CONDITIONS].map((c) => c.id));
     expect(PVA_CONDITIONS.reduce((a, c) => a + c.weight, 0)).toBe(100);
     expect(PVA_CONDITIONS.filter((c) => c.required).reduce((a, c) => a + c.weight, 0)).toBe(75);

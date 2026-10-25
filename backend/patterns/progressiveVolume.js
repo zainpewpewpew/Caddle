@@ -1,4 +1,4 @@
-// Pattern #002 — Progressive Volume Accumulation (PVA), versi 1.
+// Pattern #002 — Progressive Volume Accumulation (PVA), versi 2 (lihat PATTERN_VERSION).
 // Harga naik bertahap disertai volume yang meningkat progresif dari kondisi sepi. Jendela
 // progresif = subWindows × subWindowLength candle terakhir, dibagi menjadi sub-jendela berurutan.
 // Pola ditolak bila kenaikan volume didominasi satu lonjakan anomali. Dua penjaga:
