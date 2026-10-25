@@ -247,6 +247,32 @@ describe('klien REST Binance — retry, rate limit, timeout', () => {
     expect(time.sleeps).toEqual([]);
   });
 
+  it('NEG-BNR-015 418 (Retry-After 7200) / 429 (Retry-After 120) yang body-nya macet sampai timeout → tetap error rate-limit (status, retryAfterMs), tidak diulang, limiter diblokir: request berikutnya RATE_LIMIT_BLOCKED tanpa fetch', async () => {
+    const stalled = (status, retryAfter) => ({
+      ok: false, status, headers: { get: (name) => (String(name).toLowerCase() === 'retry-after' ? retryAfter : null) },
+      json: () => new Promise(() => {}), // body tidak pernah selesai
+    });
+    const banned = makeClient([stalled(418, '7200'), response(200, { serverTime: 4 })], { client: { timeoutMs: 20 } });
+    const err = await banned.client.getServerTime().catch((e) => e);
+    expect(err).toBeInstanceOf(BinanceApiError);
+    expect(err).toMatchObject({ status: 418, code: ERROR_CODES.IP_BANNED, retryable: true, retryAfterMs: 7_200_000 });
+    expect(banned.fetch.calls).toHaveLength(1);
+    await expect(banned.client.getServerTime()).rejects.toMatchObject({ code: ERROR_CODES.RATE_LIMIT_BLOCKED, status: 418 });
+    expect(banned.fetch.calls).toHaveLength(1);
+    expect(banned.time.sleeps).toEqual([]);
+
+    const limited = makeClient([stalled(429, '120'), response(200, { serverTime: 5 })], { client: { timeoutMs: 20 } });
+    const err429 = await limited.client.getExchangeInfo().catch((e) => e);
+    expect(err429).toMatchObject({ status: 429, code: ERROR_CODES.RATE_LIMITED, retryable: true, retryAfterMs: 120_000 });
+    await expect(limited.client.getServerTime()).rejects.toMatchObject({ code: ERROR_CODES.RATE_LIMIT_BLOCKED, status: 429 });
+    expect(limited.fetch.calls).toHaveLength(1);
+
+    // Kontrol: body 5xx yang macet tetap TIMEOUT retryable (diulang dengan backoff).
+    const slow = makeClient([stalled(503, null), response(200, { serverTime: 6 })], { client: { timeoutMs: 20 } });
+    expect(await slow.client.getServerTime()).toBe(6);
+    expect(slow.fetch.calls).toHaveLength(2);
+  });
+
   it('EDGE-BNR-002 418 tanpa Retry-After tetap memblokir (default 2 menit)', async () => {
     const { client, fetch, time } = makeClient([response(418, { code: -1003, msg: 'banned' }), response(200, { serverTime: 4 })]);
     const err = await client.getServerTime().catch((e) => e);

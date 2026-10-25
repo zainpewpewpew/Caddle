@@ -152,15 +152,9 @@ export function createBinanceRestClient({
   }
 
   async function httpError(res, path, guard) {
-    let body = null;
-    try {
-      body = await guard(res.json());
-    } catch (err) {
-      if (err instanceof BinanceApiError) throw err; // timeout saat membaca body
-    }
+    // Status & Retry-After dari header diproses SEBELUM body dibaca: body 418/429 yang macet (timeout) tidak
+    // boleh menghapus status rate-limit — tanpa itu limiter tidak diblokir dan 418 diulang selama ban.
     const status = res.status;
-    const binanceCode = Number.isInteger(body?.code) ? body.code : null;
-    const msg = typeof body?.msg === 'string' ? sanitizeText(body.msg) : null;
     const rateLimited = status === 429 || status === 418;
     const retryAfterMs = rateLimited ? parseRetryAfter(res.headers.get('retry-after'), clock()) : null;
     if (status === 429 && retryAfterMs !== null) limiter.blockUntil(clock() + retryAfterMs, 429);
@@ -169,6 +163,15 @@ export function createBinanceRestClient({
       limiter.blockUntil(clock() + banMs, 418);
       log({ path, status, banMs }, 'IP diblokir Binance (418); semua request ditahan');
     }
+    let body = null;
+    try {
+      body = await guard(res.json());
+    } catch (err) {
+      // Timeout saat membaca body: dilempar apa adanya, kecuali 418/429 (error rate-limit tanpa body).
+      if (err instanceof BinanceApiError && !rateLimited) throw err;
+    }
+    const binanceCode = Number.isInteger(body?.code) ? body.code : null;
+    const msg = typeof body?.msg === 'string' ? sanitizeText(body.msg) : null;
 
     let fallbackCode = ERROR_CODES.HTTP_ERROR;
     if (status === 429) fallbackCode = ERROR_CODES.RATE_LIMITED;
