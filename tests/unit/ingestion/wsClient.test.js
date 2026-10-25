@@ -60,7 +60,8 @@ function createFakeTimers(start = T0) {
   /** Memajukan waktu dan menjalankan timer yang jatuh tempo secara berurutan. */
   const advance = (ms) => {
     const target = now + ms;
-    for (;;) {
+    for (let guard = 0; ; guard += 1) {
+      if (guard > 100_000) throw new Error('loop timer tak berujung');
       let nextId = null;
       for (const [id, t] of pending) {
         if (t.at <= target && (nextId === null || t.at < pending.get(nextId).at)) nextId = id;
@@ -100,7 +101,7 @@ function createFakeWebSocket({ throwOnConstruct = () => false } = {}) {
     serverOpen() { this.fire('open'); }
     serverMessage(payload) { this.fire('message', { data: typeof payload === 'string' ? payload : JSON.stringify(payload) }); }
     serverClose(code = 1006) { this.fire('close', { code, reason: '' }); }
-    serverError() { this.fire('error'); }
+    serverError(props) { this.fire('error', props); }
     close(code, reason) { this.closeCalls.push({ code, reason }); }
   }
   return { FakeWebSocket, instances };
@@ -399,7 +400,8 @@ describe('reconnect & backoff', () => {
     timers.advance(1000);
     expect(ws.instances).toHaveLength(1);
     last().serverOpen();
-    last().serverError();
+    last().serverError({ message: 'Received network error or non-101 status code.' });
+    expect(errorsOf(states).at(-1).error).toEqual({ kind: 'error', message: 'koneksi 0: error (Received network error or non-101 status code.)' });
     expect(stream.state().state).toBe('reconnecting');
     timers.advance(2000);
     expect(ws.instances).toHaveLength(2);

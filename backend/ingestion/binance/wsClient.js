@@ -315,7 +315,7 @@ export function createKlineStream({
   }
 
   /** Meninggalkan socket aktif (event berikutnya darinya diabaikan) lalu menjadwalkan reconnect. */
-  function drop(conn, reason, code) {
+  function drop(conn, reason, code, detail) {
     const socket = conn.socket;
     conn.socket = null;
     clearConnTimers(conn);
@@ -326,7 +326,7 @@ export function createKlineStream({
     if (conn.openedAt !== null && clock() - conn.openedAt >= stableMs) conn.attempt = 0;
     conn.openedAt = null;
     if (reason === 'close') emit({ event: 'disconnect', connection: conn.id, code: code ?? null });
-    else if (reason !== 'rotate') emitError(conn, reason, `koneksi ${conn.id}: ${reason}`);
+    else if (reason !== 'rotate') emitError(conn, reason, `koneksi ${conn.id}: ${reason}${detail ? ` (${detail})` : ''}`);
     scheduleReconnect(conn, { immediate: reason === 'rotate' });
   }
 
@@ -401,8 +401,9 @@ export function createKlineStream({
     socket.addEventListener('close', (ev) => {
       if (current()) drop(conn, 'close', ev?.code);
     });
-    socket.addEventListener('error', () => {
-      if (current()) drop(conn, 'error');
+    socket.addEventListener('error', (ev) => {
+      const detail = ev?.message ?? ev?.error?.message;
+      if (current()) drop(conn, 'error', null, typeof detail === 'string' ? detail.slice(0, 200) : undefined);
     });
     armWatchdog(conn);
     emitStateIfChanged();
