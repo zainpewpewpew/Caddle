@@ -151,7 +151,10 @@ export function floorToInterval(time, timeframe) {
 /**
  * Menilai kesegaran data candle tertutup.
  * `expectedLastOpenTime` = openTime candle tertutup terbaru yang seharusnya sudah ada pada `now`.
- * Data basi bila tertinggal ≥ 1 candle dan candle yang tertinggal sudah tertutup lebih lama dari `graceMs`.
+ * `lagMs` = waktu sejak candle tersimpan terakhir tertutup.
+ * Data basi bila tertinggal ≥ 1 candle dan candle tertinggal yang PALING LAMA (lastOpenTime + interval) sudah
+ * tertutup lebih lama dari `graceMs` — bukan candle terbaru, yang baru saja tutup tepat setelah setiap batas
+ * interval sehingga seri yang mati berjam-jam akan tampak segar selama `graceMs` pertama tiap interval.
  * @param {{ lastOpenTime: number|null, timeframe: '5m'|'15m'|'1h', now: number, graceMs?: number }} input
  * @returns {{ expectedLastOpenTime: number, missingCandles: number|null, lagMs: number|null, stale: boolean }}
  */
@@ -168,6 +171,7 @@ export function assessFreshness({ lastOpenTime, timeframe, now, graceMs = 0 }) {
   assertTime(lastOpenTime, 'lastOpenTime');
   const missingCandles = Math.max(0, Math.floor((expectedLastOpenTime - lastOpenTime) / ms));
   const lagMs = Math.max(0, now - (lastOpenTime + ms));
-  const overdueMs = now - (expectedLastOpenTime + ms);
+  // Candle tertinggal paling lama = lastOpenTime + ms, tertutup sejak lastOpenTime + 2·ms.
+  const overdueMs = now - (lastOpenTime + 2 * ms);
   return { expectedLastOpenTime, missingCandles, lagMs, stale: missingCandles > 0 && overdueMs > graceMs };
 }

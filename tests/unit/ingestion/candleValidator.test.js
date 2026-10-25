@@ -297,6 +297,16 @@ describe('waktu & kesegaran data', () => {
     expect(r).toMatchObject({ missingCandles: 1, stale: false });
   });
 
+  it('EDGE-CVL-011 tertinggal 3 candle, now 1 d setelah batas interval (grace 30 d) → basi: masa tenggang dihitung dari candle tertinggal PALING LAMA, bukan candle yang baru tutup', () => {
+    const boundary = T0 + 10 * step;
+    const r = assessFreshness({ lastOpenTime: boundary - 4 * step, timeframe: '5m', now: boundary + 1_000, graceMs: 30_000 });
+    expect(r).toEqual({ expectedLastOpenTime: boundary - step, missingCandles: 3, lagMs: 901_000, stale: true });
+    // Satu candle tertinggal: basi tepat setelah ia tertutup lebih lama dari grace.
+    const one = (now) => assessFreshness({ lastOpenTime: boundary - 2 * step, timeframe: '5m', now, graceMs: 30_000 }).stale;
+    expect(one(boundary + 30_000)).toBe(false);
+    expect(one(boundary + 30_001)).toBe(true);
+  });
+
   it('EDGE-CVL-008 belum ada data → basi, lag tidak diketahui', () => {
     expect(assessFreshness({ lastOpenTime: null, timeframe: '1h', now: NOW })).toEqual({
       expectedLastOpenTime: NOW - TIMEFRAME_MS['1h'], missingCandles: null, lagMs: null, stale: true,
