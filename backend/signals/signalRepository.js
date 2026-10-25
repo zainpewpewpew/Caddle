@@ -286,6 +286,11 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
         throw new SignalRepositoryError('Snapshot tidak cocok dengan sinyal terbuka', 'SNAPSHOT_MISMATCH');
       }
       if (event && event.fromState !== open.state) throw new SignalRepositoryError('event.fromState tidak sama dengan state tersimpan', 'STATE_MISMATCH');
+      // Setiap perubahan state wajib tercatat di signal_events (transaksi yang sama), agar riwayat tidak
+      // pernah tertinggal dari state tersimpan.
+      if (!event && snapshot.state !== open.state) {
+        throw new SignalRepositoryError(`Perubahan state ${open.state} → ${snapshot.state} tanpa event`, 'STATE_CHANGE_WITHOUT_EVENT');
+      }
       const stored = parseExplanation(open.explanation_json);
       if (stored.tracking && stored.tracking.lastCandleTime > snapshot.lastCandleTime) {
         throw new SignalRepositoryError('Snapshot lebih lama dari yang tersimpan', 'STALE_SNAPSHOT');
@@ -378,6 +383,7 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
      * Menyimpan hasil transition() dalam satu transaksi:
      * - event pembuka (fromState NO_PATTERN) → INSERT sinyal baru;
      * - selain itu → UPDATE snapshot sinyal terbuka (closed_at & final_outcome diisi saat terminal);
+     *   snapshot dengan state berbeda dari yang tersimpan wajib disertai event (STATE_CHANGE_WITHOUT_EVENT);
      * - setiap event → INSERT signal_events.
      * Snapshot NO_PATTERN/NONE, atau snapshot terminal tanpa event, tidak disimpan (no-op).
      * @returns {Promise<{ id: number|null, opened: boolean, closed: boolean, saved: boolean }>}

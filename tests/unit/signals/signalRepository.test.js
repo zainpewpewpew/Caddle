@@ -269,6 +269,24 @@ describe('repositori sinyal', () => {
     expect(new SignalRepositoryError('x', 'Y')).toBeInstanceOf(Error);
   });
 
+  it('NEG-SREP-005 save snapshot BREAKOUT tanpa event di atas sinyal QUIET → ditolak STATE_CHANGE_WITHOUT_EVENT; state & riwayat tidak berubah', async () => {
+    const { db, repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    const opened = transition(null, input(0, 100));
+    await repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: opened.next, event: opened.event });
+    const jumped = { ...opened.next, state: 'BREAKOUT', lastCandleTime: opened.next.lastCandleTime + TF_MS['5m'] };
+    await expect(repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: jumped, event: null }))
+      .rejects.toMatchObject({ code: 'STATE_CHANGE_WITHOUT_EVENT' });
+    const [h] = await repo.history({ symbol: 'BTCUSDT', limit: 1 });
+    expect(h.state).toBe('QUIET');
+    expect(h.events.map((e) => `${e.fromState}>${e.toState}`)).toEqual(['NO_PATTERN>QUIET']);
+    expect(db.prepare('SELECT COUNT(*) n FROM signal_events').get().n).toBe(1);
+    // Snapshot tanpa perubahan state (skor/klasifikasi/tracking) tetap boleh tanpa event.
+    const same = transition(opened.next, input(1, 100.1));
+    expect(same.event).toBeNull();
+    expect(await repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: same.next, event: null })).toMatchObject({ saved: true });
+  });
+
   it('EDGE-SREP-001 kegagalan di tengah save di-rollback seluruhnya', async () => {
     const { db, repo } = setup();
     await repo.ensurePatternDefinition(SA_V1);
