@@ -9,7 +9,7 @@ Laporan ini merangkum metode dan hasil untuk Milestone 2 (data pasar) dan Milest
 | Pemeriksaan | Perintah | Hasil |
 |---|---|---|
 | Lint | `npm run lint` | 0 error, 0 warning |
-| Vitest: unit, integrasi, positif, negatif, edge, keamanan | `npm test` | **955 / 955 lulus** (49 file) |
+| Vitest: unit, integrasi, positif, negatif, edge, keamanan | `npm test` | **956 / 956 lulus** (49 file) |
 | Playwright E2E (desktop 1440×900 + mobile 390×844) | `npm run test:e2e` | **48 / 48 lulus** |
 | Uji live Binance (opt-in) | `npm run test:live` | **Tidak dapat diverifikasi di sini** — 4/4 gagal dengan HTTP 451 (lokasi dibatasi), bukan cacat kode |
 | npm audit (prod + dev) | `npm audit` | 0 kerentanan (218 dependensi) |
@@ -40,7 +40,7 @@ Jumlah per kategori (dari `reports/vitest-results.json` dan `reports/e2e-results
 
 | Prefiks | Kategori | Jumlah |
 |---|---|---|
-| `UNIT` | Unit (fungsi murni, repositori, klien dengan transport palsu) | 256 |
+| `UNIT` | Unit (fungsi murni, repositori, klien dengan transport palsu) | 257 |
 | `POS` | Alur positif | 87 |
 | `NEG` | Alur negatif (input tidak sah, kegagalan dependensi) | 381 |
 | `EDGE` | Kasus tepi (batas waktu, gap, presisi, jam miring) | 154 |
