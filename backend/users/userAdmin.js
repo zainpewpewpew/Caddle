@@ -14,13 +14,18 @@ export class UserAdminError extends Error {
  * Membuat pengguna baru dengan batas jumlah pengguna (default 2 pengguna privat).
  * Pendaftaran publik sengaja tidak tersedia; pengguna hanya dibuat lewat CLI di server
  * (atau sebagai akun default prototipe lokal, `via: 'default'` — lihat defaultUser.js).
+ * `skipPasswordPolicy` hanya dipakai ensureDefaultUser untuk kredensial default yang dipilih pemilik;
+ * CLI tidak pernah menyetelnya, jadi user:create dan user:password tetap wajib lolos kebijakan.
  */
-export async function createUser({ users, audit, hasher, maxUsers, clock }, { username, password, role, via = 'cli' }) {
+export async function createUser(
+  { users, audit, hasher, maxUsers, clock },
+  { username, password, role, via = 'cli', skipPasswordPolicy = false },
+) {
   if (!USERNAME_PATTERN.test(username ?? '')) {
     throw new UserAdminError('Username harus 3–32 karakter: huruf, angka, titik, garis bawah, atau strip');
   }
   if (!ROLES.includes(role)) throw new UserAdminError(`Peran harus salah satu dari: ${ROLES.join(', ')}`);
-  const problems = checkPasswordPolicy(password, { username });
+  const problems = skipPasswordPolicy ? [] : checkPasswordPolicy(password, { username });
   if (problems.length) throw new UserAdminError(`Kata sandi tidak memenuhi kebijakan: ${problems.join('; ')}`);
   if (await users.findByUsernameForAuth(username)) throw new UserAdminError('Username sudah dipakai');
   if ((await users.count()) >= maxUsers) throw new UserAdminError(`Batas ${maxUsers} pengguna sudah tercapai`);

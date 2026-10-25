@@ -408,7 +408,9 @@ changePassword({ users, sessions, audit, hasher, clock }, { username, password, 
   // Kata sandi tidak pernah masuk audit.
 
 // backend/users/defaultUser.js
-DEFAULT_CREDENTIALS = { username: 'admin', password: 'alphalens-demo', role: 'admin' }   // frozen, lolos checkPasswordPolicy
+DEFAULT_CREDENTIALS = { username: 'admin', password: 'admin123@', role: 'admin' }   // frozen; pilihan pemilik, TIDAK lolos checkPasswordPolicy
+LEGACY_DEFAULT_PASSWORDS = ['alphalens-demo']   // default versi sebelumnya, tetap diperiksa penjaga paparan
+// createUser(deps, { ..., skipPasswordPolicy = false }) — hanya ensureDefaultUser yang menyetel true; CLI tidak pernah.
 isLoopbackHost(host) → boolean            // hanya '127.0.0.1', '::1', 'localhost' (trim, tanpa beda huruf)
 exposureOf(config) → null | { reason, detail }   // null = hanya lokal; urutan cek & reason:
   // 'production' (NODE_ENV) → 'non_loopback_host' (HOST) → 'non_loopback_origin' (hostname APP_ORIGIN) → 'behind_proxy' (TRUST_PROXY)
