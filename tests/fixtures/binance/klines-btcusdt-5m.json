@@ -1,0 +1,11 @@
+{
+  "_catatan": "fixture sintetis — bukan data pasar nyata. Mengikuti format dokumentasi resmi Binance USDT-M Futures GET /fapi/v1/klines: [openTime, open, high, low, close, volume, closeTime, quoteVolume, trades, takerBuyBase, takerBuyQuote, ignore].",
+  "endpoint": "GET /fapi/v1/klines?symbol=BTCUSDT&interval=5m&limit=3",
+  "status": 200,
+  "headers": { "Content-Type": "application/json", "X-MBX-USED-WEIGHT-1M": "3" },
+  "body": [
+    [1767225600000, "94000.10", "94120.00", "93950.50", "94080.20", "152.345", 1767225899999, "14325678.12345", 2310, "80.120", "7534567.89000", "0"],
+    [1767225900000, "94080.20", "94200.00", "94010.00", "94150.70", "98.765", 1767226199999, "9293456.78900", 1802, "50.001", "4705555.12000", "0"],
+    [1767226200000, "94150.70", "94180.00", "94090.00", "94100.00", "60.000", 1767226499999, "5647000.00000", 1100, "29.500", "2776500.00000", "0"]
+  ]
+}

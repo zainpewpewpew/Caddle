@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Long Radar</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Lewati ke konten</a>
+  <div class="app" id="app" data-nav="expanded">
+    <aside class="sidebar" id="sidebar" aria-label="Navigasi utama">
+      <a class="brand" href="#/overview">
+        <img class="brand__mark" src="/assets/logo.svg" alt="">
+        <span class="brand__text">
+          <span class="brand__name">LONG RADAR</span>
+          <span class="brand__tag">Intelligence terminal</span>
+        </span>
+      </a>
+      <nav class="nav" id="nav"></nav>
+      <div class="sidebar__footer">
+        <button class="nav__link btn--ghost" type="button" id="nav-collapse" aria-expanded="true" aria-controls="sidebar">
+          <svg class="nav__icon" aria-hidden="true"><use href="/assets/icons.svg#i-collapse"></use></svg>
+          <span class="nav__label">Ciutkan panel</span>
+        </button>
+        <button class="nav__link btn--ghost" type="button" id="logout">
+          <svg class="nav__icon" aria-hidden="true"><use href="/assets/icons.svg#i-logout"></use></svg>
+          <span class="nav__label">Keluar</span>
+        </button>
+      </div>
+    </aside>
+
+    <header class="topbar">
+      <button class="btn btn--ghost btn--icon" type="button" id="nav-open" aria-label="Buka navigasi" aria-controls="sidebar" aria-expanded="false" hidden>
+        <svg aria-hidden="true"><use href="/assets/icons.svg#i-menu"></use></svg>
+      </button>
+      <div class="topbar__title">
+        <span class="topbar__crumb" id="crumb">Long Radar</span>
+        <span class="topbar__heading" id="heading">Memuat…</span>
+      </div>
+      <div class="topbar__meta">
+        <span class="status" data-state="idle" id="conn-status"><span class="status__dot" aria-hidden="true"></span><span>Memeriksa server…</span></span>
+        <time class="topbar__clock" id="clock" aria-label="Waktu UTC"></time>
+        <span class="user-chip" id="user-chip"><span class="avatar" id="user-avatar">·</span><span id="user-name"></span></span>
+      </div>
+    </header>
+
+    <main class="main" id="main" tabindex="-1"></main>
+  </div>
+</body>
+</html>

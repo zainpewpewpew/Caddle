@@ -1,0 +1,101 @@
+# Aturan Semgrep lokal Long Radar. Dipakai karena registry semgrep.dev tidak selalu
+# dapat dijangkau dari lingkungan build. Melengkapi (bukan menggantikan) ruleset registry.
+rules:
+  - id: lr-dom-html-sink
+    languages: [javascript]
+    severity: ERROR
+    message: Sink HTML (innerHTML/outerHTML/insertAdjacentHTML/document.write) berisiko XSS. Gunakan h()/textContent.
+    metadata: { cwe: "CWE-79" }
+    pattern-either:
+      - pattern: $EL.innerHTML = $X
+      - pattern: $EL.outerHTML = $X
+      - pattern: $EL.insertAdjacentHTML(...)
+      - pattern: document.write(...)
+
+  - id: lr-dynamic-code
+    languages: [javascript]
+    severity: ERROR
+    message: Eksekusi kode dinamis dilarang (aturan pola harus deklaratif).
+    metadata: { cwe: "CWE-95" }
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: setTimeout("...", ...)
+      - pattern: setInterval("...", ...)
+      - pattern: require('node:vm').$F(...)
+      - pattern: vm.runInNewContext(...)
+
+  - id: lr-sql-interpolation
+    languages: [javascript]
+    severity: ERROR
+    message: SQL dibangun dengan interpolasi nilai. Gunakan parameter terikat (?, @nama).
+    metadata: { cwe: "CWE-89" }
+    pattern-either:
+      - pattern: $DB.prepare(`...${$X}...`)
+      - pattern: $DB.exec(`...${$X}...`)
+      - pattern: $DB.prepare("..." + $X + "...")
+      - pattern: $DB.prepare("..." + $X)
+      - pattern: $DB.exec("..." + $X)
+
+  - id: lr-insecure-random-token
+    languages: [javascript]
+    severity: WARNING
+    message: Math.random() tidak aman untuk token/ID keamanan. Gunakan node:crypto.
+    metadata: { cwe: "CWE-338" }
+    pattern: Math.random()
+
+  - id: lr-child-process
+    languages: [javascript]
+    severity: WARNING
+    message: Eksekusi perintah shell. Pastikan tidak ada input pengguna yang mencapai perintah.
+    metadata: { cwe: "CWE-78" }
+    pattern-either:
+      - pattern: require('child_process').$F(...)
+      - pattern: execSync($CMD, ...)
+      - pattern: exec($CMD, ...)
+
+  - id: lr-cookie-without-httponly
+    languages: [javascript]
+    severity: ERROR
+    message: Cookie sesi wajib httpOnly.
+    metadata: { cwe: "CWE-1004" }
+    patterns:
+      - pattern: $REPLY.setCookie($NAME, $VALUE, {...})
+      - pattern-not: '$REPLY.setCookie($NAME, $VALUE, {..., httpOnly: true, ...})'
+      - pattern-not: $REPLY.setCookie($NAME, $VALUE, $OPTS($...ARGS))
+
+  - id: lr-local-storage-secret
+    languages: [javascript]
+    severity: ERROR
+    message: Jangan menyimpan token/sesi/kata sandi di Web Storage.
+    metadata: { cwe: "CWE-922" }
+    patterns:
+      - pattern-either:
+          - pattern: localStorage.setItem($K, ...)
+          - pattern: window.localStorage.setItem($K, ...)
+          - pattern: sessionStorage.setItem($K, ...)
+      - metavariable-regex:
+          metavariable: $K
+          regex: (?i).*(token|session|csrf|password|secret).*
+
+  - id: lr-path-from-request
+    languages: [javascript]
+    severity: WARNING
+    message: Path file dari input request berisiko path traversal.
+    metadata: { cwe: "CWE-22" }
+    pattern-either:
+      - pattern: $FS.readFile($REQ.params.$P, ...)
+      - pattern: $FS.readFileSync($REQ.params.$P, ...)
+      - pattern: $REPLY.sendFile($REQ.params.$P)
+      - pattern: $REPLY.sendFile($REQ.query.$P)
+
+  - id: lr-hardcoded-secret
+    languages: [javascript]
+    severity: WARNING
+    message: Kemungkinan rahasia ditulis langsung di kode.
+    metadata: { cwe: "CWE-798" }
+    patterns:
+      - pattern: const $NAME = "$VALUE"
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i).*(secret|api_?key|private_?key|token)$

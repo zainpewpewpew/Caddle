@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Masuk · Long Radar</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/login.css">
+  <script type="module" src="/js/login.js"></script>
+</head>
+<body>
+  <div class="auth">
+    <aside class="auth__aside" aria-hidden="true">
+      <div class="brand">
+        <img class="brand__mark" src="/assets/logo.svg" alt="">
+        <span class="brand__text">
+          <span class="brand__name">LONG RADAR</span>
+          <span class="brand__tag">Crypto intelligence terminal</span>
+        </span>
+      </div>
+      <div class="auth__lead">
+        <p class="auth__eyebrow">Akses privat</p>
+        <h1 class="auth__headline">Deteksi struktur bullish lebih awal, dengan alasan yang dapat dijelaskan.</h1>
+        <p class="auth__copy">Screening multi-timeframe untuk USDT-M perpetual — akumulasi senyap, akumulasi volume progresif, dan konteks tren timeframe lebih tinggi.</p>
+        <ul class="auth__points">
+          <li>Hanya candle tertutup untuk sinyal terkonfirmasi.</li>
+          <li>Setiap skor dapat ditelusuri ke aturan pola yang berversi.</li>
+          <li>Riset & pendukung keputusan — tanpa eksekusi order.</li>
+        </ul>
+      </div>
+      <p class="auth__disclaimer">Skor bukan probabilitas profit yang terkalibrasi. Validasi setiap pola dengan data out-of-sample sebelum diandalkan.</p>
+    </aside>
+
+    <main class="auth__main">
+      <div class="auth-card">
+        <div>
+          <h2 class="auth-card__title">Masuk</h2>
+          <p class="auth-card__subtitle">Gunakan akun yang telah diberikan administrator.</p>
+        </div>
+        <form id="login-form" method="post" action="/api/auth/login" novalidate>
+          <div class="field">
+            <label class="field__label" for="username">Username</label>
+            <input class="input" id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="32">
+          </div>
+          <div class="field">
+            <label class="field__label" for="password">Kata sandi</label>
+            <input class="input" id="password" name="password" type="password" autocomplete="current-password" required maxlength="512">
+          </div>
+          <p class="auth-card__error" id="login-error" role="alert" hidden></p>
+          <button class="btn btn--primary btn--block" type="submit" id="login-submit" disabled>Masuk</button>
+        </form>
+        <p class="auth-card__foot">
+          <svg aria-hidden="true"><use href="/assets/icons.svg#i-lock"></use></svg>
+          Sesi aman server-side · cookie HttpOnly · SameSite Strict
+        </p>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
