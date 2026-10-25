@@ -239,6 +239,7 @@ function setup({
   logger = silentLogger,
   localClock,
   listOpenSeries,
+  wrapGetSettings,
 } = {}) {
   const log = [];
   const timers = createFakeTimers();
@@ -256,7 +257,7 @@ function setup({
     rest,
     streamFactory: streamFactory ?? streams.factory,
     repos,
-    getSettings: async () => settings,
+    getSettings: wrapGetSettings ? wrapGetSettings(async () => settings) : async () => settings,
     onClosedCandles: onClosedCandles ?? (async (e) => {
       analysed.push(e);
       log.push(['analysis', e.candles.map((c) => c.openTime)]);
@@ -412,6 +413,34 @@ describe('bootstrap', () => {
     expect(repos.symbols.setMonitored).toHaveBeenLastCalledWith(['BTCUSDT', 'ETHUSDT'], START + 60_000);
     expect(streams.current().keys().sort()).toEqual(['BTCUSDT:15m', 'BTCUSDT:1h', 'BTCUSDT:5m', 'ETHUSDT:15m', 'ETHUSDT:1h', 'ETHUSDT:5m']);
     await scanner.stop();
+  });
+
+  it('NEG-SCN-007 pemuatan pengaturan pertama gagal (SQLITE_BUSY) → error "settings" dicatat, start tidak crash (heartbeat pasca-start tetap ditulis); siklus berikutnya berhasil → sweep berkala terjadwal dan menambal stream yang diam', async () => {
+    let failures = 1;
+    const { scanner, repos, streams, timers, analysed } = setup({
+      symbols: ['BTCUSDT'],
+      wrapGetSettings: (get) => async () => {
+        if (failures > 0) {
+          failures -= 1;
+          throw new Error('SQLITE_BUSY: database is locked');
+        }
+        return get();
+      },
+    });
+    await scanner.start();
+    expect(recordedErrors(repos)).toEqual([{ at: START, source: 'settings', message: 'SQLITE_BUSY: database is locked' }]);
+    expect(repos.ingestion.heartbeat).toHaveBeenCalledTimes(2); // sebelum & sesudah siklus start
+    expect(scanner.status()).toMatchObject({ state: 'degraded', streams: 0, errors: 1 });
+
+    await timers.advance(60_000); // percobaan ulang siklus → pengaturan termuat, stream dibuka
+    expect(streams.current().keys()).toEqual(['BTCUSDT:5m', 'BTCUSDT:15m', 'BTCUSDT:1h']);
+    expect(analysed).toEqual([]);
+    await timers.advance(25 * 60_000); // tanpa event WS: hanya sweep berkala yang dapat mengisi candle
+    expect(analysed.filter((a) => a.timeframe === '5m').at(-1)).toMatchObject({ reason: 'sweep' });
+    expect(scanner.status()).toMatchObject({ state: 'running', staleStreams: 0, errors: 1 });
+    expect(recordedErrors(repos)).toHaveLength(1);
+    await scanner.stop();
+    expect(timers.pending.size).toBe(0);
   });
 
   it('EDGE-SCN-001 discovery gagal dan DB kosong → degraded tanpa stream, tidak crash', async () => {

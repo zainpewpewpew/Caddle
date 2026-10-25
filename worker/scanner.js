@@ -557,6 +557,15 @@ export function createScanner({
     });
   }
 
+  /**
+   * Memastikan sweep berkala terjadwal begitu scanner berjalan DAN pengaturan sudah pernah termuat. Dipanggil
+   * dari start() dan setiap siklus yang berhasil memuat pengaturan: bila pemuatan pertama gagal, sweep
+   * dijadwalkan pada siklus berikutnya yang berhasil (bukan crash di start lalu tidak pernah terjadwal).
+   */
+  function ensureSweep() {
+    if (phase === 'running' && settings !== null && !timers.has('sweep')) scheduleSweep();
+  }
+
   // ---------- discovery ----------
 
   async function loadSettings() {
@@ -767,6 +776,7 @@ export function createScanner({
     let nextDelay = cfg.rediscoveryMs;
     try {
       await loadSettings();
+      ensureSweep();
       let target = null;
       let stopped = new Map();
       let statusBySymbol = null;
@@ -881,7 +891,7 @@ export function createScanner({
         await runCycle('start');
         if (isStopping()) return;
         phase = 'running';
-        scheduleSweep();
+        ensureSweep();
         await heartbeat();
       })().catch((err) => report('scanner', err)));
       return startPromise;
