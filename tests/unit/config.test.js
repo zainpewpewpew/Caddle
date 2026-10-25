@@ -60,3 +60,29 @@ describe('konfigurasi environment', () => {
     expect(Object.isFrozen(c)).toBe(true);
   });
 });
+
+describe('konfigurasi DEFAULT_USER (akun default prototipe)', () => {
+  const PROD = { NODE_ENV: 'production', APP_ORIGIN: 'https://radar.local', DATABASE_PATH: '/data/lr.db' };
+
+  it('UNIT-CFG-005 tanpa DEFAULT_USER: aktif hanya di development', () => {
+    expect(loadConfig({}).defaultUser).toBe(true);
+    expect(loadConfig({ DEFAULT_USER: '   ' }).defaultUser).toBe(true);
+    expect(loadConfig({ NODE_ENV: 'test' }).defaultUser).toBe(false);
+    expect(loadConfig(PROD).defaultUser).toBe(false);
+  });
+
+  it('UNIT-CFG-006 DEFAULT_USER eksplisit true/false dihormati di luar produksi', () => {
+    expect(loadConfig({ DEFAULT_USER: 'false' }).defaultUser).toBe(false);
+    expect(loadConfig({ NODE_ENV: 'test', DEFAULT_USER: 'true' }).defaultUser).toBe(true);
+    expect(loadConfig({ ...PROD, DEFAULT_USER: 'false' }).defaultUser).toBe(false);
+  });
+
+  it('NEG-CFG-006 DEFAULT_USER=true di produksi ditolak (fail fast)', () => {
+    expect(() => loadConfig({ ...PROD, DEFAULT_USER: 'true' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...PROD, DEFAULT_USER: 'true' })).toThrow(/DEFAULT_USER=true tidak diizinkan di produksi/);
+  });
+
+  it.each(['yes', '1', 'TRUE', 'on'])('NEG-CFG-007 DEFAULT_USER=%s tidak valid ditolak', (value) => {
+    expect(() => loadConfig({ DEFAULT_USER: value })).toThrow(/DEFAULT_USER harus 'true' atau 'false'/);
+  });
+});

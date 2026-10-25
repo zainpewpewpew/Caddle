@@ -43,12 +43,25 @@ cd Caddle
 npm ci
 cp config/.env.example .env          # sesuaikan bila perlu
 npm run migrate                      # membuat/memperbarui skema database
-npm run user:create -- --username mary --role admin   # kata sandi diminta secara tersembunyi
+npm run user:create -- --username mary --role admin   # opsional (lihat Login prototipe); kata sandi diminta tersembunyi
 npm start                            # http://127.0.0.1:8080
 npm run worker                       # terminal terpisah: scanner & analisis pola
 ```
 
 Pendaftaran publik sengaja tidak ada. Maksimal dua pengguna (`MAX_USERS=2`) dibuat lewat CLI di server. Kata sandi minimal 12 karakter.
+
+### Login prototipe
+
+Selama masih prototipe, `npm start` otomatis membuat akun default pada start pertama **bila belum ada pengguna sama sekali**:
+
+| Username | Kata sandi | Peran |
+|---|---|---|
+| `admin` | `alphalens-demo` | admin |
+
+- **Hanya untuk pengembangan lokal.** Akun dibuat hanya bila `NODE_ENV=development` (default), server hanya lokal (`HOST` dan `APP_ORIGIN` loopback — `127.0.0.1`, `::1`, atau `localhost` — dan `TRUST_PROXY=false`), serta tabel pengguna masih kosong. Akun yang sudah ada tidak pernah ditimpa atau di-reset. Log server menampilkan peringatan saat akun dibuat, atau alasan bila tidak dibuat.
+- **Ganti kata sandinya:** `npm run user:password -- --username admin` (prompt tersembunyi dengan konfirmasi; semua sesi akun itu dicabut). Selama `admin` masih memakai kata sandi default, server menolak start bila tidak lagi hanya lokal (mis. `HOST=0.0.0.0`) atau `NODE_ENV=production`.
+- **Nonaktifkan:** set `DEFAULT_USER=false` di `.env` sebelum start pertama. `DEFAULT_USER=true` ditolak di produksi.
+- Akun `admin` dihitung dalam `MAX_USERS`. Bila ingin dua akun pribadi tanpa `admin`, jalankan `npm run user:create` sebelum `npm start` pertama (akun default tidak dibuat bila sudah ada pengguna).
 
 ## Perintah
 
@@ -59,6 +72,7 @@ Pendaftaran publik sengaja tidak ada. Maksimal dua pengguna (`MAX_USERS=2`) dibu
 | `npm run worker` | Worker scanner: discovery simbol, candle REST/WebSocket, analisis pola |
 | `npm run migrate` | Menerapkan migrasi database |
 | `npm run user:create -- --username <u> --role admin\|analyst` | Membuat pengguna |
+| `npm run user:password -- --username <u>` | Mengganti kata sandi pengguna (prompt tersembunyi) dan mencabut semua sesinya |
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |
@@ -75,7 +89,7 @@ backend/
   auth/         hashing Argon2id, sesi, layanan login, plugin autentikasi
   security/     header keamanan, CSP, guard Origin/CSRF
   settings/     skema & aturan pengaturan scanner
-  users/        administrasi pengguna (CLI)
+  users/        administrasi pengguna (CLI) & akun default prototipe lokal
   database/     koneksi, runner migrasi, migrations/, repositories/
   ingestion/    klien REST/WebSocket Binance, validasi candle, discovery, backfill
   indicators/   EMA, ATR, RVOL, swing (fungsi murni)
@@ -92,7 +106,7 @@ frontend/
   js/lib/       dom (render aman XSS), api, router, format, komponen UI
   js/views/     satu modul per layar
   assets/       logo & sprite ikon SVG
-scripts/        migrate, create-user, laporan tes
+scripts/        migrate, create-user, change-password, laporan tes
 tests/          unit, positive, negative, edge, security, integration, e2e, live, helpers
 docs/           dokumentasi (Bahasa Indonesia)
 config/         contoh environment

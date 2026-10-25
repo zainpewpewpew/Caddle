@@ -8,56 +8,19 @@ import { openDatabase } from '../backend/database/connection.js';
 import { migrate } from '../backend/database/migrate.js';
 import { createRepositories } from '../backend/database/repositories/index.js';
 import { UserAdminError, createUser } from '../backend/users/userAdmin.js';
-
-function promptHidden(question) {
-  return new Promise((resolve, reject) => {
-    const { stdin, stdout } = process;
-    stdout.write(question);
-    stdin.setRawMode(true);
-    stdin.resume();
-    stdin.setEncoding('utf8');
-    let value = '';
-    const onData = (chunk) => {
-      for (const ch of chunk) {
-        if (ch === '\r' || ch === '\n') {
-          stdin.setRawMode(false);
-          stdin.pause();
-          stdin.off('data', onData);
-          stdout.write('\n');
-          return resolve(value);
-        }
-        if (ch === '\u0003') {
-          stdin.setRawMode(false);
-          return reject(new Error('Dibatalkan'));
-        }
-        if (ch === '\u007f') value = value.slice(0, -1);
-        else value += ch;
-      }
-    };
-    stdin.on('data', onData);
-  });
-}
-
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
-  return Buffer.concat(chunks).toString('utf8').replace(/\r?\n$/, '');
-}
+import { PasswordInputError, readNewPassword } from './lib/passwordInput.js';
 
 const { values } = parseArgs({
   options: { username: { type: 'string' }, role: { type: 'string', default: 'admin' } },
 });
 
 let password;
-if (process.stdin.isTTY) {
-  password = await promptHidden('Kata sandi: ');
-  const confirm = await promptHidden('Ulangi kata sandi: ');
-  if (password !== confirm) {
-    console.error('Kata sandi tidak sama');
-    process.exit(1);
-  }
-} else {
-  password = await readStdin();
+try {
+  password = await readNewPassword();
+} catch (err) {
+  if (!(err instanceof PasswordInputError)) throw err;
+  console.error(err.message);
+  process.exit(1);
 }
 
 const config = loadConfig();
