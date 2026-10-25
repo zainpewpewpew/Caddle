@@ -99,7 +99,7 @@ Angka finansial memakai `font-variant-numeric: tabular-nums` agar kolom sejajar.
 ## 6. Aksesibilitas
 
 - Skip link ke konten, landmark `nav`/`main`/`header`, `aria-current="page"` pada navigasi.
-- Fokus terlihat (`--lr-focus-ring`) untuk semua kontrol interaktif.
+- Fokus terlihat (`--lr-focus-ring`) untuk semua kontrol interaktif: cincin `--lr-accent` solid dengan celah `--lr-bg`, kontras 8,11:1 terhadap `--lr-bg` dan 7,54:1 terhadap `--lr-surface` (minimum WCAG 3:1; dihitung tes `UNIT-A11Y-001`). Mode `forced-colors` memakai `outline: 2px solid Highlight`.
 - Header tabel sortable adalah tombol yang dapat dioperasikan keyboard, dengan `aria-sort`.
 - Toast memakai `role="status"` + `aria-live="polite"`; error login `role="alert"`.
 - Responsif: sidebar menjadi laci di ≤820px, KPI 2 kolom, tabel scroll horizontal di dalam panel (halaman tidak overflow — diverifikasi tes `E2E-UI-002` di viewport 390px).

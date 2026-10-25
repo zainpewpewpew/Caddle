@@ -90,7 +90,7 @@ sequenceDiagram
   F->>G: rate limit (hook per route — request tanpa sesi ikut dihitung)
   G-->>B: 401 bila tidak ada sesi (sebelum body divalidasi)
   G-->>B: 403 bila peran/CSRF tidak sesuai
-  G->>S: touch() → idle timeout diperpanjang hanya oleh aktivitas API terautentikasi
+  G->>S: touch() → idle diperpanjang hanya oleh aktivitas API terautentikasi (bukan GET ber-header X-LR-Background: 1)
   F->>F: parse JSON (≤64KB, tolak __proto__) + JSON Schema (tanpa coercion)
   F->>H: handler
   H->>R: save(expectedVersion) dalam transaksi

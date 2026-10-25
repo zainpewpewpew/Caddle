@@ -53,7 +53,7 @@ Indeks: `(user_id, revoked_at, expires_at)`, `(expires_at)`.
 ### `audit_logs`
 Append-only: `occurred_at`, `user_id`, `action`, `outcome` (`success|failure`), `ip_address`, `detail_json`. Tidak pernah menyimpan kata sandi atau token. Aksi M1: `auth.login`, `auth.logout`, `auth.account_locked`, `auth.session_revoked`, `auth.sessions_revoked`, `settings.scanner.update`, `user.create`.
 
-## 4. Tabel — 002 domain (draf, mulai dipakai M2–M6)
+## 4. Tabel — 002 domain (dipakai sejak M2–M3; backtest & lab menyusul M5–M6)
 
 | Tabel | Kunci & constraint penting |
 |---|---|
@@ -67,10 +67,31 @@ Append-only: `occurred_at`, `user_id`, `action`, `outcome` (`success|failure`), 
 | `backtest_runs` | Konfigurasi JSON, `data_split` (`train|validation|out_of_sample|walk_forward`), rentang waktu, `code_version` untuk reproduktibilitas |
 | `backtest_results` | Per sinyal: outcome, MFE/MAE %, waktu ke breakout, regime pasar |
 
-### Catatan presisi
+## 5. Tabel — 003 ingesti (M2)
 
-OHLCV disimpan `REAL` (float64). Binance mengirim angka sebagai string desimal; float64 memberikan ±15 digit signifikan, cukup untuk rasio indikator. `tick_size`/`step_size` disimpan sebagai `TEXT` untuk mempertahankan nilai persis. Keputusan ini akan ditinjau ulang di M2 dengan tes presisi.
+| Perubahan | Keterangan |
+|---|---|
+| `candles.taker_buy_volume`, `taker_buy_quote_volume` | Volume taker buy dari kline Binance; baris sebelum 003 bernilai 0 |
+| `symbols.monitored_since` | Kapan simbol mulai dipantau; `NULL` bila tidak dipantau. Indeks parsial `idx_symbols_monitored` |
+| `provisional_candles` | Candle **belum tertutup**, satu baris terbaru per simbol × timeframe (PK `(symbol_id, timeframe)`). Tidak pernah masuk `candles` dan tidak pernah dipakai sinyal terkonfirmasi. Ditolak bila sudah ada candle tertutup untuk interval yang sama/lebih baru |
+| `ingestion_runs` | Satu baris per siklus scanner/backfill: `started_at`, `finished_at`, jumlah simbol, candle, error |
+| `ingestion_errors` | Error ingesti terbaru untuk System Health; pesan ≤ 500 karakter, retensi dibatasi repositori |
+| `worker_heartbeat` | Singleton (`id = 1`): `at` + `state_json` = snapshot `scanner.status()`. API menandai `stale` bila > 90 detik, `not_running` bila tidak ada baris |
 
-## 5. Backup (M8)
+## 6. Penyimpanan sinyal (M3)
+
+- Satu baris `signals` per sinyal hidup; state `NO_PATTERN` **tidak pernah** dipersistensi. Sinyal terminal (`INVALIDATED`, `EXPIRED`) mengisi `closed_at` dan `final_outcome`; deteksi berikutnya membuka baris baru.
+- Setiap transisi state ditulis ke `signal_events` dalam **transaksi yang sama** dengan update `signals` (`save()`), sehingga riwayat tidak pernah tertinggal dari state.
+- `pattern_definition_id` menunjuk versi pola (`pattern_definitions`, kunci `SA`/`PVA`, versi `PATTERN_VERSION`, `definition_json` berisi parameter, kondisi, dan warm-up). Sinyal lama tetap mereferensikan versinya.
+- `explanation_json` berbentuk `{ factors: [{ factor, contribution, detail }], tracking: { lastCandleTime, lastEvaluatedAt, barsInState, peakPrice, peakState } }`. Bentuk lama (array saja) tetap dapat dibaca.
+- `lastEventCandleTime` (MAX `signal_events.candle_time` per simbol × timeframe) dipakai pipeline sebagai titik awal replay setelah restart.
+
+**Usulan migrasi `004` (belum dibuat):** memindahkan `tracking` ke kolom sendiri (`last_candle_time`, `bars_in_state`, `peak_price`, `peak_state`) dengan indeks `(symbol_id, timeframe, last_candle_time)`, serta mengisi ulang dari `explanation_json`. Ditunda agar M3 tidak mengubah skema yang sedang direview; dibutuhkan sebelum M6 (backtest membaca MFE/peak dalam jumlah besar).
+
+## 7. Catatan presisi
+
+OHLCV disimpan `REAL` (float64). Binance mengirim angka sebagai string desimal; float64 memberikan ±15 digit signifikan, cukup untuk rasio indikator. `tick_size`/`step_size` disimpan sebagai `TEXT` untuk mempertahankan nilai persis. Ditinjau di M2: parser kline menolak angka non-finite dan string non-desimal; indikator hanya memakai rasio sehingga galat float64 jauh di bawah ambang kondisi pola.
+
+## 8. Backup (M8)
 
 Rencana: `sqlite3 .backup` / API backup better-sqlite3 terjadwal, enkripsi saat diam, retensi berjenjang, dan **uji restore otomatis** (backup dianggap gagal sampai restore terverifikasi).
