@@ -7,7 +7,7 @@
   },
   "rateLimited": {
     "status": 429,
-    "headers": { "Content-Type": "application/json", "X-MBX-USED-WEIGHT-1M": "2401", "Retry-After": "7" },
+    "headers": { "Content-Type": "application/json", "X-MBX-USED-WEIGHT-1M": "2401", "Retry-After": "50" },
     "body": { "code": -1003, "msg": "Too many requests; current limit of IP is 2400 requests per minute. Please use the websocket for live updates to avoid polling the API." }
   },
   "ipBanned": {
