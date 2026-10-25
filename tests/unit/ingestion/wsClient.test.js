@@ -342,7 +342,7 @@ describe('reconnect & backoff', () => {
   });
 
   it('UNIT-WSC-009 koneksi basi (tanpa pesan ≥ staleMs) ditutup lalu reconnect', () => {
-    const { stream, last, timers, ws, states } = setup({ client: { staleMs: 90_000 } });
+    const { stream, last, timers, ws, states, candles } = setup({ client: { staleMs: 90_000 } });
     stream.start();
     const first = last();
     first.serverOpen();
@@ -359,9 +359,13 @@ describe('reconnect & backoff', () => {
     expect(errorsOf(states).at(-1).error.kind).toBe('stale');
     timers.advance(1000);
     expect(ws.instances).toHaveLength(2);
-    // event terlambat dari socket lama diabaikan
+    // event terlambat dari socket lama diabaikan: tidak ada candle baru dan penghitung pesan tidak berubah
+    const delivered = candles.length;
+    const messages = stream.state().messages;
     first.serverMessage(klineEvent({ closed: true }));
     first.serverClose(1006);
+    expect(candles).toHaveLength(delivered);
+    expect(stream.state().messages).toBe(messages);
     expect(ws.instances).toHaveLength(2);
     expect(stream.state().reconnects).toBe(1);
   });
