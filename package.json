@@ -11,6 +11,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env backend/app/server.js",
     "dev": "node --env-file-if-exists=.env --watch backend/app/server.js",
+    "worker": "node --env-file-if-exists=.env worker/index.js",
     "migrate": "node --env-file-if-exists=.env scripts/migrate.js",
     "user:create": "node --env-file-if-exists=.env scripts/create-user.js",
     "lint": "eslint .",
