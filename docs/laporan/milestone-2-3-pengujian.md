@@ -2,18 +2,20 @@
 
 Laporan ini merangkum metode dan hasil untuk Milestone 2 (data pasar) dan Milestone 3 (mesin pola). Daftar lengkap setiap tes (ID, nama, status, durasi) ada di **[hasil-tes-otomatis.md](hasil-tes-otomatis.md)**, yang dihasilkan `npm run report:tests` dari file hasil eksekusi Vitest (`reports/vitest-results.json`) dan Playwright (`reports/e2e-results.json`). Angka di bawah disalin dari file tersebut, bukan diperkirakan.
 
-> **Batasan terpenting:** integrasi **live** dengan Binance **belum terverifikasi**. Dari lingkungan build ini setiap request ke `fapi.binance.com` dibalas **HTTP 451** ("Service unavailable from a restricted location") dan WebSocket `fstream.binance.com` tidak menerima pesan. Semua tes otomatis memakai fixture **sintetis** yang mengikuti format dokumentasi resmi Binance, bukan rekaman pasar. Jalankan `npm run test:live` dari mesin pemilik untuk verifikasi live (§6).
+> **Pembaruan 2026-10-25 (§6.1):** pemilik menjalankan `npm run test:live` di Mac-nya (Node 24.15.0): **REST live lulus 5/5** (LIVE-BN-001…003), **WebSocket LIVE-BN-004 gagal** karena URL WebSocket lama Binance sudah dimatikan. URL sudah diperbaiki ke rute `/market`; WebSocket live **menunggu uji ulang** pemilik.
+>
+> **Batasan awal:** integrasi **live** dengan Binance tidak dapat diverifikasi dari lingkungan build. Dari lingkungan build ini setiap request ke `fapi.binance.com` dibalas **HTTP 451** ("Service unavailable from a restricted location") dan WebSocket `fstream.binance.com` tidak menerima pesan. Semua tes otomatis memakai fixture **sintetis** yang mengikuti format dokumentasi resmi Binance, bukan rekaman pasar. Jalankan `npm run test:live` dari mesin pemilik untuk verifikasi live (§6).
 
 ## 1. Ringkasan hasil (eksekusi 2026-10-25, Node.js 22.22.0, Chromium build 1243)
 
 | Pemeriksaan | Perintah | Hasil |
 |---|---|---|
 | Lint | `npm run lint` | 0 error, 0 warning |
-| Vitest: unit, integrasi, positif, negatif, edge, keamanan | `npm test` | **956 / 956 lulus** (49 file) |
+| Vitest: unit, integrasi, positif, negatif, edge, keamanan | `npm test` | **956 / 956 lulus** (49 file) saat laporan dibuat; setelah perbaikan rute WebSocket (§6.1) 958 / 958 |
 | Playwright E2E (desktop 1440×900 + mobile 390×844) | `npm run test:e2e` | **48 / 48 lulus** |
-| Uji live Binance (opt-in) | `npm run test:live` | **Tidak dapat diverifikasi di sini** — 4/4 gagal dengan HTTP 451 (lokasi dibatasi), bukan cacat kode |
+| Uji live Binance (opt-in) | `npm run test:live` | **Tidak dapat diverifikasi di sini** — 6/6 gagal (dijalankan ulang 2026-10-25): LIVE-BN-001…003 HTTP 451 (lokasi dibatasi), LIVE-BN-004 WebSocket diblokir proxy; bukan cacat kode. Hasil dari mesin pemilik: §6.1 |
 | npm audit (prod + dev) | `npm audit` | 0 kerentanan (218 dependensi) |
-| Semgrep (aturan lokal) | `semgrep scan --config config/semgrep/long-radar.yml` | 0 temuan (9 aturan, 93 file JS; semgrep 1.182.1) |
+| Semgrep (aturan lokal) | `semgrep scan --config config/semgrep/long-radar.yml` (berkas aturan kini bernama `config/semgrep/alphalens.yml`) | 0 temuan (9 aturan, 93 file JS; semgrep 1.182.1) |
 | Gitleaks, Trivy, OWASP ZAP | — | **Tidak dijalankan** (sumber unduhan diblokir; dijadwalkan M7) |
 
 ## 2. Cakupan tes per area
@@ -135,9 +137,28 @@ LIVE-BN-004      tidak ada pesan WebSocket dalam batas waktu
 
 Status ini **bukan** bukti bahwa integrasi bekerja maupun gagal; ini hanya menunjukkan lokasi build diblokir Binance.
 
+### 6.1 Hasil live dari mesin pemilik (2026-10-25)
+
+Dijalankan pemilik di macOS, Node.js 24.15.0, npm 12.2.0, setelah `npm ci` (0 kerentanan) dan `npm test` (49 file, 956/956 lulus). Keluaran `npm run test:live` (Vitest 5.0.5) yang dikirim pemilik:
+
+```
+✓ LIVE-BN-001 waktu server dekat dengan jam lokal (selisih < 60 dtk) 484ms
+✓ LIVE-BN-002 exchangeInfo + ticker + bookTicker → discovery memilih perpetual USDT yang TRADING 468ms
+✓ LIVE-BN-003 klines BTCUSDT 5m: candle valid, berurutan, hanya yang lewat closeTime bertanda tertutup 205ms
+✓ LIVE-BN-003 klines BTCUSDT 15m: … 144ms
+✓ LIVE-BN-003 klines BTCUSDT 1h: … 140ms
+× LIVE-BN-004 WebSocket kline menerima update (provisional) BTCUSDT 5m dalam 20 detik 20142ms
+  AssertionError: expected 0 to be greater than 0
+Tests  1 failed | 5 passed (6)
+```
+
+**Penyebab LIVE-BN-004.** Klien memakai URL combined stream lama `wss://fstream.binance.com/stream?streams=…`. Binance mengumumkan upgrade WebSocket USDⓈ-M (pemberitahuan 2026-03-06) yang membagi stream ke rute `/public`, `/market`, dan `/private`; URL lama `/ws` dan `/stream` dimatikan setelah 2026-04-23, dan koneksi tanpa rute hanya menerima data kategori *public* (depth/bookTicker). Kline termasuk kategori *market*, sehingga koneksi lama tidak pernah mengirim pesan kline. Bukti: SDK resmi Binance `@binance/derivatives-trading-usds-futures` 39.0.2 (npm) membangun `${wsURL}/market/stream?streams=…` untuk kline, dan SDK Python resmi `binance-sdk-derivatives-trading-usds-futures` 18.1.0 (PyPI) memakai `url_path` `market`; library lain (go-binance, python-binance, node-binance-api, Hummingbot) melakukan migrasi yang sama. Halaman dokumentasi Binance tidak dapat dibuka dari lingkungan build (DNS/proxy), jadi kutipan dokumen resmi berasal dari ringkasan mesin pencari.
+
+**Perbaikan.** `BINANCE_WS_BASE_URL` kini `wss://fstream.binance.com/market`, sehingga URL menjadi `wss://fstream.binance.com/market/stream?streams=…`. `baseUrl` tanpa rute `/market` ditolak saat konstruksi (fail closed). Tes regresi UNIT-WSC-014 dan NEG-WSC-005 terbukti gagal pada kode lama dan lulus setelah perbaikan. LIVE-BN-004 kini mencantumkan URL, jumlah koneksi terbuka, jumlah pesan, parse error, dan event koneksi pada pesan kegagalannya, sehingga handshake yang ditolak dapat dibedakan dari socket yang terbuka tetapi diam. **Uji ulang live oleh pemilik belum dilakukan**; hasilnya akan dicatat di sini.
+
 ## 7. Keterbatasan yang diketahui
 
-- Integrasi live Binance belum terverifikasi (§6).
+- REST live Binance terverifikasi di mesin pemilik; WebSocket live menunggu uji ulang setelah perbaikan rute `/market` (§6.1).
 - Efektivitas pola belum divalidasi out-of-sample; skor bukan probabilitas.
 - Kolom tracking sinyal masih di `explanation_json` (usulan migrasi berikutnya, `docs/05-database.md`).
 - Ambang default pola (mis. `minScore` 85, `maxRunAtr` 6, `minVolumeGrowth` 1,5) adalah nilai awal yang belum dikalibrasi pada data nyata.

@@ -57,6 +57,8 @@ $ detect-secrets scan --all-files (kecuali node_modules, lockfile, hasil tes)
   docs/laporan/hasil-tes-otomatis.md (judul tes). Ditriase: false positive, tidak ada rahasia nyata.
 ```
 
+Catatan: berkas aturan Semgrep pada perintah di atas kini bernama `config/semgrep/alphalens.yml`; hasil di atas tidak diubah.
+
 Registry ruleset Semgrep (`p/javascript`, `p/nodejs`, `p/owasp-top-ten`, `p/secrets`) gagal diunduh: `ProxyError ... semgrep.dev ... 403 Forbidden`.
 
 ## 5. Cacat yang ditemukan tes dan diperbaiki
@@ -99,3 +101,5 @@ Diambil dari aplikasi yang berjalan (server E2E, database kosong) dengan Playwri
 | System Health | [health.png](tangkapan-layar/health.png) |
 | Design System | [design-system.png](tangkapan-layar/design-system.png) |
 | Overview (mobile 390px) | [mobile-overview.png](tangkapan-layar/mobile-overview.png) |
+
+Tangkapan layar ini diambil sebelum produk berganti nama menjadi **AlphaLens** (2026-10-25), jadi masih menampilkan nama dan logo lama "Long Radar".

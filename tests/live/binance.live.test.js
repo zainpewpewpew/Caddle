@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createBinanceRestClient } from '../../backend/ingestion/binance/restClient.js';
-import { createKlineStream } from '../../backend/ingestion/binance/wsClient.js';
+import { buildStreamUrls, createKlineStream } from '../../backend/ingestion/binance/wsClient.js';
 import { discoverSymbols } from '../../backend/ingestion/symbolDiscovery.js';
 import { validateCandle } from '../../backend/ingestion/candleValidator.js';
 import { TIMEFRAME_MS } from '../../backend/market/contracts.js';
@@ -50,12 +50,21 @@ describe.skipIf(!LIVE)('LIVE Binance USDT-M (data pasar publik)', () => {
 
   it('LIVE-BN-004 WebSocket kline menerima update (provisional) BTCUSDT 5m dalam 20 detik', async () => {
     const received = [];
-    const stream = createKlineStream({ streams: [{ symbol: 'BTCUSDT', timeframe: '5m' }], onCandle: (c) => received.push(c) });
+    const events = [];
+    const streams = [{ symbol: 'BTCUSDT', timeframe: '5m' }];
+    const stream = createKlineStream({
+      streams,
+      onCandle: (c) => received.push(c),
+      // Dicatat agar kegagalan menjelaskan penyebabnya: handshake ditolak, koneksi ditutup, atau pesan ditolak parser.
+      onState: ({ event, state, code, error }) => events.push({ event, state, code, error }),
+    });
     stream.start();
     const started = Date.now();
     while (received.length === 0 && Date.now() - started < 20_000) await new Promise((r) => setTimeout(r, 250));
+    const { messages, parseErrors, openConnections } = stream.state();
     stream.stop();
-    expect(received.length).toBeGreaterThan(0);
+    const diagnosis = JSON.stringify({ url: buildStreamUrls(streams)[0].url, openConnections, messages, parseErrors, events: events.slice(0, 10) });
+    expect(received.length, diagnosis).toBeGreaterThan(0);
     expect(received[0]).toMatchObject({ symbol: 'BTCUSDT', timeframe: '5m', source: 'ws' });
   }, 30_000);
 });

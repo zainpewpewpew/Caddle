@@ -132,8 +132,8 @@ async function show(route) {
     else link.removeAttribute('aria-current');
   }
   heading.textContent = route.label;
-  crumb.textContent = route.crumb ?? 'Long Radar';
-  document.title = `${route.label} · Long Radar`;
+  crumb.textContent = route.crumb ?? 'AlphaLens';
+  document.title = `${route.label} · AlphaLens`;
   if (app.dataset.nav === 'open') setNavState('expanded');
 
   let result;

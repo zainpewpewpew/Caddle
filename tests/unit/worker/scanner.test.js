@@ -1441,7 +1441,7 @@ describe('integrasi dengan klien WebSocket nyata (WebSocket palsu)', () => {
     await scanner.start();
     const s1 = ws.instances[0];
     // 5m terpilih + konteks HTF 15m/1h dalam satu combined stream.
-    expect(s1.url).toBe('wss://fstream.binance.com/stream?streams=btcusdt@kline_5m/btcusdt@kline_15m/btcusdt@kline_1h');
+    expect(s1.url).toBe('wss://fstream.binance.com/market/stream?streams=btcusdt@kline_5m/btcusdt@kline_15m/btcusdt@kline_1h');
     s1.fire('open');
     await flush();
 

@@ -1,4 +1,4 @@
-/* Long Radar — komponen. Hanya merujuk token dari tokens.css. */
+/* AlphaLens — komponen. Hanya merujuk token dari tokens.css. */
 
 /* ---- Brand ---- */
 .brand {
@@ -24,7 +24,7 @@
 .brand__name {
   font-size: var(--lr-text-md);
   font-weight: var(--lr-weight-semibold);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em; /* wordmark huruf campuran (AlphaLens), bukan kapital semua */
 }
 
 .brand__tag {

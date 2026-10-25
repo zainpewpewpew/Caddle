@@ -9,6 +9,7 @@ describe('konfigurasi environment', () => {
     expect(c.cookieSecure).toBe(false);
     expect(c.session.idleMs).toBe(30 * 60_000);
     expect(c.maxUsers).toBe(2);
+    expect(c.databasePath).toBe('./data/alphalens.db');
   });
 
   it('UNIT-CFG-002 COOKIE_SECURE=auto menjadi true untuk origin https', () => {

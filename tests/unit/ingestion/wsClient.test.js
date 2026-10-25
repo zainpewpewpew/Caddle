@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BINANCE_WS_BASE_URL,
+  KLINE_WS_ROUTE,
   MAX_STREAMS_PER_CONNECTION,
   buildStreamUrls,
   computeBackoff,
@@ -133,7 +135,7 @@ describe('URL & nama stream', () => {
     expect(streamName({ symbol: 'BTCUSDT', timeframe: '5m' })).toBe('btcusdt@kline_5m');
     const urls = buildStreamUrls([{ symbol: 'BTCUSDT', timeframe: '5m' }, { symbol: 'ETHUSDT', timeframe: '1h' }]);
     expect(urls).toEqual([{
-      url: 'wss://fstream.binance.com/stream?streams=btcusdt@kline_5m/ethusdt@kline_1h',
+      url: 'wss://fstream.binance.com/market/stream?streams=btcusdt@kline_5m/ethusdt@kline_1h',
       streams: ['btcusdt@kline_5m', 'ethusdt@kline_1h'],
     }]);
   });
@@ -148,8 +150,29 @@ describe('URL & nama stream', () => {
     stream.start();
     expect(ws.instances).toHaveLength(2);
     expect(ws.instances[0].url.split('/stream?streams=')[1].split('/')).toHaveLength(200);
-    expect(ws.instances[1].url).toBe('wss://fstream.binance.com/stream?streams=s200usdt@kline_5m');
+    expect(ws.instances[1].url).toBe('wss://fstream.binance.com/market/stream?streams=s200usdt@kline_5m');
     expect(stream.state()).toMatchObject({ state: 'connecting', connections: 2, streams: 201 });
+  });
+
+  it('UNIT-WSC-014 kline memakai rute kategori /market (URL lama tanpa rute tidak mengirim kline sejak 2026-04-23)', () => {
+    expect(KLINE_WS_ROUTE).toBe('/market');
+    expect(BINANCE_WS_BASE_URL).toBe('wss://fstream.binance.com/market');
+    const [{ url }] = buildStreamUrls([{ symbol: 'BTCUSDT', timeframe: '5m' }]);
+    expect(new URL(url)).toMatchObject({ protocol: 'wss:', hostname: 'fstream.binance.com', pathname: '/market/stream', search: '?streams=btcusdt@kline_5m' });
+    // Garis miring penutup pada baseUrl eksplisit dinormalisasi, tanpa path ganda.
+    expect(buildStreamUrls([{ symbol: 'BTCUSDT', timeframe: '5m' }], { baseUrl: 'wss://fstream.binance.com/market/' })[0].url)
+      .toBe('wss://fstream.binance.com/market/stream?streams=btcusdt@kline_5m');
+  });
+
+  it('NEG-WSC-005 baseUrl tanpa rute /market (URL lama, /public, /private, path lain, query, fragment) ditolak', () => {
+    const streams = [{ symbol: 'BTCUSDT', timeframe: '5m' }];
+    for (const baseUrl of [
+      'wss://fstream.binance.com', 'wss://fstream.binance.com/', 'wss://fstream.binance.com/ws', 'wss://fstream.binance.com/stream',
+      'wss://fstream.binance.com/public', 'wss://fstream.binance.com/private', 'wss://fstream.binance.com/market/stream',
+      'wss://fstream.binance.com/marketx', 'wss://fstream.binance.com/market?streams=x', 'wss://fstream.binance.com/market#a',
+    ]) {
+      expect(() => buildStreamUrls(streams, { baseUrl }), baseUrl).toThrow(/\/market/);
+    }
   });
 
   it('EDGE-WSC-001 stream duplikat dibuang sebelum dipecah', () => {

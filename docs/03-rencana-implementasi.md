@@ -1,6 +1,6 @@
 # 03 — Rencana Implementasi
 
-## Milestone 1 — Fondasi (PR ini)
+## Milestone 1 — Fondasi (selesai, di `main`)
 
 ### Cakupan
 
@@ -30,7 +30,7 @@
 | Tidak ada regresi kritis | Ya (greenfield) |
 | Bukti eksekusi | Ya — laporan dihasilkan dari file hasil eksekusi |
 
-## Milestone 2 — Data pasar (PR ini, menunggu review)
+## Milestone 2 — Data pasar (selesai, di `main`)
 
 | Item | Status | Lokasi |
 |---|---|---|
@@ -40,9 +40,9 @@
 | WebSocket kline (hanya `x=true` ke tabel kanonik, candle berjalan ke `provisional_candles`), reconnect + jitter, rotasi koneksi, deteksi stale | Selesai | `backend/ingestion/binance/wsClient.js` |
 | Backfill REST setelah reconnect/gap, duplikat & out-of-order | Selesai | `backend/ingestion/backfill.js`, `worker/scanner.js` |
 | Proses `worker/` terpisah (`npm run worker`), heartbeat + metrik ke System Health | Selesai | `worker/`, `backend/system/workerStatus.js` |
-| Tes fixture sintetis deterministik + uji live opt-in (`npm run test:live`) | Selesai; **uji live belum terverifikasi** (lingkungan build menerima HTTP 451 dari Binance) | `tests/unit/ingestion/`, `tests/live/` |
+| Tes fixture sintetis deterministik + uji live opt-in (`npm run test:live`) | Selesai; **REST live terverifikasi** di mesin pemilik (2026-10-25); **WebSocket live menunggu uji ulang** setelah perbaikan rute `/market` (lihat `docs/laporan/milestone-2-3-pengujian.md` §6.1) | `tests/unit/ingestion/`, `tests/live/` |
 
-## Milestone 3 — Mesin pola (PR ini, menunggu review)
+## Milestone 3 — Mesin pola (selesai, di `main`)
 
 | Item | Status | Lokasi |
 |---|---|---|
@@ -73,5 +73,5 @@ Mengikuti roadmap spesifikasi. Prioritas teknis yang sudah diputuskan:
 |---|---|
 | Peran pengguna kedua | `analyst` (baca saja untuk pengaturan) atau `admin` — dapat dipilih saat `user:create`. |
 | Bahasa UI | Bahasa Indonesia dengan istilah trading standar dalam bahasa Inggris (Screener, Breakout, dll.). |
-| Lanjut ke Milestone 4 | Setelah PR M1–M3 direview dan uji live Binance dijalankan dari lokasi yang tidak dibatasi. |
+| Lanjut ke Milestone 4 | Setelah uji ulang WebSocket live (`npm run test:live`) lulus di mesin pemilik. |
 | Migrasi `005` kolom tracking sinyal | Usulan di `docs/05-database.md` §6 (nomor `004` sudah dipakai kursor analisis); dibuat sebelum M6. |

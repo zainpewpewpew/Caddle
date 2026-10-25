@@ -1,4 +1,4 @@
-# Long Radar
+# AlphaLens
 
 Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — mendeteksi struktur bullish lebih awal pada USDT-M perpetual Binance, dengan sinyal yang dapat dijelaskan. Aplikasi ini **bukan** sistem trading otomatis dan tidak mengeksekusi order.
 
@@ -8,9 +8,9 @@ Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — men
 
 | Milestone | Cakupan | Status |
 |---|---|---|
-| 1 — Fondasi | Audit, arsitektur, autentikasi, shell frontend, API, migrasi | **Selesai (menunggu review PR)** |
-| 2 — Data pasar | Binance REST/WS, candle historis, validasi, worker | **Selesai (menunggu review PR; uji live belum terverifikasi, lihat laporan)** |
-| 3 — Mesin pola | SA, PVA, hybrid timeframe, skor, state machine | **Selesai (menunggu review PR)** |
+| 1 — Fondasi | Audit, arsitektur, autentikasi, shell frontend, API, migrasi | **Selesai (di `main`)** |
+| 2 — Data pasar | Binance REST/WS, candle historis, validasi, worker | **Selesai (di `main`; REST live terverifikasi, WebSocket live menunggu uji ulang, lihat laporan)** |
+| 3 — Mesin pola | SA, PVA, hybrid timeframe, skor, state machine | **Selesai (di `main`)** |
 | 4 — Dashboard premium | Screener, grafik, real-time | Belum dimulai |
 | 5 — Pattern Discovery Lab | Upload, anotasi, definisi pola berversi | Belum dimulai |
 | 6 — Backtesting | Replay historis, metrik, out-of-sample | Belum dimulai |
@@ -37,6 +37,8 @@ cd Caddle
 
 > **macOS:** `.npmrc` memakai `ignore-scripts=true`, sehingga modul native memakai binary prebuilt bawaan paket. Di Mac Apple Silicon (M1/M2/M3/M4) semuanya langsung jalan. Di Mac Intel, `argon2` belum menyertakan binary `darwin-x64`; setelah `npm ci` jalankan sekali `npm rebuild argon2 --ignore-scripts=false` (butuh Xcode Command Line Tools: `xcode-select --install`).
 
+> **Upgrade dari nama lama (Long Radar):** default database kini `./data/alphalens.db`. Jika `.env` Anda menyetel `DATABASE_PATH=./data/long-radar.db` (hasil salinan `.env.example` lama), tidak ada yang perlu diubah. Jika tidak ada `.env` atau `DATABASE_PATH` kosong, pindahkan `data/long-radar.db` beserta file `-wal`/`-shm`-nya menjadi `data/alphalens.db`, atau setel `DATABASE_PATH=./data/long-radar.db`; tanpa itu server membuka database baru yang kosong.
+
 ```bash
 npm ci
 cp config/.env.example .env          # sesuaikan bila perlu
@@ -60,7 +62,7 @@ Pendaftaran publik sengaja tidak ada. Maksimal dua pengguna (`MAX_USERS=2`) dibu
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |
-| `npm run test:live` | Uji integrasi live Binance (opt-in, butuh jaringan ke `fapi`/`fstream.binance.com`; tidak termasuk `npm test`) |
+| `npm run test:live` | Uji integrasi live Binance (opt-in, butuh jaringan ke `fapi.binance.com` dan `fstream.binance.com/market`; tidak termasuk `npm test`) |
 | `npm run audit` | npm audit dependensi produksi |
 | `npm run report:tests` | Menyusun laporan tes dari hasil eksekusi nyata |
 

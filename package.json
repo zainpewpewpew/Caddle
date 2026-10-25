@@ -1,8 +1,8 @@
 {
-  "name": "long-radar",
+  "name": "alphalens",
   "version": "0.1.0",
   "private": true,
-  "description": "Long Radar — terminal intelijen kripto privat (riset & decision-support).",
+  "description": "AlphaLens — terminal intelijen kripto privat (riset & decision-support).",
   "type": "module",
   "license": "UNLICENSED",
   "engines": {

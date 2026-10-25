@@ -6,7 +6,7 @@ const DEFAULTS = Object.freeze({
   NODE_ENV: 'development',
   HOST: '127.0.0.1',
   PORT: '8080',
-  DATABASE_PATH: './data/long-radar.db',
+  DATABASE_PATH: './data/alphalens.db',
   APP_ORIGIN: 'http://127.0.0.1:8080',
   COOKIE_SECURE: 'auto',
   SESSION_IDLE_MINUTES: '30',

@@ -50,7 +50,7 @@ describe('alur positif autentikasi', () => {
     const page = await ctx.app.inject({ url: '/', headers: { cookie } });
     expect(page.statusCode).toBe(200);
     expect(page.headers['content-type']).toContain('text/html');
-    expect(page.body).toContain('LONG RADAR');
+    expect(page.body).toContain('AlphaLens');
     const loginPage = await ctx.app.inject({ url: '/login.html', headers: { cookie } });
     expect(loginPage.statusCode).toBe(302);
     expect(loginPage.headers.location).toBe('/');

@@ -1,6 +1,6 @@
 # 04 — Design System
 
-Arah visual: terminal intelijen trading institusional — latar charcoal hampir hitam, permukaan graphite, garis tipis, aksen emerald untuk bullish, amber untuk kewaspadaan, merah redup untuk risiko. Padat informasi, tenang, tanpa neon, tanpa gradien berat. Terinspirasi kecanggihan visual Saraf, **tanpa menyalin** aset, logo, atau antarmuka proprietary. Logo radar dan seluruh ikon digambar khusus untuk proyek ini.
+Arah visual: terminal intelijen trading institusional — latar charcoal hampir hitam, permukaan graphite, garis tipis, aksen emerald untuk bullish, amber untuk kewaspadaan, merah redup untuk risiko. Padat informasi, tenang, tanpa neon, tanpa gradien berat. Terinspirasi kecanggihan visual Saraf, **tanpa menyalin** aset, logo, atau antarmuka proprietary. Logo lensa dan seluruh ikon digambar khusus untuk proyek ini.
 
 Referensi hidup: layar **Design System** di aplikasi (`#/design-system`).
 
