@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../../../backend/database/connection.js';
 import { migrate } from '../../../backend/database/migrate.js';
 import { createRepositories } from '../../../backend/database/repositories/index.js';
-import { createSymbolRepository } from '../../../backend/database/repositories/symbolRepository.js';
+import { REJECTED_LIST_MAX, createSymbolRepository } from '../../../backend/database/repositories/symbolRepository.js';
 
 // Fixture sintetis — bukan data pasar nyata. Bentuk SymbolInfo mengikuti kontrak §2
 // (turunan exchangeInfo Binance USDT-M Futures).
@@ -26,7 +26,7 @@ describe('repositori simbol', () => {
 
   it('UNIT-SYM-001 upsertFromExchange menyisipkan simbol baru beserta atributnya', async () => {
     const result = await repo.upsertFromExchange([info('BTCUSDT'), info('PEPEUSDT', { tickSize: '0.00001000', stepSize: '1' })], T0);
-    expect(result).toEqual({ inserted: 2, updated: 0, rejected: [] });
+    expect(result).toEqual({ inserted: 2, updated: 0, rejected: [], rejectedCount: 0 });
     expect(await repo.getId('BTCUSDT')).toEqual(expect.any(Number));
     expect(row('PEPEUSDT')).toMatchObject({
       base_asset: 'PEPE', quote_asset: 'USDT', contract_type: 'PERPETUAL', status: 'TRADING',
@@ -39,7 +39,7 @@ describe('repositori simbol', () => {
     await repo.upsertFromExchange([info('BTCUSDT')], T0);
     const id = await repo.getId('BTCUSDT');
     const result = await repo.upsertFromExchange([info('BTCUSDT', { status: 'SETTLING', tickSize: '0.20' })], T0 + HOUR);
-    expect(result).toEqual({ inserted: 0, updated: 1, rejected: [] });
+    expect(result).toEqual({ inserted: 0, updated: 1, rejected: [], rejectedCount: 0 });
     expect(await repo.getId('BTCUSDT')).toBe(id);
     expect(row('BTCUSDT')).toMatchObject({ status: 'SETTLING', tick_size: '0.20', first_seen_at: T0, last_seen_at: T0 + HOUR });
   });
@@ -105,7 +105,7 @@ describe('repositori simbol', () => {
 
   it('EDGE-SYM-003 duplikat dalam satu panggilan: entri terakhir menang', async () => {
     const result = await repo.upsertFromExchange([info('BTCUSDT', { tickSize: '0.10' }), info('BTCUSDT', { tickSize: '0.01' })], T0);
-    expect(result).toEqual({ inserted: 1, updated: 0, rejected: [] });
+    expect(result).toEqual({ inserted: 1, updated: 0, rejected: [], rejectedCount: 0 });
     expect(row('BTCUSDT').tick_size).toBe('0.01');
     expect(await repo.setMonitored(['BTCUSDT', 'BTCUSDT'], T0)).toEqual({ monitored: ['BTCUSDT'], skipped: [] });
   });
@@ -131,9 +131,31 @@ describe('repositori simbol', () => {
     ], T0);
     expect(result.inserted).toBe(1);
     expect(result.rejected).toHaveLength(8);
+    expect(result.rejectedCount).toBe(8);
     expect(result.rejected.every((r) => r.errors.length > 0)).toBe(true);
     expect(result.rejected.map((r) => r.symbol)).toContain(evil);
     expect(db.prepare('SELECT symbol FROM symbols').all()).toEqual([{ symbol: 'BNBUSDT' }]);
+  });
+
+  it('UNIT-SYM-007 kontrak delivery dari exchangeInfo (SYNUSDT_270326) tidak disimpan tetapi dilaporkan: rejectedCount 1 + simbol & alasannya', async () => {
+    const result = await repo.upsertFromExchange([info('SYNUSDT'), info('SYNUSDT_270326', { contractType: 'CURRENT_QUARTER' })], T0);
+    expect(result).toEqual({
+      inserted: 1, updated: 0, rejectedCount: 1,
+      rejected: [{ symbol: 'SYNUSDT_270326', errors: ['symbol tidak valid (harus [A-Z0-9]{1,32})'] }],
+    });
+    expect(row('SYNUSDT_270326')).toBeUndefined();
+  });
+
+  it('EDGE-SYM-005 120 entri tidak valid → rejected dibatasi 50 entri pertama, rejectedCount 120; simbol panjang dipotong 64 karakter, simbol non-teks → null', async () => {
+    const bad = Array.from({ length: 118 }, (_, i) => info(`X${i}USDT_270326`));
+    const result = await repo.upsertFromExchange([info('A'.repeat(100)), { ...info('BTCUSDT'), symbol: 42 }, ...bad, info('BTCUSDT')], T0);
+    expect(result.inserted).toBe(1);
+    expect(result.rejectedCount).toBe(120);
+    expect(result.rejected).toHaveLength(REJECTED_LIST_MAX);
+    expect(REJECTED_LIST_MAX).toBe(50);
+    expect(result.rejected[0].symbol).toBe('A'.repeat(64));
+    expect(result.rejected[1].symbol).toBeNull();
+    expect(result.rejected.at(-1).symbol).toBe('X47USDT_270326');
   });
 
   it('NEG-SYM-002 simbol tidak dikenal: dilewati / null / nol', async () => {

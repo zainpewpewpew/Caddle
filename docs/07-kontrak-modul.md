@@ -86,6 +86,10 @@ createCandleRepository(db, { clock = Date.now }) → {
 }
 createSymbolRepository(db) → { upsertFromExchange(SymbolInfo[], now), setMonitored(symbols[], now),
   listMonitored(): Promise<string[]>, markDelisted(symbols[], now), getId(symbol) }
+upsertFromExchange(...) → Promise<{ inserted, updated, rejectedCount, rejected: [{ symbol: string|null, errors }] }>
+  // entri yang gagal validasi (mis. kontrak delivery XXXUSDT_YYMMDD) tidak disimpan; rejectedCount = total,
+  // rejected = maks REJECTED_LIST_MAX (50) entri pertama, symbol dipotong ≤ 64 karakter. Scanner mencatatnya
+  // sekali per discovery (debug bila semuanya kontrak delivery, selain itu info) — bukan error ingesti.
 createIngestionStateRepository(db, { errorRetention }) → {
   recordRun({ startedAt, finishedAt, symbols, candles, errors }),
   recordError({ at, source, message }),           // pesan dipotong ≤ 500 karakter
@@ -257,6 +261,7 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 | `heartbeat({ at, state })` dengan metrik terpisah | `state` = snapshot `status()` lengkap | Metrik sempat hilang karena kontrak tidak cocok; satu objek menghindari drift |
 | Scanner tanpa info likuiditas | `liquidityOf(symbol)` | Risk flag `POOR_LIQUIDITY`/`WIDE_SPREAD` butuh data discovery |
 | Sinyal simbol yang delisted/berhenti dipantau tetap terbuka selamanya | `closeOpenForSymbol` + `pipeline.closeSymbol` + `onMonitoringStopped` scanner | Expiry hanya maju saat ada candle baru; tanpa penutupan eksplisit screener terus menampilkan sinyal basi |
+| `upsertFromExchange` → `{ inserted, updated, rejected }` (tak terbatas, diabaikan scanner) | `+ rejectedCount`, `rejected` dibatasi 50; scanner mencatatnya per discovery | Simbol yang tidak lolos pola (kontrak delivery) sebelumnya hilang tanpa jejak |
 | Worker memakai jam lokal (`Date.now`) | `createServerClock` + sinkronisasi `/fapi/v1/time` tiap siklus scanner | Jam lokal yang lebih cepat membuat kline final WS ditolak ("belum tertutup"); yang lebih lambat dapat menganggap candle berjalan tertutup |
 | Risk flag likuiditas selalu dinilai dengan `DEFAULT_VIEW_PARAMS` | `liquidityOf` menyertakan `thresholds` dari `settings.liquidity`; `analyzeAt` menerima `params.view` | Batas pengguna (terutama mode manual) harus sama dengan batas yang ditampilkan di penjelasan; backtest tetap dapat memberi ambangnya sendiri |
 | `createSignalRepository(db)` | `+ { clock }`, `lastEventCandleTime` | Tes deterministik; titik awal replay yang persisten |

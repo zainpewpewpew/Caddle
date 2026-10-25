@@ -4,6 +4,10 @@
 import { isValidSymbol } from '../../ingestion/candleValidator.js';
 
 const TEXT_MAX = 32;
+// Batas daftar entri yang ditolak di hasil upsertFromExchange (jumlah totalnya tetap dilaporkan di rejectedCount),
+// agar respons exchangeInfo yang aneh tidak menghasilkan log/objek tanpa batas.
+export const REJECTED_LIST_MAX = 50;
+const REJECTED_SYMBOL_MAX = 64;
 const DECIMAL_PATTERN = /^[0-9]+(\.[0-9]+)?([eE]-?[0-9]+)?$/;
 
 const isText = (value, { allowEmpty = false } = {}) => typeof value === 'string'
@@ -80,20 +84,31 @@ export function createSymbolRepository(db) {
   return {
     /**
      * Menyisipkan/memperbarui metadata simbol dari exchangeInfo dalam satu transaksi.
-     * Entri tidak valid dikembalikan di `rejected`; duplikat dalam masukan → entri terakhir menang.
+     * Entri tidak valid (mis. kontrak delivery `XXXUSDT_YYMMDD` yang tidak lolos pola simbol) TIDAK disimpan dan
+     * dilaporkan: `rejectedCount` = jumlah total, `rejected` = maks REJECTED_LIST_MAX entri pertama
+     * (`symbol` = teks ≤ 64 karakter atau null). Duplikat dalam masukan → entri terakhir menang.
      * @param {Array<object>} symbols SymbolInfo[]
      * @param {number} now epoch ms
-     * @returns {Promise<{ inserted: number, updated: number, rejected: Array<{ symbol: unknown, errors: string[] }> }>}
+     * @returns {Promise<{ inserted: number, updated: number, rejectedCount: number,
+     *   rejected: Array<{ symbol: string|null, errors: string[] }> }>}
      */
     async upsertFromExchange(symbols, now) {
       assertArray(symbols, 'symbols');
       assertNow(now);
       const rejected = [];
+      let rejectedCount = 0;
       const rows = new Map();
       for (const info of symbols) {
         const { errors, row } = toRow(info, now);
-        if (errors.length) rejected.push({ symbol: info?.symbol ?? null, errors });
-        else rows.set(row.symbol, row);
+        if (errors.length) {
+          rejectedCount += 1;
+          if (rejected.length < REJECTED_LIST_MAX) {
+            const symbol = typeof info?.symbol === 'string' ? info.symbol.slice(0, REJECTED_SYMBOL_MAX) : null;
+            rejected.push({ symbol, errors });
+          }
+        } else {
+          rows.set(row.symbol, row);
+        }
       }
       return db.transaction(() => {
         let inserted = 0;
@@ -107,7 +122,7 @@ export function createSymbolRepository(db) {
             inserted += 1;
           }
         }
-        return { inserted, updated, rejected };
+        return { inserted, updated, rejected, rejectedCount };
       })();
     },
 

@@ -661,6 +661,11 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       { symbol: 'THINUSDT', status: 'TRADING', contract_type: 'PERPETUAL', tick_size: '0.0001', step_size: '0.1', is_monitored: 0, monitored_since: null, delisted_at: null },
     ]);
     expect(await repos.symbols.listMonitored()).toEqual([DOWN, SA]);
+    // …dan tidak diam-diam: dicatat sekali (debug — kontrak delivery memang diharapkan), bukan error ingesti.
+    expect(logs.filter((e) => e.msg === 'simbol exchangeInfo tidak disimpan (format simbol tidak didukung)')).toEqual([{
+      level: 'debug', msg: expect.any(String),
+      fields: { count: 1, symbols: ['SYNUSDT_270326'], reasons: ['symbol tidak valid (harus [A-Z0-9]{1,32})'] },
+    }]);
 
     // Candle tertutup dari REST tersimpan persis (desimal string → float → SQLite), urut, tanpa candle berjalan.
     for (const symbol of [SA, DOWN]) {

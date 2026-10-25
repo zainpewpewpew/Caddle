@@ -235,6 +235,7 @@ function setup({
   liquidity = DEFAULT_SCANNER_SETTINGS.liquidity,
   serverClock,
   onMonitoringStopped,
+  logger = silentLogger,
 } = {}) {
   const log = [];
   const timers = createFakeTimers();
@@ -258,7 +259,7 @@ function setup({
       log.push(['analysis', e.candles.map((c) => c.openTime)]);
     }),
     clock: timers.clock,
-    logger: silentLogger,
+    logger,
     discoverSymbols: fakeDiscover,
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
@@ -691,6 +692,29 @@ describe('rediscovery & delisting', () => {
     await scanner.stop();
     const base = { rest, repos, streamFactory: ctx.streams.factory, getSettings: async () => ({}), discoverSymbols: fakeDiscover };
     expect(() => createScanner({ ...base, onMonitoringStopped: 'tutup' })).toThrow(TypeError);
+  });
+
+  it('UNIT-SCN-016 simbol exchangeInfo yang ditolak repositori dicatat sekali per discovery: delivery saja → debug, bentuk lain → info; bukan error ingesti', async () => {
+    const entries = [];
+    const at = (level) => (fields, msg) => entries.push({ level, fields, msg });
+    const logger = { debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error') };
+    const { scanner, repos, timers } = setup({ symbols: ['BTCUSDT'], logger });
+    repos.symbols.upsertFromExchange
+      .mockResolvedValueOnce({ inserted: 1, updated: 0, rejectedCount: 1, rejected: [{ symbol: 'BTCUSDT_270326', errors: ['symbol tidak valid (harus [A-Z0-9]{1,32})'] }] })
+      .mockResolvedValueOnce({ inserted: 0, updated: 1, rejectedCount: 3, rejected: [{ symbol: 'BTCUSDT_270326', errors: ['a'] }, { symbol: null, errors: ['b'] }] })
+      .mockResolvedValueOnce({ inserted: 0, updated: 1, rejectedCount: 0, rejected: [] });
+    const skipped = () => entries.filter((e) => e.msg === 'simbol exchangeInfo tidak disimpan (format simbol tidak didukung)');
+    await scanner.start();
+    expect(skipped()).toEqual([{ level: 'debug', msg: expect.any(String), fields: {
+      count: 1, symbols: ['BTCUSDT_270326'], reasons: ['symbol tidak valid (harus [A-Z0-9]{1,32})'],
+    } }]);
+    await timers.advance(3_600_000);
+    expect(skipped()[1]).toEqual({ level: 'info', msg: expect.any(String), fields: { count: 3, symbols: ['BTCUSDT_270326', null], reasons: ['a', 'b'] } });
+    await timers.advance(3_600_000);
+    expect(skipped()).toHaveLength(2);
+    expect(recordedErrors(repos)).toEqual([]);
+    expect(entries.filter((e) => e.level === 'warn' || e.level === 'error')).toEqual([]);
+    await scanner.stop();
   });
 
   it('EDGE-SCN-004 rediscovery tanpa perubahan tidak membuat ulang stream', async () => {

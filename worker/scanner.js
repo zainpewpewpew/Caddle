@@ -33,6 +33,9 @@ export const SCANNER_DEFAULTS = Object.freeze({
 });
 
 const MESSAGE_MAX = 500;
+// Kontrak delivery Binance (mis. BTCUSDT_250627): ditolak pola simbol repositori, dan itu memang diharapkan.
+const DELIVERY_SYMBOL = /^[A-Z0-9]+_\d{6}$/;
+const SKIPPED_LOG_MAX = 20;
 const noopLogger = Object.freeze({ debug() {}, info() {}, warn() {}, error() {} });
 
 class ScannerStopped extends Error {
@@ -543,8 +546,24 @@ export function createScanner({
     return { symbols: Array.isArray(symbols) ? symbols : [], selected: chosen.map((s) => s.symbol) };
   }
 
+  /**
+   * Simbol exchangeInfo yang tidak disimpan repositori (format simbol tidak didukung) dicatat sekali per
+   * discovery — BUKAN error ingesti. Kontrak delivery (`XXXUSDT_YYMMDD`) memang diharapkan → debug;
+   * selain itu (bentuk tidak terduga) → info.
+   */
+  function logSkippedSymbols(result) {
+    const list = Array.isArray(result?.rejected) ? result.rejected : [];
+    const count = Number.isInteger(result?.rejectedCount) ? result.rejectedCount : list.length;
+    if (count === 0) return;
+    const symbols = list.map((r) => (typeof r?.symbol === 'string' ? r.symbol : null));
+    const expected = symbols.length === count && symbols.every((s) => s !== null && DELIVERY_SYMBOL.test(s));
+    const reasons = [...new Set(list.flatMap((r) => (Array.isArray(r?.errors) ? r.errors : [])))].slice(0, 5);
+    logger[expected ? 'debug' : 'info']({ count, symbols: symbols.slice(0, SKIPPED_LOG_MAX), reasons },
+      'simbol exchangeInfo tidak disimpan (format simbol tidak didukung)');
+  }
+
   async function syncSymbols(exchange, selected, now) {
-    await repos.symbols.upsertFromExchange(exchange, now);
+    logSkippedSymbols(await repos.symbols.upsertFromExchange(exchange, now));
     for (const s of exchange) symbolInfo.set(s.symbol, s);
     const previously = new Set(monitored);
     if (!dbMonitoredChecked) {
