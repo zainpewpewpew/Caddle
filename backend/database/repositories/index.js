@@ -1,3 +1,4 @@
+import { createSignalRepository } from '../../signals/signalRepository.js';
 import { createAuditRepository } from './auditRepository.js';
 import { createCandleRepository } from './candleRepository.js';
 import { createIngestionStateRepository } from './ingestionStateRepository.js';
@@ -9,7 +10,7 @@ import { createUserRepository } from './userRepository.js';
 
 /**
  * @param {import('better-sqlite3').Database} db
- * @param {{ clock?: () => number }} [options] jam untuk repositori candle (default Date.now)
+ * @param {{ clock?: () => number }} [options] jam untuk repositori candle & sinyal (default Date.now)
  */
 export function createRepositories(db, { clock } = {}) {
   return {
@@ -21,5 +22,6 @@ export function createRepositories(db, { clock } = {}) {
     candles: createCandleRepository(db, clock ? { clock } : {}),
     symbols: createSymbolRepository(db),
     ingestion: createIngestionStateRepository(db),
+    signals: createSignalRepository(db, clock ? { clock } : {}),
   };
 }

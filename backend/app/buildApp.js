@@ -7,6 +7,7 @@ import Fastify from 'fastify';
 import { authRoutes } from '../api/authRoutes.js';
 import { healthRoutes } from '../api/healthRoutes.js';
 import { settingsRoutes } from '../api/settingsRoutes.js';
+import { signalRoutes } from '../api/signalRoutes.js';
 import { systemRoutes } from '../api/systemRoutes.js';
 import { registerAuth } from '../auth/authPlugin.js';
 import { createAuthService } from '../auth/authService.js';
@@ -107,6 +108,7 @@ export async function buildApp({ config, db, clock = Date.now, hasherOptions, lo
   await app.register(authRoutes, { ...deps, authService, sessionService });
   await app.register(settingsRoutes, deps);
   await app.register(systemRoutes, { ...deps, schemaVersion, startedAt: clock() });
+  await app.register(signalRoutes, { signals: repos.signals, candles: repos.candles });
 
   // Frontend statis. index.html hanya disajikan lewat route '/' yang memeriksa sesi.
   await app.register(fastifyStatic, {
