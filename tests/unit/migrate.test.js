@@ -20,7 +20,7 @@ describe('migrasi database', () => {
   it('UNIT-DB-001 seluruh entitas wajib dibuat', () => {
     const db = openDatabase(':memory:');
     const result = migrate(db);
-    expect(result.applied).toEqual([1, 2]);
+    expect(result.applied).toEqual([1, 2, 3]);
     expect(tables(db)).toEqual(expect.arrayContaining(REQUIRED_TABLES));
   });
 
@@ -70,7 +70,9 @@ describe('migrasi database', () => {
       symbol_id: 1, timeframe: '5m', open_time: 0, close_time: 299_999, open: 10, high: 11, low: 9, close: 10.5,
       volume: 1, quote_volume: 10, trade_count: 1, is_closed: 1, source: 'rest', ingested_at: 0, ...overrides,
     });
-    const insertCandle = db.prepare(`INSERT INTO candles VALUES (@symbol_id, @timeframe, @open_time, @close_time, @open, @high, @low,
+    const insertCandle = db.prepare(`INSERT INTO candles (symbol_id, timeframe, open_time, close_time, open, high, low,
+      close, volume, quote_volume, trade_count, is_closed, source, ingested_at)
+      VALUES (@symbol_id, @timeframe, @open_time, @close_time, @open, @high, @low,
       @close, @volume, @quote_volume, @trade_count, @is_closed, @source, @ingested_at)`);
 
     it('UNIT-DB-004 identitas candle unik: symbol + timeframe + open_time', () => {

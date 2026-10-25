@@ -23,7 +23,7 @@ describe('alur positif API', () => {
   it('POS-SYS-002 status sistem berisi metrik nyata & komponen yang belum ada ditandai jujur', async () => {
     const res = (await ctx.app.inject({ url: '/api/system/status', headers: { cookie: auth.cookie } })).json();
     expect(res.database.status).toBe('ok');
-    expect(res.database.schemaVersion).toBe(2);
+    expect(res.database.schemaVersion).toBe(3);
     expect(res.memory.rssBytes).toBeGreaterThan(0);
     expect(res.binance.status).toBe('not_implemented');
     expect(res.scanner.status).toBe('not_implemented');
