@@ -207,6 +207,25 @@ describe('state machine sinyal', () => {
     expect(kept.snap).toMatchObject({ state: 'QUIET', barsInState: 5 });
   });
 
+  it('EDGE-SSM-006 gap 200 bar setelah EARLY_BULLISH (expiry 36) lalu close +1,5 ATR → EXPIRED NO_PROGRESS tanpa alert, bukan MOMENTUM_BUILDING; jatuh tempo tepat di candle pasca-gap tetap boleh maju', () => {
+    const opened = transition(null, input(0, 100, { sa: { earlyScore: 80 } }));
+    expect(opened.next.state).toBe('EARLY_BULLISH');
+    expect(DEFAULT_SIGNAL_PARAMS.expiryBars.EARLY_BULLISH).toBe(36);
+    const after = transition(opened.next, input(200, 101.5, { market: { atr: 1, rvol: 3, resistance: 101 } }));
+    expect(after.event).toMatchObject({ fromState: 'EARLY_BULLISH', toState: 'EXPIRED', reason: 'NO_PROGRESS',
+      detail: { barsInPrevState: 200, gapBars: 199 } });
+    expect(after.alert).toBe(false);
+    expect(after.next).toMatchObject({ state: 'EXPIRED', peakState: 'EARLY_BULLISH' });
+    // Kedaluwarsa lebih dulu daripada invalidasi pada candle pasca-gap.
+    expect(transition(opened.next, input(200, 90)).event).toMatchObject({ toState: 'EXPIRED', reason: 'NO_PROGRESS' });
+    // Batas expiry jatuh tepat di candle pasca-gap (36 bar) → candle ini masih dinilai; maju bila syarat terpenuhi.
+    const onTime = transition(opened.next, input(36, 101.5));
+    expect(onTime.event).toMatchObject({ toState: 'MOMENTUM_BUILDING', reason: 'PRICE_ATR_ADVANCE', detail: { gapBars: 35 } });
+    expect(transition(opened.next, input(37, 101.5)).event).toMatchObject({ toState: 'EXPIRED', reason: 'NO_PROGRESS' });
+    // Tanpa gap: tidak ada gapBars di detail.
+    expect(transition(opened.next, input(1, 101.5)).event.detail).not.toHaveProperty('gapBars');
+  });
+
   it('UNIT-SSM-007 invalidationPrice dibekukan saat deteksi: boleh naik, tidak boleh turun, tidak di atas close', () => {
     const steps = [
       input(0, 100),

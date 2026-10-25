@@ -20,6 +20,8 @@
 // | idem                         | terdeteksi tetapi close ≤ invalidationPrice pola                       | NO_PATTERN        | (tanpa event)            | –     |
 // | idem                         | terdeteksi, earlyScore ≥ earlyMinScore                                 | EARLY_BULLISH     | PATTERN_DETECTED_EARLY   | ya    |
 // | idem                         | terdeteksi, earlyScore < earlyMinScore                                 | QUIET             | PATTERN_DETECTED         | tidak |
+// | QUIET/EARLY/MOMENTUM/BREAKOUT| barsInState − 1 ≥ expiryBars[state] (batas expiry terlewati di dalam   | EXPIRED           | NO_PROGRESS³             | tidak |
+// |                              | gap data, SEBELUM candle ini) — diperiksa sebelum semua baris di bawah |                   |                          |       |
 // | QUIET/EARLY/MOMENTUM/BREAKOUT| close < invalidationPrice                                              | INVALIDATED       | CLOSE_BELOW_INVALIDATION | ya bila dari state alert¹ |
 // | QUIET/EARLY/MOMENTUM         | close > max(resistance, firstDetectedPrice) ∧ RVOL ≥ breakoutRvol      | BREAKOUT          | BREAKOUT_CONFIRMED       | ya    |
 // | QUIET/EARLY                  | close ≥ firstDetectedPrice + momentumAtrMultiple × ATR                 | MOMENTUM_BUILDING | PRICE_ATR_ADVANCE        | ya    |
@@ -35,6 +37,11 @@
 //   ditutup oleh signalRepository.closeOpenForSymbol (dipicu scanner → pipeline.closeSymbol). Event-nya
 //   memakai candleTime = candle terakhir yang dievaluasi, occurredAt = waktu penutupan, price = close
 //   candle tersimpan terakhir (null bila tidak ada); reason di MONITORING_STOP_REASONS (params.js).
+// ³ Setelah gap data panjang (outage, celah yang tidak terisi, backtest dengan lubang) sinyal yang sudah
+//   jatuh tempo sebelum candle pasca-gap ditutup EXPIRED, bukan dipromosikan/di-alert berdasarkan
+//   firstDetectedPrice yang sudah basi. Tanpa gap (selisih 1 bar) barsInState − 1 = barsInState
+//   sebelumnya < expiryBars, sehingga baris ini tidak pernah cocok. Setiap event transisi pada candle
+//   pasca-gap memuat detail.gapBars (jumlah candle yang hilang).
 //
 // Aturan tambahan:
 // - Transisi maju boleh melompat (mis. QUIET → BREAKOUT); tidak ada downgrade, sehingga alert
@@ -47,7 +54,8 @@
 //   selalu mereferensikan versinya); invalidationPrice hanya boleh NAIK — dari pola utama versi
 //   yang sama, yang masih terdeteksi, dan masih di bawah close; peakPrice = max(peak, high).
 // - classification sinyal = gabungan pola yang pernah terdeteksi selama sinyal hidup (SA + PVA → BOTH).
-// - barsInState dihitung dari selisih waktu candle (gap data tetap menghitung waktu berjalan).
+// - barsInState dihitung dari selisih waktu candle (gap data tetap menghitung waktu berjalan); sinyal
+//   yang jatuh tempo di dalam gap kedaluwarsa lebih dulu (lihat ³).
 // - Setelah terminal, sinyal ditutup; deteksi pada candle berikutnya membuka sinyal BARU
 //   (prev terminal diperlakukan seperti null; event fromState 'NO_PATTERN').
 
@@ -184,6 +192,8 @@ function nextState(prev, input, view, barsInState, p) {
   const rvol = optionalNumber(market.rvol);
   const resistance = optionalNumber(market.resistance);
 
+  // Jatuh tempo sebelum candle ini (di dalam gap): kedaluwarsa dulu, tanpa promosi/alert dari harga basi.
+  if (barsInState - 1 >= p.expiryBars[prev.state]) return ['EXPIRED', 'NO_PROGRESS'];
   if (prev.invalidationPrice !== null && close < prev.invalidationPrice) return ['INVALIDATED', 'CLOSE_BELOW_INVALIDATION'];
   if (rank < STATE_RANK.BREAKOUT && resistance !== null && rvol !== null && rvol >= p.breakoutRvol
     && close > Math.max(resistance, prev.firstDetectedPrice)) return ['BREAKOUT', 'BREAKOUT_CONFIRMED'];
@@ -201,7 +211,8 @@ function nextState(prev, input, view, barsInState, p) {
 function advance(prev, input, p) {
   const { candle, patterns, context } = input;
   const view = currentView(input);
-  const barsInState = prev.barsInState + barsElapsed(prev, candle);
+  const elapsed = barsElapsed(prev, candle);
+  const barsInState = prev.barsInState + elapsed;
   const updated = {
     ...prev,
     classification: mergeClassification(prev.classification, patterns.classification),
@@ -228,7 +239,8 @@ function advance(prev, input, p) {
   const event = {
     fromState: prev.state, toState, candleTime: candle.openTime, occurredAt: candle.closeTime, price: candle.close, reason,
     detail: { ...marketDetail(input.market ?? {}), invalidationPrice: prev.invalidationPrice, firstDetectedPrice: prev.firstDetectedPrice,
-      barsInPrevState: barsInState, patternScore: view.patternScore, earlyScore: view.earlyScore },
+      barsInPrevState: barsInState, patternScore: view.patternScore, earlyScore: view.earlyScore,
+      ...(elapsed > 1 ? { gapBars: elapsed - 1 } : {}) },
   };
   const alert = ALERT_STATES.includes(toState) || (toState === 'INVALIDATED' && ALERT_STATES.includes(prev.state));
   return { next, event, alert };
