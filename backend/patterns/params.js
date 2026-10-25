@@ -46,7 +46,6 @@ export const PARAM_SPECS = Object.freeze({
     subWindowLength: spec('integer', 2, 50, 'Panjang tiap sub-jendela (candle)'),
     minVolumeGrowth: spec('number', 1, 20, 'Minimum rasio volume sub-jendela terakhir / pertama'),
     maxSpikeDominance: spec('number', 0.01, 1, 'Batas atas porsi volume satu candle dalam jendela'),
-    maxSpikeGrowthShare: spec('number', 0.05, 1, 'Batas atas porsi kenaikan volume sub-jendela terakhir yang berasal dari satu candle'),
     maxSingleMoveShare: spec('number', 0.1, 1, 'Batas atas porsi kenaikan harga dari satu candle'),
     minHigherLows: spec('integer', 1, 5, 'Minimum higher low terkonfirmasi berurutan'),
     maxAtrPercent: spec('number', 0.001, 0.5, 'Batas atas ATR/close'),
@@ -75,11 +74,8 @@ export const DEFAULT_SA_PARAMS = Object.freeze({
 });
 
 /**
- * Default PVA. Jendela progresif = subWindows × subWindowLength = 20 candle.
- * maxSpikeGrowthShare 0,6: satu candle boleh menyumbang paling banyak 60% kenaikan volume
- * sub-jendela terakhir. Kenaikan merata memberi 1/subWindowLength (0,2); ramp progresif sintetis
- * ±0,21–0,30; satu lonjakan 3–5× pada volume datar ±0,85–1. 0,6 > 1/2 sehingga sah untuk setiap
- * subWindowLength yang diizinkan.
+ * Default PVA. Jendela progresif = subWindows × subWindowLength = 20 candle. minVolumeGrowth
+ * berlaku untuk volumeGrowth (rata-rata) dan volumeGrowthBroad (median bawah sub-jendela terakhir).
  */
 export const DEFAULT_PVA_PARAMS = Object.freeze({
   rvolPeriod: 50,
@@ -88,7 +84,6 @@ export const DEFAULT_PVA_PARAMS = Object.freeze({
   subWindowLength: 5,
   minVolumeGrowth: 1.5,
   maxSpikeDominance: 0.2,
-  maxSpikeGrowthShare: 0.6,
   maxSingleMoveShare: 0.5,
   minHigherLows: 1,
   maxAtrPercent: 0.05,
@@ -159,11 +154,6 @@ export function validateParams(params, pattern) {
     const floor = 1 / (params.subWindows * params.subWindowLength);
     if (params.maxSpikeDominance <= floor) {
       errors.push({ path: '/maxSpikeDominance', message: `Harus lebih besar dari 1/(subWindows×subWindowLength) = ${floor}` });
-    }
-    // Kenaikan merata di sub-jendela terakhir memberi porsi 1/subWindowLength; ambang ≤ itu mustahil.
-    const shareFloor = 1 / params.subWindowLength;
-    if (params.maxSpikeGrowthShare <= shareFloor) {
-      errors.push({ path: '/maxSpikeGrowthShare', message: `Harus lebih besar dari 1/subWindowLength = ${shareFloor}` });
     }
   }
   return errors;

@@ -93,12 +93,14 @@ describe('parameter pola', () => {
     expect(paths(errors)).toEqual(['/maxSpikeDominance']);
   });
 
-  it('NEG-PPRM-008 aturan lintas-field PVA: maxSpikeGrowthShare harus > 1/subWindowLength (batas tepat ditolak)', () => {
-    expect(paths(validateParams({ ...DEFAULT_PVA_PARAMS, subWindowLength: 10, maxSpikeGrowthShare: 0.1 }, 'PVA'))).toEqual(['/maxSpikeGrowthShare']);
-    expect(validateParams({ ...DEFAULT_PVA_PARAMS, subWindowLength: 10, maxSpikeGrowthShare: 0.11 }, 'PVA')).toEqual([]);
-    expect(paths(validateParams({ ...DEFAULT_PVA_PARAMS, maxSpikeGrowthShare: 0.2 }, 'PVA'))).toEqual(['/maxSpikeGrowthShare']);
-    // Default sah untuk setiap subWindowLength yang diizinkan spesifikasi (min 2 → 1/2 < 0,6).
-    expect(DEFAULT_PVA_PARAMS.maxSpikeGrowthShare).toBeGreaterThan(1 / PARAM_SPECS.PVA.subWindowLength.min);
+  it('NEG-PPRM-008 PVA tidak punya ambang porsi lonjakan terpisah: maxSpikeGrowthShare → parameter tidak dikenal', () => {
+    // volumeGrowthBroad memakai minVolumeGrowth, sehingga tidak ada ambang yang dapat dilonggarkan
+    // sampai satu candle boleh menyumbang mayoritas kenaikan.
+    expect(Object.hasOwn(PARAM_SPECS.PVA, 'maxSpikeGrowthShare')).toBe(false);
+    expect(Object.hasOwn(DEFAULT_PVA_PARAMS, 'maxSpikeGrowthShare')).toBe(false);
+    for (const value of [0.11, 0.6, 1]) {
+      expect(validateParams({ ...DEFAULT_PVA_PARAMS, maxSpikeGrowthShare: value }, 'PVA')).toEqual([{ path: '/maxSpikeGrowthShare', message: 'Parameter tidak dikenal' }]);
+    }
   });
 
   it('NEG-PPRM-007 resolveParams melempar PatternParamsError (RangeError) berisi daftar error', () => {
@@ -142,8 +144,8 @@ describe('parameter pola', () => {
     const corners = (pattern, keys) => keys.reduce((acc, k) => acc.flatMap((o) => [PARAM_SPECS[pattern][k].min, PARAM_SPECS[pattern][k].max].map((v) => ({ ...o, [k]: v }))), [{}]);
     for (const [pattern, defaults, keys] of [['SA', DEFAULT_SA_PARAMS, ['rvolPeriod', 'rvolWindow', 'priceLookback']], ['PVA', DEFAULT_PVA_PARAMS, ['rvolPeriod', 'subWindows', 'subWindowLength']]]) {
       for (const corner of corners(pattern, keys)) {
-        const params = { ...defaults, ...corner, maxSpikeDominance: 0.5, maxSpikeGrowthShare: 0.9 };
-        if (pattern === 'SA') { delete params.maxSpikeDominance; delete params.maxSpikeGrowthShare; }
+        const params = { ...defaults, ...corner, maxSpikeDominance: 0.5 };
+        if (pattern === 'SA') delete params.maxSpikeDominance;
         const errors = validateParams(params, pattern);
         if (errors.length === 0) expect(requiredCandles(pattern, params), JSON.stringify(corner)).toBeLessThanOrEqual(ANALYSIS_LOOKBACK);
         else expect(requiredCandles(pattern, params), JSON.stringify(corner)).toBeGreaterThan(MAX_WARMUP_CANDLES);
