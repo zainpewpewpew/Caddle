@@ -4,14 +4,16 @@
 //      sudah ditolak loadConfig),
 //   2. server hanya lokal: HOST loopback, APP_ORIGIN loopback, dan TRUST_PROXY tidak diset — origin
 //      publik atau reverse proxy berarti server dijangkau dari jaringan walau bind ke 127.0.0.1,
-//   3. tabel users kosong — akun yang ada tidak pernah ditimpa, dibuat ulang, atau di-reset.
+//   3. tabel users kosong — akun yang ada tidak pernah ditimpa, dibuat ulang, atau di-reset. "Kosong"
+//      diperiksa ulang secara atomik saat insert (createUser requireEmpty → users.createWithLimit), karena
+//      `npm run user:create` atau instance server lain dapat membuat pengguna selama Argon2 berjalan.
 // Pembuatan memakai createUser, sehingga Argon2id, batas MAX_USERS, dan audit `user.create` sama dengan
 // CLI. Kata sandi default `admin123@` dipilih pemilik dan sengaja TIDAK lolos kebijakan kata sandi
 // (kurang dari 12 karakter, memuat username), jadi hanya akun ini yang dibuat tanpa cek kebijakan;
 // user:create dan user:password tetap wajib lolos. Karena itu syarat "hanya lokal" di atas wajib, dan
 // server menolak start bila akun default MASIH memakai kata sandi default (yang sekarang maupun yang
 // lama) sementara server tidak lagi hanya lokal atau NODE_ENV=production.
-import { createUser } from './userAdmin.js';
+import { UserAdminError, createUser } from './userAdmin.js';
 
 export const DEFAULT_CREDENTIALS = Object.freeze({ username: 'admin', password: 'admin123@', role: 'admin' });
 // Kata sandi default versi sebelumnya; database yang dibuat dengan versi itu tetap dijaga pemeriksaan paparan.
@@ -70,10 +72,11 @@ async function assertDefaultPasswordNotExposed({ users, hasher }, exposure) {
 
 /**
  * Membuat akun default prototipe bila (dan hanya bila) semua syarat di kepala file terpenuhi.
- * Idempoten: start berikutnya melihat tabel users tidak kosong dan tidak melakukan apa pun.
+ * Idempoten: start berikutnya melihat tabel users tidak kosong, tidak membuat apa pun, dan hanya mencatat
+ * satu log info netral (jumlah pengguna, tanpa username) agar pemilik tahu mengapa kredensial default ditolak.
  * @param {{ users: any, audit: any, hasher: any, maxUsers: number, clock: () => number,
  *           config: { nodeEnv: string, host: string, appOrigin: string, trustProxy: false | string[], defaultUser: boolean },
- *           log: { warn: (msg: string) => void } }} deps
+ *           log: { info: (msg: string) => void, warn: (msg: string) => void } }} deps
  * @returns {Promise<{ created: true, id: number } | { created: false, reason: 'disabled' | 'not_development'
  *   | 'users_exist' | 'non_loopback_host' | 'non_loopback_origin' | 'behind_proxy' }>}
  * @throws {DefaultUserError} akun default masih berkata sandi default saat server tidak hanya lokal / produksi
@@ -87,7 +90,14 @@ export async function ensureDefaultUser({ users, audit, hasher, maxUsers, clock,
     log.warn(`DEFAULT_USER diabaikan: akun default hanya dibuat saat NODE_ENV=development (sekarang ${config.nodeEnv})`);
     return { created: false, reason: 'not_development' };
   }
-  if ((await users.count()) > 0) return { created: false, reason: 'users_exist' };
+  // Hanya jumlah, tanpa username (log tidak boleh menjadi daftar akun).
+  const usersExist = (count) => {
+    log.info(`Akun default tidak dibuat: sudah ada ${count} pengguna. Login dengan akun yang ada, `
+      + 'atau ganti kata sandinya: npm run user:password -- --username <nama>');
+    return { created: false, reason: 'users_exist' };
+  };
+  const existing = await users.count();
+  if (existing > 0) return usersExist(existing);
   if (exposure) {
     log.warn(`Akun default TIDAK dibuat: ${exposure.detail}, sehingga server dapat dijangkau dari jaringan dan `
       + 'kredensial default yang publik dapat dipakai siapa pun. Buat pengguna dengan npm run user:create, '
@@ -96,7 +106,16 @@ export async function ensureDefaultUser({ users, audit, hasher, maxUsers, clock,
   }
 
   const { username, password, role } = DEFAULT_CREDENTIALS;
-  const id = await createUser({ users, audit, hasher, maxUsers, clock }, { username, password, role, via: 'default', skipPasswordPolicy: true });
+  let id;
+  try {
+    id = await createUser({ users, audit, hasher, maxUsers, clock }, {
+      username, password, role, via: 'default', requireEmpty: true, skipPasswordPolicy: true,
+    });
+  } catch (err) {
+    // Pengguna lain dibuat (proses lain) selama Argon2 berjalan → sama dengan tabel tidak kosong.
+    if (err instanceof UserAdminError && (err.code === 'users_exist' || err.code === 'username_taken')) return usersExist(await users.count());
+    throw err;
+  }
   log.warn(`Akun default prototipe dibuat — username: ${username}, kata sandi: ${password} (peran ${role}). `
     + `HANYA untuk prototipe lokal. Ganti kata sandinya dengan: ${CHANGE_COMMAND}`);
   return { created: true, id };

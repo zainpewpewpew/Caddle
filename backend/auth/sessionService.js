@@ -10,13 +10,19 @@ const USER_AGENT_MAX = 256;
  */
 export function createSessionService({ sessions, users, config, clock }) {
   return {
-    async create(userId, { ip, userAgent }) {
+    /**
+     * Membuat sesi baru. Dengan `passwordHash` (alur login: hash yang baru saja diverifikasi), sesi hanya
+     * dibuat bila hash tersimpan masih sama — diperiksa atomik bersama insert — dan null bila kata sandi
+     * sudah diganti sementara itu.
+     * @returns {Promise<{ id: number, token: string, csrfToken: string, expiresAt: number, idleExpiresAt: number } | null>}
+     */
+    async create(userId, { ip, userAgent, passwordHash } = {}) {
       const now = clock();
       const token = generateToken();
       const csrfToken = generateToken();
       const expiresAt = now + config.absoluteMs;
       const idleExpiresAt = Math.min(now + config.idleMs, expiresAt);
-      const id = await sessions.create({
+      const row = {
         tokenHash: hashToken(token),
         userId,
         csrfToken,
@@ -25,7 +31,11 @@ export function createSessionService({ sessions, users, config, clock }) {
         now,
         idleExpiresAt,
         expiresAt,
-      });
+      };
+      const id = passwordHash === undefined
+        ? await sessions.create(row)
+        : await sessions.createIfPasswordUnchanged(row, { passwordHash });
+      if (id === null) return null;
       return { id, token, csrfToken, expiresAt, idleExpiresAt };
     },
 

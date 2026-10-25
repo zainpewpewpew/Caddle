@@ -392,20 +392,50 @@ selain itu        → { symbol, status: 'ok' | 'insufficient_data', timeframe: '
 
 ## 10. Administrasi pengguna — `backend/users/`
 
-Dipanggil oleh CLI (`scripts/create-user.js`, `scripts/change-password.js`) dan oleh entry point server (`backend/app/server.js`, setelah `buildApp` menjalankan migrasi). `buildApp` sendiri tidak pernah membuat pengguna, sehingga harness tes & E2E tidak terpengaruh. Kegagalan validasi → `UserAdminError` (pesan Bahasa Indonesia, aman ditampilkan di CLI).
+Dipanggil oleh CLI (`scripts/create-user.js`, `scripts/change-password.js`) dan oleh entry point server (`backend/app/server.js`, setelah `buildApp` menjalankan migrasi). `buildApp` sendiri tidak pernah membuat pengguna, sehingga harness tes & E2E tidak terpengaruh. Kegagalan validasi → `UserAdminError(message, code)` (pesan Bahasa Indonesia, aman ditampilkan di CLI; `code` untuk pemanggil, mis. `'username_taken'`, `'limit_reached'`, `'users_exist'`, atau alasan audit `changePassword`).
+
+CLI berjalan sebagai proses terpisah dari server, dan Argon2 (≥ 100 ms) adalah titik `await` yang panjang. Karena itu setiap keputusan "baca lalu tulis" diambil ulang **atomik di repositori** sesudah Argon2, bukan dari hasil baca sebelum hash.
 
 ```
 // backend/users/userAdmin.js
-createUser({ users, audit, hasher, maxUsers, clock }, { username, password, role, via = 'cli' }) → id
-  // username ^[A-Za-z0-9_.-]{3,32}$, role ∈ ROLES ('admin'|'analyst'), checkPasswordPolicy, username unik (NOCASE),
-  // count < maxUsers; hash Argon2id; audit user.create success { role, via }  (via: 'cli' | 'default')
+createUser({ users, audit, hasher, maxUsers, clock }, { username, password, role, via = 'cli', requireEmpty = false }) → id
+  // username ^[A-Za-z0-9_.-]{3,32}$, role ∈ ROLES ('admin'|'analyst'), checkPasswordPolicy; cek awal username/batas
+  // hanya untuk gagal cepat. Hash Argon2id LEBIH DULU, lalu users.createWithLimit (atomik) memutuskan:
+  // username_taken → 'Username sudah dipakai' | limit_reached → 'Batas N pengguna sudah tercapai'
+  // | not_empty (requireEmpty) → code 'users_exist'. Audit user.create success { role, via }  (via: 'cli' | 'default')
 changePassword({ users, sessions, audit, hasher, clock }, { username, password, via = 'cli' })
   → { userId, revokedSessions }
   // Pengguna tidak dikenal → 'Pengguna tidak ditemukan'; checkPasswordPolicy (konteks username tersimpan);
   // sama dengan kata sandi saat ini → ditolak. Sukses: users.updatePassword lalu
-  // sessions.revokeAllForUser(userId, { reason: 'password_change' }) — SEMUA sesi pengguna itu.
+  // sessions.revokeAllForUser(userId, { reason: 'password_change' }) — SEMUA sesi pengguna itu. Login yang sedang
+  // berjalan dengan kata sandi lama ditolak oleh pemeriksaan hash atomik saat insert sesi (lihat di bawah).
   // Audit user.password_change: success { via, revokedSessions } | failure { reason: 'unknown_user'|'policy'|'unchanged', via }.
   // Kata sandi tidak pernah masuk audit.
+
+// backend/database/repositories/userRepository.js (async; SQLite: transaksi better-sqlite3 BEGIN IMMEDIATE)
+users.createWithLimit({ username, passwordHash, role, now, maxUsers, requireEmpty = false })
+  → { created: true, id } | { created: false, reason: 'not_empty' | 'limit_reached' | 'username_taken' }
+  // COUNT + INSERT satu transaksi IMMEDIATE; SQLITE_CONSTRAINT_UNIQUE → username_taken (tidak pernah SqliteError mentah).
+  // PostgreSQL: kunci (advisory/tabel) di transaksi yang sama sebelum COUNT.
+users.updatePasswordIfUnchanged(id, { expectedHash, passwordHash, now }) → boolean
+  // Compare-and-swap: UPDATE ... WHERE id = @id AND password_hash = @expectedHash. Dipakai rehash saat login.
+users.create(row) → id   // insert tanpa batas, hanya untuk fixture tes
+
+// backend/database/repositories/sessionRepository.js
+sessions.createIfPasswordUnchanged(row, { passwordHash }) → id | null
+  // SELECT users.password_hash + INSERT sesi satu transaksi IMMEDIATE; null bila hash sudah berbeda / pengguna tidak ada.
+  // PostgreSQL: SELECT ... FOR UPDATE pada baris users di transaksi yang sama.
+
+// backend/auth/sessionService.js
+sessionService.create(userId, { ip, userAgent, passwordHash? }) → { id, token, csrfToken, expiresAt, idleExpiresAt } | null
+  // Tanpa passwordHash: insert biasa. Dengan passwordHash (login): lewat createIfPasswordUnchanged; null = kata sandi diganti.
+
+// backend/auth/authService.js — login()
+  // verify(hash lama) → bila needsRehash: hash baru lalu users.updatePasswordIfUnchanged (CAS; gagal → tetap hash lama)
+  // → sessionService.create(..., { passwordHash: hash yang diverifikasi/di-rehash }) → null ⇒ gagal seperti
+  // kata sandi salah (recordFailedLogin + penguncian, audit auth.login failure { reason: 'bad_password', passwordChanged: true },
+  // respons 401 LOGIN_FAILED generik) → sukses: recordSuccessfulLogin + audit. Urutan ganti kata sandi (hash baru LALU
+  // revokeAllForUser) + pemeriksaan atomik ini menjamin tidak ada sesi berkata sandi lama yang tersisa.
 
 // backend/users/defaultUser.js
 DEFAULT_CREDENTIALS = { username: 'admin', password: 'admin123@', role: 'admin' }   // frozen; pilihan pemilik, TIDAK lolos checkPasswordPolicy
@@ -415,13 +445,16 @@ isLoopbackHost(host) → boolean            // hanya '127.0.0.1', '::1', 'localh
 exposureOf(config) → null | { reason, detail }   // null = hanya lokal; urutan cek & reason:
   // 'production' (NODE_ENV) → 'non_loopback_host' (HOST) → 'non_loopback_origin' (hostname APP_ORIGIN) → 'behind_proxy' (TRUST_PROXY)
 ensureDefaultUser({ users, audit, hasher, maxUsers, clock,
-                    config: { nodeEnv, host, appOrigin, trustProxy, defaultUser }, log: { warn } })
+                    config: { nodeEnv, host, appOrigin, trustProxy, defaultUser }, log: { info, warn } })
   → { created: true, id }
   | { created: false, reason: 'disabled'|'not_development'|'users_exist'|'non_loopback_host'|'non_loopback_origin'|'behind_proxy' }
   // Urutan: (1) exposureOf ≠ null → DefaultUserError bila 'admin' aktif & masih berkata sandi default (server.js exit 1);
   // (2) !defaultUser → disabled; (3) nodeEnv ≠ development → not_development (+ warn);
-  // (4) users.count() > 0 → users_exist (tanpa menyentuh akun); (5) exposureOf ≠ null → reason-nya (+ warn);
-  // (6) createUser(..., via: 'default') + satu log.warn berisi username, kata sandi, dan cara menggantinya.
+  // (4) users.count() > 0 → users_exist (tanpa menyentuh akun) + satu log.info netral: jumlah pengguna dan cara
+  //     ganti kata sandi dengan placeholder `<nama>` — tanpa username; (5) exposureOf ≠ null → reason-nya (+ warn);
+  // (6) createUser(..., via: 'default', requireEmpty: true) + satu log.warn berisi username, kata sandi, dan cara
+  //     menggantinya. Bila proses lain (user:create, instance server kedua) membuat pengguna selama Argon2
+  //     (code 'users_exist' / 'username_taken') → users_exist + log.info yang sama, tanpa akun default.
   // Idempoten lintas restart.
 ```
 
@@ -454,4 +487,6 @@ ensureDefaultUser({ users, audit, hasher, maxUsers, clock,
 | `classifyTrend` selalu mengembalikan trend | `classifyTrend` tetap memberi `NEUTRAL` + `INSUFFICIENT_DATA` di bawah warm-up; `buildTimeframeContext` & `buildMarketContext` memetakan tanpa data/HTF basi/data kurang → `trend: null` | Tidak memalsukan konteks (NEUTRAL tampak nyata) saat data tidak cukup |
 | HTF tertinggal ≤ `maxStaleBars` bar selalu ditoleransi | Toleransi 1 bar hanya dalam `settleWindowMs` (60 detik) setelah close HTF yang diharapkan | Candle 1h yang hilang sejak lama tetap dibaca sebagai trend dari data yang lebih tua |
 | Screener memfilter alignment di klien setelah potongan top-200; `limit` > 500 dipotong diam-diam | Filter `alignment` di server sebelum `LIMIT`; `limit` 1–500 (lebih → 400); screener meminta `limit=500` dan menandai batas tercapai (`≥ 500 hasil`) | Hasil screener diam-diam tidak lengkap |
+| `createUser`: hitung → Argon2 → insert; seed default: "tabel kosong" → Argon2 → insert | Argon2 → `users.createWithLimit` (COUNT + INSERT satu transaksi IMMEDIATE, `requireEmpty` untuk seed, UNIQUE → `username_taken`/`users_exist`) | `user:create` bersamaan / seed vs `user:create` melewati `MAX_USERS` atau membuat `admin` padahal pengguna lain sudah ada; seed ganda crash dengan SqliteError UNIQUE |
+| Login: verify → rehash tanpa syarat → `sessionService.create` | Rehash compare-and-swap; sesi dibuat hanya bila `password_hash` masih yang diverifikasi (`sessions.createIfPasswordUnchanged`, atomik) | `npm run user:password` selama verifikasi Argon2 login: sesi baru berkata sandi lama lolos dari `revokeAllForUser`, dan rehash dapat menimpa hash baru dengan kata sandi lama |
 | Batas simbol 2–30 karakter di semua tempat | Discovery: basis 1–20 + `USDT`; API riwayat: 2–30 | Discovery mengikuti format USDT-M; API menerima simbol lama yang masih tersimpan |
