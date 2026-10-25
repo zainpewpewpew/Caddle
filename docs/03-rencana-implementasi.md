@@ -40,7 +40,7 @@
 | WebSocket kline (hanya `x=true` ke tabel kanonik, candle berjalan ke `provisional_candles`), reconnect + jitter, rotasi koneksi, deteksi stale | Selesai | `backend/ingestion/binance/wsClient.js` |
 | Backfill REST setelah reconnect/gap, duplikat & out-of-order | Selesai | `backend/ingestion/backfill.js`, `worker/scanner.js` |
 | Proses `worker/` terpisah (`npm run worker`), heartbeat + metrik ke System Health | Selesai | `worker/`, `backend/system/workerStatus.js` |
-| Tes fixture sintetis deterministik + uji live opt-in (`npm run test:live`) | Selesai; **REST live terverifikasi** di mesin pemilik (2026-10-25); **WebSocket live menunggu uji ulang** setelah perbaikan rute `/market` (lihat `docs/laporan/milestone-2-3-pengujian.md` §6.1) | `tests/unit/ingestion/`, `tests/live/` |
+| Tes fixture sintetis deterministik + uji live opt-in (`npm run test:live`) | Selesai; **REST + WebSocket live terverifikasi** di mesin pemilik (2026-10-25, 6/6 setelah perbaikan rute `/market`) (lihat `docs/laporan/milestone-2-3-pengujian.md` §6.1) | `tests/unit/ingestion/`, `tests/live/` |
 
 ## Milestone 3 — Mesin pola (selesai, di `main`)
 
@@ -73,5 +73,5 @@ Mengikuti roadmap spesifikasi. Prioritas teknis yang sudah diputuskan:
 |---|---|
 | Peran pengguna kedua | `analyst` (baca saja untuk pengaturan) atau `admin` — dapat dipilih saat `user:create`. |
 | Bahasa UI | Bahasa Indonesia dengan istilah trading standar dalam bahasa Inggris (Screener, Breakout, dll.). |
-| Lanjut ke Milestone 4 | Setelah uji ulang WebSocket live (`npm run test:live`) lulus di mesin pemilik. |
+| Lanjut ke Milestone 4 | Prasyarat uji live sudah terpenuhi (2026-10-25); menunggu keputusan pemilik untuk mulai M4. |
 | Migrasi `005` kolom tracking sinyal | Usulan di `docs/05-database.md` §6 (nomor `004` sudah dipakai kursor analisis); dibuat sebelum M6. |

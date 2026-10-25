@@ -2,7 +2,7 @@
 
 Laporan ini merangkum metode dan hasil untuk Milestone 2 (data pasar) dan Milestone 3 (mesin pola). Daftar lengkap setiap tes (ID, nama, status, durasi) ada di **[hasil-tes-otomatis.md](hasil-tes-otomatis.md)**, yang dihasilkan `npm run report:tests` dari file hasil eksekusi Vitest (`reports/vitest-results.json`) dan Playwright (`reports/e2e-results.json`). Angka di bawah disalin dari file tersebut, bukan diperkirakan.
 
-> **Pembaruan 2026-10-25 (§6.1):** pemilik menjalankan `npm run test:live` di Mac-nya (Node 24.15.0): **REST live lulus 5/5** (LIVE-BN-001…003), **WebSocket LIVE-BN-004 gagal** karena URL WebSocket lama Binance sudah dimatikan. URL sudah diperbaiki ke rute `/market`; WebSocket live **menunggu uji ulang** pemilik.
+> **Pembaruan 2026-10-25 (§6.1):** pemilik menjalankan `npm run test:live` di Mac-nya (Node 24.15.0): **REST live lulus 5/5** (LIVE-BN-001…003), **WebSocket LIVE-BN-004 gagal** karena URL WebSocket lama Binance sudah dimatikan. URL diperbaiki ke rute `/market`; pada uji ulang (2026-10-25, setelah PR #3) **seluruh 6/6 tes live lulus**, termasuk WebSocket, dan worker berjalan live tanpa error (§6.2).
 >
 > **Batasan awal:** integrasi **live** dengan Binance tidak dapat diverifikasi dari lingkungan build. Dari lingkungan build ini setiap request ke `fapi.binance.com` dibalas **HTTP 451** ("Service unavailable from a restricted location") dan WebSocket `fstream.binance.com` tidak menerima pesan. Semua tes otomatis memakai fixture **sintetis** yang mengikuti format dokumentasi resmi Binance, bukan rekaman pasar. Jalankan `npm run test:live` dari mesin pemilik untuk verifikasi live (§6).
 
@@ -154,11 +154,35 @@ Tests  1 failed | 5 passed (6)
 
 **Penyebab LIVE-BN-004.** Klien memakai URL combined stream lama `wss://fstream.binance.com/stream?streams=…`. Binance mengumumkan upgrade WebSocket USDⓈ-M (pemberitahuan 2026-03-06) yang membagi stream ke rute `/public`, `/market`, dan `/private`; URL lama `/ws` dan `/stream` dimatikan setelah 2026-04-23, dan koneksi tanpa rute hanya menerima data kategori *public* (depth/bookTicker). Kline termasuk kategori *market*, sehingga koneksi lama tidak pernah mengirim pesan kline. Bukti: SDK resmi Binance `@binance/derivatives-trading-usds-futures` 39.0.2 (npm) membangun `${wsURL}/market/stream?streams=…` untuk kline, dan SDK Python resmi `binance-sdk-derivatives-trading-usds-futures` 18.1.0 (PyPI) memakai `url_path` `market`; library lain (go-binance, python-binance, node-binance-api, Hummingbot) melakukan migrasi yang sama. Halaman dokumentasi Binance tidak dapat dibuka dari lingkungan build (DNS/proxy), jadi kutipan dokumen resmi berasal dari ringkasan mesin pencari.
 
-**Perbaikan.** `BINANCE_WS_BASE_URL` kini `wss://fstream.binance.com/market`, sehingga URL menjadi `wss://fstream.binance.com/market/stream?streams=…`. `baseUrl` tanpa rute `/market` ditolak saat konstruksi (fail closed). Tes regresi UNIT-WSC-014 dan NEG-WSC-005 terbukti gagal pada kode lama dan lulus setelah perbaikan. LIVE-BN-004 kini mencantumkan URL, jumlah koneksi terbuka, jumlah pesan, parse error, dan event koneksi pada pesan kegagalannya, sehingga handshake yang ditolak dapat dibedakan dari socket yang terbuka tetapi diam. **Uji ulang live oleh pemilik belum dilakukan**; hasilnya akan dicatat di sini.
+**Perbaikan.** `BINANCE_WS_BASE_URL` kini `wss://fstream.binance.com/market`, sehingga URL menjadi `wss://fstream.binance.com/market/stream?streams=…`. `baseUrl` tanpa rute `/market` ditolak saat konstruksi (fail closed). Tes regresi UNIT-WSC-014 dan NEG-WSC-005 terbukti gagal pada kode lama dan lulus setelah perbaikan. LIVE-BN-004 kini mencantumkan URL, jumlah koneksi terbuka, jumlah pesan, parse error, dan event koneksi pada pesan kegagalannya, sehingga handshake yang ditolak dapat dibedakan dari socket yang terbuka tetapi diam. Uji ulang oleh pemilik: lihat §6.2.
+
+### 6.2 Uji ulang live setelah perbaikan rute `/market` (2026-10-25)
+
+Dijalankan pemilik di Mac yang sama setelah `git pull` (PR #3–#5 sudah di `main`). Keluaran `npm run test:live` yang dikirim pemilik:
+
+```
+✓ LIVE-BN-001 waktu server dekat dengan jam lokal (selisih < 60 dtk) 512ms
+✓ LIVE-BN-002 exchangeInfo + ticker + bookTicker → discovery memilih perpetual USDT yang TRADING 473ms
+✓ LIVE-BN-003 klines BTCUSDT 5m: … 205ms
+✓ LIVE-BN-003 klines BTCUSDT 15m: … 139ms
+✓ LIVE-BN-003 klines BTCUSDT 1h: … 216ms
+✓ LIVE-BN-004 WebSocket kline menerima update (provisional) BTCUSDT 5m dalam 20 detik 758ms
+Test Files  1 passed (1)
+Tests  6 passed (6)
+```
+
+`npm run worker` di mesin yang sama (kutipan log JSON pemilik):
+
+- `state WebSocket`: `connecting`, lalu `open` sekitar 0,5 detik kemudian, dengan `reconnects: 0`.
+- `bootstrap scanner selesai`: `symbols: 36`, `streams: 108`, `candles: 54000`, `errors: 0`, `gaps: 0`, `duplicates: 0`, `staleStreams: 0`, `ws: open`, `clockOffsetMs: 149`, `clockFault: null`.
+- `status scanner` satu menit kemudian: masih `running`, `ws: open`, `errors: 0`.
+- `simbol exchangeInfo tidak disimpan (format simbol tidak didukung)` mencatat 9 simbol yang dilewati sesuai desain: simbol berhuruf non-ASCII dan kontrak berjangka (`BTCUSDT_261225`, `ETHUSDT_270326`, dll.), yang bukan perpetual USDT.
+
+Dengan ini integrasi live Binance (REST + WebSocket) **terverifikasi** di mesin pemilik. Efektivitas pola tetap **belum** divalidasi out-of-sample.
 
 ## 7. Keterbatasan yang diketahui
 
-- REST live Binance terverifikasi di mesin pemilik; WebSocket live menunggu uji ulang setelah perbaikan rute `/market` (§6.1).
+- Integrasi live Binance (REST + WebSocket) terverifikasi di mesin pemilik pada 2026-10-25 (§6.2).
 - Efektivitas pola belum divalidasi out-of-sample; skor bukan probabilitas.
 - Kolom tracking sinyal masih di `explanation_json` (usulan migrasi berikutnya, `docs/05-database.md`).
 - Ambang default pola (mis. `minScore` 85, `maxRunAtr` 6, `minVolumeGrowth` 1,5) adalah nilai awal yang belum dikalibrasi pada data nyata.
