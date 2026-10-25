@@ -21,6 +21,8 @@
 // rencana backfill/gap, sweep, staleStreams, candleLagMs — serta stempel simbol & penutupan sinyal;
 // `localClock` (jam host, default = clock) untuk stempel operasional yang dibandingkan API/UI dengan
 // jamnya sendiri — heartbeat `at`, recordRun, recordError, lastIngestionAt — dan throttle internal.
+// `closureClock` (default = clock; worker: serverClock.closureNow) khusus untuk keputusan "sudah tertutup" di
+// rencana REST (bootstrap, gap, repair, sweep): tidak pernah di depan waktu server saat jam host diketahui salah.
 // Semua timer lewat setTimer/clearTimer injeksi.
 
 import { HIGHER_TIMEFRAMES, TIMEFRAMES, TIMEFRAME_MS, expectedCloseTime } from '../backend/market/contracts.js';
@@ -196,11 +198,14 @@ function liquidityThresholds(raw) {
  *   listOpenSeries?: () => Promise<Array<{ symbol: string, timeframe: string }>>,
  *   discoverSymbols: (args: { symbols: object[], tickers: object[], bookTickers: object[], settings: object })
  *     => { selected: Array<{ symbol: string }>, rejected: object[] } | Promise<object>,
- *   clock?: () => number, localClock?: () => number, logger?: object, setTimer?: Function, clearTimer?: Function, options?: object,
+ *   clock?: () => number, localClock?: () => number, closureClock?: () => number, logger?: object, setTimer?: Function,
+ *   clearTimer?: Function, options?: object,
  *   serverClock?: { sync(): Promise<{ ok: boolean, message?: string }>, offsetMs(): number },
  * }} deps
  *   clock: waktu server (worker: serverClock.now); localClock: jam host (worker: Date.now; default = clock) untuk
  *   stempel yang dibandingkan /api/system/status dengan Date.now proses API (heartbeat, run, error, lastIngestionAt).
+ *   closureClock: acuan rencana REST & staleness sweep (worker: serverClock.closureNow; default = clock) — saat jam
+ *   host diketahui di depan server (OFFSET_OUT_OF_RANGE) candle yang masih berjalan tidak direncanakan sebagai tertutup.
  *   serverClock: jam tersinkron server (backend/ingestion/serverClock.js); sync() dipanggil tiap siklus,
  *   kegagalan dicatat sebagai error ingesti sumber 'clock' (offset terakhir tetap dipakai). Hasil
  *   reason OFFSET_OUT_OF_RANGE → state 'degraded' + status().clockFault sampai sync berikutnya berhasil.
@@ -228,6 +233,7 @@ export function createScanner({
   discoverSymbols,
   clock = Date.now,
   localClock = clock,
+  closureClock = clock,
   logger = noopLogger,
   setTimer = globalThis.setTimeout,
   clearTimer = globalThis.clearTimeout,
@@ -235,14 +241,16 @@ export function createScanner({
   serverClock = null,
 }) {
   assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, serverClock });
-  if (typeof clock !== 'function' || typeof localClock !== 'function') throw new TypeError('clock dan localClock wajib berupa fungsi');
+  if (typeof clock !== 'function' || typeof localClock !== 'function' || typeof closureClock !== 'function') {
+    throw new TypeError('clock, localClock, dan closureClock wajib berupa fungsi');
+  }
   if (listOpenSeries !== null && typeof listOpenSeries !== 'function') throw new TypeError('listOpenSeries harus fungsi atau null');
   const cfg = { ...SCANNER_DEFAULTS, ...options };
   if (!Number.isInteger(cfg.closeMarginMs) || cfg.closeMarginMs < 0 || cfg.closeMarginMs > 60_000) {
     throw new RangeError('options.closeMarginMs harus bilangan bulat 0..60000');
   }
-  /** Acuan rencana REST: waktu server dikurangi margin penutupan. */
-  const settledNow = () => clock() - cfg.closeMarginMs;
+  /** Acuan rencana REST: waktu server (jam acuan penutupan) dikurangi margin penutupan. */
+  const settledNow = () => closureClock() - cfg.closeMarginMs;
   const limiter = createLimiter(cfg.restConcurrency);
 
   let phase = 'idle';
@@ -585,7 +593,7 @@ export function createScanner({
    * tutup sebelum bootstrap stream dimulai (`liveFrom`) disimpan sebagai histori tanpa analisis, seperti bootstrap.
    */
   function sweep(reason, graceMs, { includeSyncing = false, catchup = false } = {}) {
-    const now = clock() - Math.max(graceMs, cfg.closeMarginMs);
+    const now = closureClock() - Math.max(graceMs, cfg.closeMarginMs);
     const tasks = [];
     for (const st of streams.values()) {
       if (st.syncing > 0 && !includeSyncing) continue;

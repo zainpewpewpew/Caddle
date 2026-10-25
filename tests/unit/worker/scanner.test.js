@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBinanceRestClient } from '../../../backend/ingestion/binance/restClient.js';
 import { createKlineStream } from '../../../backend/ingestion/binance/wsClient.js';
 import { TIMEFRAME_MS } from '../../../backend/market/contracts.js';
+import { createServerClock } from '../../../backend/ingestion/serverClock.js';
 import { discoverSymbols } from '../../../backend/ingestion/symbolDiscovery.js';
 import { DEFAULT_SCANNER_SETTINGS } from '../../../backend/settings/scannerSettings.js';
 import { createScanner } from '../../../worker/scanner.js';
@@ -243,6 +244,7 @@ function setup({
   wrapGetSettings,
   discover = fakeDiscover,
   start = START,
+  closureClock,
 } = {}) {
   const log = [];
   const timers = createFakeTimers(start);
@@ -275,6 +277,7 @@ function setup({
     onMonitoringStopped,
     ...(localClock ? { localClock: localClock(timers) } : {}),
     ...(listOpenSeries ? { listOpenSeries } : {}),
+    ...(closureClock ? { closureClock } : {}),
   });
   return { scanner, rest, repos, streams, timers, analysed, log, settings };
 }
@@ -696,7 +699,7 @@ describe('margin penutupan candle REST (jam worker sedikit di depan Binance)', (
    * Klien REST ASLI di atas fetch palsu yang memodelkan Binance (SINTETIS, tanpa jaringan): jam server =
    * jam worker − aheadMs; candle yang masih berjalan menurut server dikirim parsial (volume 3, bukan 10).
    */
-  function binanceKlines(clock, aheadMs) {
+  function binanceKlines(clock, aheadMs, closureClock = clock) {
     const calls = [];
     const fetch = async (href) => {
       const url = new URL(href);
@@ -711,7 +714,7 @@ describe('margin penutupan candle REST (jam worker sedikit di depan Binance)', (
       }
       return { ok: true, status: 200, headers: { get: () => null }, json: async () => rows };
     };
-    return { calls, client: createBinanceRestClient({ fetch, clock, sleep: async () => {}, random: () => 0.5 }) };
+    return { calls, client: createBinanceRestClient({ fetch, clock, closureClock, sleep: async () => {}, random: () => 0.5 }) };
   }
 
   it('UNIT-SCN-020 jam worker 300 ms di depan Binance, reconnect 100 ms setelah batas 5m dengan stream tertinggal → REST tidak meminta candle yang baru tutup, snapshot parsialnya tidak pernah tersimpan/dianalisis sebagai tertutup; candle itu masuk lewat kline final WS', async () => {
@@ -761,6 +764,32 @@ describe('margin penutupan candle REST (jam worker sedikit di depan Binance)', (
     for (const closeMarginMs of [-1, 0.5, 60_001, '2000']) {
       expect(() => createScanner({ ...base, options: { closeMarginMs } })).toThrow(RangeError);
     }
+  });
+
+  it('UNIT-SCN-027 jam host 11 menit DI DEPAN Binance (serverClock asli → OFFSET_OUT_OF_RANGE, offset tidak diterapkan): state degraded, dan bootstrap + sweep berkala memakai closureClock = serverClock.closureNow → candle yang masih berjalan menurut server (volume 3) tidak pernah tersimpan atau dianalisis sebagai tertutup', async () => {
+    const AHEAD = 11 * 60_000;
+    let hostClock = null;
+    const serverClock = createServerClock({ clock: () => hostClock(), getServerTime: async () => hostClock() - AHEAD });
+    const ctx = setup({ symbols: ['BTCUSDT'], serverClock, closureClock: serverClock.closureNow });
+    hostClock = ctx.timers.clock;
+    const binance = binanceKlines(ctx.timers.clock, AHEAD, serverClock.closureNow);
+    ctx.rest.getKlines = (q) => binance.client.getKlines(q);
+    const stored = () => [...ctx.repos.store.get('BTCUSDT:5m').values()].sort((a, b) => a.openTime - b.openTime);
+    const index = (c) => (c.openTime - T0) / TIMEFRAME_MS[c.timeframe];
+
+    await ctx.scanner.start();
+    expect(ctx.scanner.status()).toMatchObject({ state: 'degraded', clockFault: 'OFFSET_OUT_OF_RANGE', clockOffsetMs: 0 });
+    // Waktu server = START − 11 menit = T0 + 9·5m + 247 d → candle tertutup terakhir #8; #9 masih berjalan.
+    expect(stored().map(index)).toEqual([4, 5, 6, 7, 8]);
+    expect(stored().every((c) => c.volume === 10)).toBe(true);
+
+    await ctx.timers.advance(300_000); // sweep berkala: server di T0 + 10·5m + 247 d → hanya #9 yang kini final
+    expect(stored().map(index)).toEqual([4, 5, 6, 7, 8, 9]);
+    expect(stored().every((c) => c.volume === 10)).toBe(true);
+    const analysed5m = ctx.analysed.filter((a) => a.timeframe === '5m');
+    expect(analysed5m.map((a) => [a.reason, a.candles.map(index)])).toEqual([['sweep', [9]]]);
+    expect(ctx.analysed.flatMap((a) => a.candles).every((c) => c.volume === 10)).toBe(true);
+    await ctx.scanner.stop();
   });
 });
 

@@ -70,7 +70,11 @@ export function assembleWorker({
   const repos = createRepositories(db, { clock: serverClock.now });
   // Margin penutupan yang sama untuk isClosed kline REST dan rencana backfill/gap/sweep scanner.
   const closeMarginMs = scannerOptions?.closeMarginMs ?? CLOSE_MARGIN_MS;
-  const rest = createBinanceRestClient({ fetch, clock: serverClock.now, sleep: restSleep, random: restRandom, logger, closeMarginMs });
+  // isClosed kline REST & rencana REST scanner memakai jam acuan penutupan (serverClock.closureNow): sama dengan
+  // serverClock.now, kecuali jam host diketahui di depan server (OFFSET_OUT_OF_RANGE) — candle berjalan tetap parsial.
+  const rest = createBinanceRestClient({
+    fetch, clock: serverClock.now, closureClock: serverClock.closureNow, sleep: restSleep, random: restRandom, logger, closeMarginMs,
+  });
 
   const getSettings = async () => (await repos.settings.get(SCANNER_SETTINGS_KEY))?.value ?? DEFAULT_SCANNER_SETTINGS;
 
@@ -109,6 +113,7 @@ export function assembleWorker({
     // /api/system/status dengan Date.now proses API (heartbeat, run, error, lastIngestionAt) = jam lokal.
     clock: serverClock.now,
     localClock: clock,
+    closureClock: serverClock.closureNow,
     serverClock,
     logger,
     setTimer,

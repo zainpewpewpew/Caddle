@@ -93,6 +93,49 @@ describe('serverClock', () => {
     expect(SERVER_CLOCK_DEFAULTS.maxOffsetMs).toBe(600_000);
   });
 
+  it('UNIT-SCK-006 jam host 11 menit DI DEPAN server (OFFSET_OUT_OF_RANGE, RTT 400 ms) → offset/now() tidak berubah, tetapi closureNow() = batas bawah waktu server (jam lokal − 660000 − 200); sync berikutnya yang berhasil → closureNow() = now() lagi', async () => {
+    const srv = fakeServer({ skewMs: -11 * 60_000, rttMs: 400 });
+    const clock = createServerClock({ getServerTime: srv.getServerTime, clock: srv.clock });
+    expect(clock.closureNow()).toBe(clock.now());
+    expect(await clock.sync()).toMatchObject({ ok: false, reason: 'OFFSET_OUT_OF_RANGE', offsetMs: 0, measuredOffsetMs: -660_000 });
+    expect(clock.now()).toBe(srv.clock());
+    expect(clock.closureNow()).toBe(srv.clock() - 660_000 - 200);
+    srv.advance(60_000);
+    expect(clock.closureNow()).toBe(srv.clock() - 660_200);
+    expect(await clock.sync()).toMatchObject({ ok: false, reason: 'OFFSET_OUT_OF_RANGE' }); // tetap salah → tetap dibatasi
+    expect(clock.closureNow()).toBe(srv.clock() - 660_200);
+
+    srv.state.skewMs = -500; // NTP host diperbaiki
+    expect(await clock.sync()).toMatchObject({ ok: true, offsetMs: -500 });
+    expect(clock.closureNow()).toBe(clock.now());
+    expect(clock.now()).toBe(srv.clock() - 500);
+  });
+
+  it('NEG-SCK-007 jam host 11 menit DI BELAKANG server (OFFSET_OUT_OF_RANGE positif) → closureNow() tidak pernah maju melebihi now() (offset terpakai 300): candle tidak dianggap tertutup lebih awal', async () => {
+    const srv = fakeServer({ skewMs: 300 });
+    const clock = createServerClock({ getServerTime: srv.getServerTime, clock: srv.clock });
+    await clock.sync();
+    srv.state.skewMs = 11 * 60_000;
+    expect(await clock.sync()).toMatchObject({ ok: false, reason: 'OFFSET_OUT_OF_RANGE', offsetMs: 300 });
+    expect(clock.closureNow()).toBe(clock.now());
+    expect(clock.now()).toBe(srv.clock() + 300);
+  });
+
+  it('EDGE-SCK-003 belum pernah tersinkron dan setiap sampel ROUND_TRIP_TOO_LONG (RTT 3 d, host 90 d di depan) → closureNow() = batas bawah dari sampel lambat (lokal − 90000 − 1500), now() tetap jam lokal; setelah sync berhasil, sampel lambat tidak lagi menggeser closureNow()', async () => {
+    const srv = fakeServer({ skewMs: -90_000, rttMs: 3_000 });
+    const clock = createServerClock({ getServerTime: srv.getServerTime, clock: srv.clock });
+    expect(await clock.sync()).toMatchObject({ ok: false, reason: 'ROUND_TRIP_TOO_LONG', offsetMs: 0 });
+    expect(clock.now()).toBe(srv.clock());
+    expect(clock.closureNow()).toBe(srv.clock() - 90_000 - 1_500);
+
+    srv.state.rttMs = 0;
+    expect(await clock.sync()).toMatchObject({ ok: true, offsetMs: -90_000 });
+    expect(clock.closureNow()).toBe(srv.clock() - 90_000);
+    srv.state.rttMs = 3_000;
+    expect(await clock.sync()).toMatchObject({ ok: false, reason: 'ROUND_TRIP_TOO_LONG', offsetMs: -90_000 });
+    expect(clock.closureNow()).toBe(clock.now());
+  });
+
   it('EDGE-SCK-001 offset tepat di batas (−10 menit) diterapkan; RTT tepat di batas default 1000 ms diterima, 1001 ms dibuang (setelah maxAttempts sampel)', async () => {
     const srv = fakeServer({ skewMs: -600_000 });
     const clock = createServerClock({ getServerTime: srv.getServerTime, clock: srv.clock });

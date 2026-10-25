@@ -113,6 +113,21 @@ describe('klien REST Binance — endpoint & parsing', () => {
     expect((await strict.client.getKlines({ symbol: 'BTCUSDT', timeframe: '5m', limit: 3 })).map((c) => c.isClosed)).toEqual([true, true, false]);
   });
 
+  it('UNIT-BNR-013 getKlines: isClosed memakai closureClock bila diberikan (jam host 11 menit di depan, closureClock = waktu server) → candle ke-3 yang masih berjalan menurut server tetap false walau `clock` sudah jauh melewati closeTime-nya; closureClock bukan fungsi ditolak', async () => {
+    const start = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const AHEAD = 11 * 60_000;
+    let ctx = null;
+    ctx = makeClient([okKlines()], {
+      start: start + 2 * FIVE_MIN + 10_000 + AHEAD,
+      client: { closureClock: () => ctx.time.clock() - AHEAD },
+    });
+    const candles = await ctx.client.getKlines({ symbol: 'BTCUSDT', timeframe: '5m', limit: 3 });
+    expect(candles.map((c) => c.isClosed)).toEqual([true, true, false]);
+    const local = makeClient([okKlines()], { start: start + 2 * FIVE_MIN + 10_000 + AHEAD });
+    expect((await local.client.getKlines({ symbol: 'BTCUSDT', timeframe: '5m', limit: 3 })).map((c) => c.isClosed)).toEqual([true, true, true]);
+    expect(() => createBinanceRestClient({ fetch: createFakeFetch([]), closureClock: 5 })).toThrow(TypeError);
+  });
+
   it('UNIT-BNR-003 getKlines default limit 500; startTime/endTime opsional tidak dikirim', async () => {
     const { client, fetch } = makeClient([response(200, [])]);
     expect(await client.getKlines({ symbol: '1000PEPEUSDT', timeframe: '1h' })).toEqual([]);

@@ -20,6 +20,13 @@
 //   berarti jam host rusak (perbaiki NTP) atau respons tidak wajar; menerapkannya diam-diam akan
 //   menggeser semua stempel waktu. Hasil sync melaporkannya agar worker mencatat error ingesti.
 // - Offset baru boleh membuat now() mundur beberapa ms; pemakai jam ini tidak bergantung pada monotonisitas.
+// Jam acuan penutupan (`closureNow`, untuk keputusan "candle sudah tertutup": isClosed kline REST & rencana
+// backfill/sweep): sama dengan now(), KECUALI jam diketahui salah dan sampel menunjukkan server di BELAKANG —
+// OFFSET_OUT_OF_RANGE, atau ROUND_TRIP_TOO_LONG selama belum pernah ada sync berhasil (atau sejak
+// OFFSET_OUT_OF_RANGE). Saat itu dipakai batas bawah waktu server dari sampel terakhir
+// (serverTime − receivedAt: server sudah membaca jamnya sebelum respons diterima), maks. offset terpakai.
+// Hanya bisa membuat lebih SEDIKIT candle dianggap tertutup (tidak pernah menyimpan candle berjalan
+// sebagai final); stempel waktu tetap memakai now(). Bersih kembali pada sync berikutnya yang berhasil.
 // Semua I/O lewat `getServerTime` injeksi; `clock` = jam lokal (default Date.now).
 
 export const SERVER_CLOCK_DEFAULTS = Object.freeze({
@@ -44,7 +51,7 @@ const errorText = (err) => String(err?.message ?? err).slice(0, MESSAGE_MAX);
  *   dalam rentang panggilan) atau angka serverTime saja (RTT = durasi panggilan).
  *   maxAttempts: jumlah sampel maksimum per sync; diulang hanya bila error tidak bertanda `retryable: false`
  *   atau RTT terlalu panjang.
- * @returns {{ now(): number, offsetMs(): number, lastSync(): object|null,
+ * @returns {{ now(): number, closureNow(): number, offsetMs(): number, lastSync(): object|null,
  *   sync(): Promise<{ ok: boolean, offsetMs: number, measuredOffsetMs: number|null, roundTripMs: number|null,
  *     reason?: string, message?: string }> }}
  */
@@ -65,6 +72,9 @@ export function createServerClock({
   let offset = 0;
   let last = null;
   let inflight = null;
+  let everSynced = false;
+  /** Batas bawah offset server dari sampel saat jam diketahui salah (lihat closureNow), null bila tidak ada. */
+  let closureBound = null;
 
   function finish(result) {
     last = { at: clock() + offset, ...result };
@@ -104,13 +114,14 @@ export function createServerClock({
       return { ok: false, reason: 'BAD_RESPONSE', message: 'sinkronisasi jam server gagal: stempel sampel tidak valid', retry: false };
     }
     const roundTripMs = receivedAt - sentAt;
+    const lowerBoundOffsetMs = serverTime - receivedAt;
     if (roundTripMs > maxRoundTripMs) {
       return {
-        ok: false, reason: 'ROUND_TRIP_TOO_LONG', retry: true, roundTripMs,
+        ok: false, reason: 'ROUND_TRIP_TOO_LONG', retry: true, roundTripMs, lowerBoundOffsetMs,
         message: `sinkronisasi jam server dilewati: round-trip ${roundTripMs} ms > ${maxRoundTripMs} ms`,
       };
     }
-    return { ok: true, measuredOffsetMs: Math.round(serverTime - (sentAt + roundTripMs / 2)), roundTripMs };
+    return { ok: true, measuredOffsetMs: Math.round(serverTime - (sentAt + roundTripMs / 2)), roundTripMs, lowerBoundOffsetMs };
   }
 
   async function measure() {
@@ -121,21 +132,28 @@ export function createServerClock({
     }
     if (!s.ok) {
       const extra = s.roundTripMs === undefined ? {} : { roundTripMs: s.roundTripMs };
+      // Sampel lambat masih memberi batas bawah waktu server; dipakai bila offset terpakai tidak dapat dipercaya.
+      if (s.reason === 'ROUND_TRIP_TOO_LONG' && (!everSynced || closureBound !== null)) closureBound = s.lowerBoundOffsetMs;
       return fail(s.reason, s.message, extra);
     }
     const { measuredOffsetMs, roundTripMs } = s;
     if (Math.abs(measuredOffsetMs) > maxOffsetMs) {
+      closureBound = s.lowerBoundOffsetMs;
       return fail('OFFSET_OUT_OF_RANGE',
         `selisih jam lokal vs server ${measuredOffsetMs} ms melebihi batas ±${maxOffsetMs} ms; tidak diterapkan (periksa NTP host)`,
         { measuredOffsetMs, roundTripMs });
     }
     offset = measuredOffsetMs;
+    everSynced = true;
+    closureBound = null;
     return finish({ ok: true, offsetMs: offset, measuredOffsetMs, roundTripMs });
   }
 
   return {
     /** Waktu sekarang menurut server (jam lokal + offset terakhir yang diterima). */
     now: () => clock() + offset,
+    /** Acuan keputusan "candle sudah tertutup": now(), atau batas bawah waktu server bila jam diketahui salah. */
+    closureNow: () => clock() + (closureBound === null ? offset : Math.min(offset, closureBound)),
     /** Offset terakhir yang diterapkan (ms; positif = server di depan jam lokal). */
     offsetMs: () => offset,
     /** Hasil sinkronisasi terakhir (null bila belum pernah). */

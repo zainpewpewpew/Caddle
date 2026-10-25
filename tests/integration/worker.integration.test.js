@@ -1342,6 +1342,34 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect((await repos.ingestion.getStatus()).heartbeat.state).toMatchObject({ state: 'running', clockFault: null });
   });
 
+  it('INT-WRK-028 jam host 11 menit DI DEPAN Binance (/fapi/v1/time → OFFSET_OUT_OF_RANGE, offset tidak diterapkan) → degraded, tetapi isClosed REST & rencana bootstrap/sweep memakai serverClock.closureNow: tidak ada candle berjalan yang tersimpan sebagai tertutup atau dianalisis; sweep berkala hanya menambah candle yang final menurut server', async () => {
+    const SKEW = -11 * 60_000;
+    const { scanner, repos, serverClock, timers, analysed } = await setup({ serverSkewMs: SKEW });
+    await scanner.start();
+    expect(serverClock.offsetMs()).toBe(0);
+    expect(scanner.status()).toMatchObject({ state: 'degraded', clockFault: 'OFFSET_OUT_OF_RANGE' });
+    // Waktu server = START − 11 menit = candle 45 + 247 d → candle tertutup terakhir 44 (jam host: 47).
+    const serverNow = () => timers.clock() + SKEW;
+    const assertOnlyFinal = async (last5m) => {
+      for (const symbol of [SA, DOWN]) {
+        for (const timeframe of ['5m', '15m', '1h']) {
+          const stored = await storedSeries(repos, symbol, timeframe);
+          expect(stored).toEqual(expectedSeries(symbol, timeframe, [[0, stored.length - 1, 'rest']]));
+          expect(stored.at(-1).closeTime).toBeLessThan(serverNow());
+          if (timeframe === '5m') expect(stored.at(-1).openTime).toBe(at5m(last5m));
+        }
+      }
+    };
+    await assertOnlyFinal(44);
+
+    await timers.advance(10 * 60_000); // dua sweep berkala (tanpa pesan WS): candle 45 lalu 46 menjadi final menurut server
+    await assertOnlyFinal(46);
+    const final = (c) => MARKET.get(seriesKey(c.symbol, c.timeframe)).find((m) => m.openTime === c.openTime);
+    const seen = analysed.flatMap((a) => a.candles);
+    expect(seen.map((c) => `${c.symbol}:${(c.openTime - T0) / M5}`).sort()).toEqual([`${DOWN}:45`, `${DOWN}:46`, `${SA}:45`, `${SA}:46`]);
+    for (const c of seen) expect(c).toEqual({ ...final(c), source: 'rest' });
+  });
+
   it('INT-WRK-018 /fapi/v1/time dijawab 429 (Retry-After 4 d) saat start lalu 503 saat rediscovery → sampel jam satu percobaan tanpa retry/antrean limiter di dalam round-trip: offset tetap 0 (bukan +2000 / +187), tanpa error ingesti', async () => {
     const faults = ['429', null, '503'];
     let phase = 0;
