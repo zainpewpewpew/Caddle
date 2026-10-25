@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TIMEFRAME_MS } from '../../../backend/market/contracts.js';
+import { confirmedAt, findSwings } from '../../../backend/indicators/index.js';
 import { DEFAULT_TREND_PARAMS, classifyTrend } from '../../../backend/timeframe/index.js';
 
 // Data uji deterministik (gelombang sinus + drift) — sintetis, bukan data pasar nyata.
@@ -60,13 +61,26 @@ describe('trend classifier', () => {
     expect(r.trend).toBe('NEUTRAL');
   });
 
-  it('UNIT-TRND-003 swing yang belum terkonfirmasi tidak dipakai (anti lookahead)', () => {
-    const base = series('15m', wave(60, 0.3));
-    const r1 = classifyTrend(base);
-    // Menambah satu candle saja tidak dapat mengonfirmasi swing baru (butuh `right` candle sesudahnya).
-    const extra = series('15m', [base[59].close + 0.1], base[59].openTime + TIMEFRAME_MS['15m']);
-    const r2 = classifyTrend([...base, ...extra]);
-    expect(r2.reasons.filter((x) => x.startsWith('SWING_'))).toEqual(r1.reasons.filter((x) => x.startsWith('SWING_')));
+  it('UNIT-TRND-003 lower low yang baru punya 1 candle sesudahnya (< swingRight) tidak dipakai → SWING_HH_HL; setelah terkonfirmasi → SWING_MIXED (anti lookahead)', () => {
+    const closes = wave(60, 0.3);
+    // Indeks 60 membentuk low di bawah swing low terkonfirmasi terakhir (indeks 52); candle 61 naik.
+    const pending = series('15m', [...closes, 113, 114]);
+    // Candle ke-2 sesudahnya (indeks 62) mengonfirmasi swing low indeks 60.
+    const confirmed = series('15m', [...closes, 113, 114, 115]);
+    const swingReason = (candles, params) => classifyTrend(candles, params).reasons.filter((x) => x.startsWith('SWING_'));
+    const { swingLeft: left, swingRight: right } = DEFAULT_TREND_PARAMS;
+
+    const lows = findSwings(confirmed, { left, right }).lows;
+    const newLow = lows.find((l) => l.index === 60);
+    expect(newLow).toMatchObject({ confirmedIndex: 60 + right });
+    expect(newLow.price).toBeLessThan(lows.at(-2).price);
+    expect(confirmedAt(findSwings(pending, { left, right }), pending.length - 1).lows.map((l) => l.index)).not.toContain(60);
+
+    expect(swingReason(pending)).toEqual(['SWING_HH_HL']);
+    expect(swingReason(confirmed)).toEqual(['SWING_MIXED']);
+    // Kontrol: bila swing dikonfirmasi lebih cepat (swingRight 1), low yang sama sudah dipakai pada
+    // seri `pending` dan labelnya berubah — seri ini memang peka terhadap swing belum terkonfirmasi.
+    expect(swingReason(pending, { swingRight: 1 })).toEqual(['SWING_MIXED']);
   });
 
   it('UNIT-TRND-004 parameter dapat dikonfigurasi (minScore 4 → sinyal 3/4 menjadi NEUTRAL)', () => {
