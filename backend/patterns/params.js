@@ -12,17 +12,20 @@ import { ATR_PERIOD, EMA_SLOW, SLOPE_LOOKBACK, VOLATILITY_BASELINE } from './con
 const spec = (type, min, max, description) => Object.freeze({ type, min, max, description });
 
 /**
- * Batas atas warm-up requiredCandles(pola, params). Pipeline analisis hanya memuat
- * ANALYSIS_LOOKBACK = 300 candle per seri (backend/analysis/pipeline.js); parameter dengan warm-up
- * lebih panjang membuat pola selamanya insufficientData tanpa error, sehingga ditolak di sini.
- * Nilai ini WAJIB ≤ ANALYSIS_LOOKBACK (dijaga tes).
+ * Batas atas warm-up requiredCandles(pola, params) untuk lookback DEFAULT pipeline analisis
+ * (ANALYSIS_LOOKBACK = 300 candle per seri, backend/analysis/pipeline.js). Parameter dengan warm-up
+ * lebih panjang dari jumlah candle yang dimuat membuat pola selamanya insufficientData tanpa
+ * error, sehingga ditolak. Batas ini hanya benar untuk lookback default: pemanggil dengan lookback
+ * lain (100..1500) WAJIB meneruskan { maxWarmup: lookback } ke resolveParams/validateParams agar
+ * lookback < 300 ikut ditolak. Lookback > 300 tidak melonggarkan batas (detektor tetap memakai
+ * batas ini). Nilai ini WAJIB ≤ ANALYSIS_LOOKBACK (dijaga tes).
  */
 export const MAX_WARMUP_CANDLES = 300;
 
 /**
  * Rentang yang diizinkan untuk setiap parameter (inklusif). Selain rentang per parameter,
- * validateParams menolak kombinasi dengan requiredCandles > MAX_WARMUP_CANDLES (mis. PVA
- * rvolPeriod + subWindows × subWindowLength > 300).
+ * validateParams menolak kombinasi dengan requiredCandles > batas warm-up (MAX_WARMUP_CANDLES atau
+ * options.maxWarmup yang lebih kecil; mis. PVA rvolPeriod + subWindows × subWindowLength > 300).
  */
 export const PARAM_SPECS = Object.freeze({
   SA: Object.freeze({
@@ -116,9 +119,13 @@ function isPlainObject(value) {
  * Menolak key tidak dikenal, key yang hilang, tipe salah, dan nilai di luar rentang PARAM_SPECS.
  * @param {unknown} params
  * @param {'SA'|'PVA'} pattern
+ * @param {{ maxWarmup?: number }} [options] maxWarmup = jumlah candle yang benar-benar dimuat
+ *   pemanggil (lookback); batas efektif = min(maxWarmup, MAX_WARMUP_CANDLES)
  * @returns {Array<{ path: string, message: string }>}
+ * @throws {RangeError} bila options.maxWarmup bukan bilangan bulat positif (kesalahan pemanggil)
  */
-export function validateParams(params, pattern) {
+export function validateParams(params, pattern, options = {}) {
+  const warmupLimit = warmupLimitOf(options);
   const specs = Object.hasOwn(PARAM_SPECS, pattern) ? PARAM_SPECS[pattern] : null;
   if (!specs) return [{ path: '', message: `Pola tidak dikenal: ${String(pattern)}` }];
   if (!isPlainObject(params)) return [{ path: '', message: 'Parameter harus berupa objek' }];
@@ -144,9 +151,9 @@ export function validateParams(params, pattern) {
   }
   if (errors.length === 0) {
     const warmup = requiredCandles(pattern, params);
-    if (warmup > MAX_WARMUP_CANDLES) {
+    if (warmup > warmupLimit) {
       const formula = pattern === 'SA' ? 'max(rvolPeriod + rvolWindow, priceLookback + 1)' : 'rvolPeriod + subWindows × subWindowLength';
-      errors.push({ path: '', message: `Warm-up ${formula} = ${warmup} candle melebihi batas ${MAX_WARMUP_CANDLES} (lookback pipeline analisis)` });
+      errors.push({ path: '', message: `Warm-up ${formula} = ${warmup} candle melebihi batas ${warmupLimit} (lookback pipeline analisis)` });
     }
   }
   if (errors.length === 0 && pattern === 'PVA') {
@@ -159,19 +166,32 @@ export function validateParams(params, pattern) {
   return errors;
 }
 
+/** Batas warm-up efektif dari opsi pemanggil; tanpa opsi = MAX_WARMUP_CANDLES. */
+function warmupLimitOf({ maxWarmup } = {}) {
+  if (maxWarmup === undefined) return MAX_WARMUP_CANDLES;
+  if (!Number.isInteger(maxWarmup) || maxWarmup < 1) throw new RangeError('maxWarmup harus bilangan bulat ≥ 1');
+  return Math.min(maxWarmup, MAX_WARMUP_CANDLES);
+}
+
 /**
  * Gabungkan override parsial dengan default lalu validasi. Tanpa override → objek default (beku).
  * @param {'SA'|'PVA'} pattern
  * @param {object|null} [overrides]
+ * @param {{ maxWarmup?: number }} [options] lihat validateParams; dengan maxWarmup, default pun
+ *   divalidasi terhadap batas itu
  * @throws {PatternParamsError}
  */
-export function resolveParams(pattern, overrides) {
+export function resolveParams(pattern, overrides, options) {
   const defaults = DEFAULTS[pattern];
   if (!defaults) throw new PatternParamsError(String(pattern), [{ path: '', message: 'Pola tidak dikenal' }]);
-  if (overrides === undefined || overrides === null) return defaults;
+  if (overrides === undefined || overrides === null) {
+    const errors = options === undefined ? [] : validateParams(defaults, pattern, options);
+    if (errors.length > 0) throw new PatternParamsError(pattern, errors);
+    return defaults;
+  }
   if (!isPlainObject(overrides)) throw new PatternParamsError(pattern, [{ path: '', message: 'Parameter harus berupa objek' }]);
   const merged = { ...defaults, ...overrides };
-  const errors = validateParams(merged, pattern);
+  const errors = validateParams(merged, pattern, options);
   if (errors.length > 0) throw new PatternParamsError(pattern, errors);
   return Object.freeze(merged);
 }

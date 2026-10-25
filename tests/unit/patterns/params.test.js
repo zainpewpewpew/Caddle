@@ -152,4 +152,24 @@ describe('parameter pola', () => {
       }
     }
   });
+  it('EDGE-PPRM-004 batas warm-up mengikuti lookback pemanggil: maxWarmup 150 menolak SA rvolPeriod 200 (warm-up 205) dan PVA rvolPeriod 200 (220)', () => {
+    const sa = { ...DEFAULT_SA_PARAMS, rvolPeriod: 200 };
+    // Tanpa opsi: batas default 300 → lolos (perilaku lama tetap).
+    expect(validateParams(sa, 'SA')).toEqual([]);
+    const errors = validateParams(sa, 'SA', { maxWarmup: 150 });
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/205 candle melebihi batas 150/);
+    expect(() => resolveParams('SA', { rvolPeriod: 200 }, { maxWarmup: 150 })).toThrow(/205 candle melebihi batas 150/);
+    expect(() => resolveParams('PVA', { rvolPeriod: 200 }, { maxWarmup: 150 })).toThrow(/220 candle melebihi batas 150/);
+    // Tanpa override pun default divalidasi terhadap lookback pemanggil (SA 63, PVA 70).
+    expect(resolveParams('SA', undefined, { maxWarmup: 63 })).toBe(DEFAULT_SA_PARAMS);
+    expect(() => resolveParams('PVA', null, { maxWarmup: 69 })).toThrow(/70 candle melebihi batas 69/);
+    // Lookback lebih panjang dari 300 tidak melonggarkan batas: detektor sendiri tetap memakai 300.
+    expect(() => resolveParams('SA', { rvolPeriod: 250, rvolWindow: 50, priceLookback: 200 }, { maxWarmup: 1500 })).not.toThrow();
+    expect(paths(validateParams({ ...sa, rvolPeriod: 250, rvolWindow: 50, priceLookback: 200 }, 'SA', { maxWarmup: 1500 }))).toEqual([]);
+    expect(validateParams({ ...DEFAULT_PVA_PARAMS, rvolPeriod: 250, subWindows: 10, subWindowLength: 10 }, 'PVA', { maxWarmup: 1500 })[0].message).toMatch(/350 candle melebihi batas 300/);
+    // Opsi tidak sah ditolak sebagai error konfigurasi, bukan diabaikan.
+    expect(() => validateParams(sa, 'SA', { maxWarmup: 0 })).toThrow(RangeError);
+    expect(() => validateParams(sa, 'SA', { maxWarmup: 1.5 })).toThrow(RangeError);
+  });
 });
