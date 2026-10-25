@@ -9,7 +9,7 @@ Dokumen ini mengikat modul yang dikembangkan paralel dan sudah **disesuaikan den
 - Hanya **candle tertutup** (`isClosed: true`) yang masuk tabel kanonik dan dipakai sinyal terkonfirmasi. Candle berjalan disimpan terpisah di `provisional_candles`.
 - Penutupan dengan margin: candle REST dianggap tertutup hanya bila `closeTime < (jam acuan penutupan saat request dimulai − CLOSE_MARGIN_MS)` (2 detik, §2/§4); kline final WebSocket (`k.x`) diterima walau jam worker tertinggal kurang dari `WS_CLOCK_TOLERANCE_MS` (2 detik, §3). Selisih jam yang lebih besar → candle WS ditolak.
 - Tidak ada lookahead: pada waktu evaluasi `t`, hanya data dengan `closeTime <= t` yang boleh dipakai — termasuk candle timeframe lebih tinggi dan swing (`confirmedIndex`). Ukuran likuiditas 24 jam saat ini hanya dipakai untuk candle terbaru (§8).
-- Host jaringan yang diizinkan: `fapi.binance.com` (REST) dan `fstream.binance.com` (WebSocket), ditegakkan oleh allowlist di klien. Tidak ada URL dari input pengguna.
+- Host jaringan yang diizinkan: `fapi.binance.com` (REST) dan `fstream.binance.com` (WebSocket), ditegakkan oleh allowlist di klien. WebSocket kline wajib memakai rute kategori `/market` (`wss://fstream.binance.com/market/stream?streams=…`, §4). Tidak ada URL dari input pengguna.
 - Fixture Binance di `tests/fixtures/binance/` adalah **sintetis** mengikuti format dokumentasi resmi, bukan rekaman pasar nyata.
 
 ## Konstanta (`backend/market/contracts.js`)
@@ -119,13 +119,18 @@ Semua repositori dirakit oleh `createRepositories(db, { clock })` di `backend/da
 ## 4. Streaming, backfill, worker — `backend/ingestion/binance/wsClient.js`, `backend/ingestion/backfill.js`, `worker/`
 
 ```
-createKlineStream({ WebSocketImpl = globalThis.WebSocket, baseUrl = 'wss://fstream.binance.com',
+createKlineStream({ WebSocketImpl = globalThis.WebSocket, baseUrl = 'wss://fstream.binance.com/market',
   streams: [{ symbol, timeframe }], onCandle(candle), onState(state), clock, setTimer, clearTimer, random,
   backoff = { initialMs: 1000, maxMs: 60_000 }, staleMs, connectTimeoutMs, stableMs,
   maxConnectionAgeMs, maxMessageBytes, maxStreamsPerConnection = 200 })
   → { start(), stop(), state() }
   // k.x === true → isClosed true; lainnya provisional. Koneksi dipecah per ≤ 200 stream,
   // diputar sebelum batas 24 jam Binance, dianggap stale bila tidak ada pesan selama staleMs.
+  // URL: `${baseUrl}/stream?streams=a/b` → wss://fstream.binance.com/market/stream?streams=btcusdt@kline_5m/…
+  // Sejak upgrade WebSocket USDⓈ-M Binance (pemberitahuan 2026-03-06; URL lama /ws & /stream dimatikan setelah
+  // 2026-04-23) stream dibagi ke rute /public, /market, /private; kline = /market. URL tanpa rute tersambung tetapi
+  // tidak mengirim kline, jadi baseUrl selain rute /market (tanpa query/fragment) ditolak saat konstruksi (fail closed).
+KLINE_WS_ROUTE = '/market'
 
 CLOSE_MARGIN_MS = 2_000      // margin penutupan: isClosed REST, rencana backfill/gap/sweep, toleransi jam WS (§3)
 lastClosedOpenTime(now, timeframe) → number

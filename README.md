@@ -8,9 +8,9 @@ Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — men
 
 | Milestone | Cakupan | Status |
 |---|---|---|
-| 1 — Fondasi | Audit, arsitektur, autentikasi, shell frontend, API, migrasi | **Selesai (menunggu review PR)** |
-| 2 — Data pasar | Binance REST/WS, candle historis, validasi, worker | **Selesai (menunggu review PR; uji live belum terverifikasi, lihat laporan)** |
-| 3 — Mesin pola | SA, PVA, hybrid timeframe, skor, state machine | **Selesai (menunggu review PR)** |
+| 1 — Fondasi | Audit, arsitektur, autentikasi, shell frontend, API, migrasi | **Selesai (di `main`)** |
+| 2 — Data pasar | Binance REST/WS, candle historis, validasi, worker | **Selesai (di `main`; REST live terverifikasi, WebSocket live menunggu uji ulang, lihat laporan)** |
+| 3 — Mesin pola | SA, PVA, hybrid timeframe, skor, state machine | **Selesai (di `main`)** |
 | 4 — Dashboard premium | Screener, grafik, real-time | Belum dimulai |
 | 5 — Pattern Discovery Lab | Upload, anotasi, definisi pola berversi | Belum dimulai |
 | 6 — Backtesting | Replay historis, metrik, out-of-sample | Belum dimulai |
@@ -60,7 +60,7 @@ Pendaftaran publik sengaja tidak ada. Maksimal dua pengguna (`MAX_USERS=2`) dibu
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |
-| `npm run test:live` | Uji integrasi live Binance (opt-in, butuh jaringan ke `fapi`/`fstream.binance.com`; tidak termasuk `npm test`) |
+| `npm run test:live` | Uji integrasi live Binance (opt-in, butuh jaringan ke `fapi.binance.com` dan `fstream.binance.com/market`; tidak termasuk `npm test`) |
 | `npm run audit` | npm audit dependensi produksi |
 | `npm run report:tests` | Menyusun laporan tes dari hasil eksekusi nyata |
 

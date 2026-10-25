@@ -1,4 +1,4 @@
-// Klien WebSocket kline Binance USDT-M Futures (combined stream).
+// Klien WebSocket kline Binance USDT-M Futures (combined stream di path ter-rute `/market`).
 // - Maks 200 stream per koneksi → stream dipecah ke beberapa koneksi.
 // - Reconnect dengan backoff eksponensial + jitter; backoff di-reset setelah koneksi stabil.
 // - Koneksi basi (tanpa pesan ≥ staleMs) atau connect yang menggantung ditutup lalu reconnect.
@@ -9,7 +9,12 @@
 import { randomInt } from 'node:crypto';
 import { TIMEFRAMES, expectedCloseTime, isAlignedOpenTime } from '../../market/contracts.js';
 
-export const BINANCE_WS_BASE_URL = 'wss://fstream.binance.com';
+// Sejak upgrade WebSocket USDⓈ-M (pemberitahuan Binance 2026-03-06; URL lama `/ws` & `/stream` dimatikan
+// setelah 2026-04-23) stream dibagi per kategori: `/public`, `/market`, `/private`. Kline termasuk kategori
+// "market". Koneksi tanpa path ter-rute hanya menerima data "public" (depth/bookTicker), sehingga stream kline
+// di URL lama tersambung tetapi tidak pernah mengirim pesan. Satu koneksi tidak boleh mencampur kategori.
+export const KLINE_WS_ROUTE = '/market';
+export const BINANCE_WS_BASE_URL = `wss://fstream.binance.com${KLINE_WS_ROUTE}`;
 export const ALLOWED_WS_HOSTS = Object.freeze(['fstream.binance.com']);
 export const MAX_STREAMS_PER_CONNECTION = 200;
 export const STREAM_STATES = Object.freeze(['idle', 'connecting', 'open', 'reconnecting', 'stopped']);
@@ -61,7 +66,11 @@ function assertBaseUrl(baseUrl) {
   if (!ALLOWED_WS_HOSTS.includes(url.hostname) || url.port || url.username || url.password) {
     throw new TypeError(`Host WebSocket di luar allowlist: ${url.hostname}`);
   }
-  return url.origin;
+  // Fail closed: URL tanpa rute (atau rute lain) tersambung tetapi tidak pernah mengirim kline.
+  if (url.pathname.replace(/\/$/, '') !== KLINE_WS_ROUTE || url.search || url.hash) {
+    throw new TypeError(`baseUrl WebSocket wajib memakai path ter-rute ${KLINE_WS_ROUTE} (kategori stream kline), tanpa query/fragment`);
+  }
+  return `${url.origin}${KLINE_WS_ROUTE}`;
 }
 
 /**
@@ -73,13 +82,13 @@ export function buildStreamUrls(streams, { baseUrl = BINANCE_WS_BASE_URL, maxPer
   if (!Number.isInteger(maxPerConnection) || maxPerConnection < 1 || maxPerConnection > MAX_STREAMS_PER_CONNECTION) {
     throw new RangeError(`maxPerConnection harus 1..${MAX_STREAMS_PER_CONNECTION}`);
   }
-  const origin = assertBaseUrl(baseUrl);
+  const routedBase = assertBaseUrl(baseUrl);
   streams.forEach(assertStream);
   const names = [...new Set(streams.map(streamName))];
   const out = [];
   for (let i = 0; i < names.length; i += maxPerConnection) {
     const group = names.slice(i, i + maxPerConnection);
-    out.push({ url: `${origin}/stream?streams=${group.join('/')}`, streams: group });
+    out.push({ url: `${routedBase}/stream?streams=${group.join('/')}`, streams: group });
   }
   return out;
 }

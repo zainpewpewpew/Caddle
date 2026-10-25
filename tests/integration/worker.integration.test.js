@@ -667,7 +667,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
 
     // Satu koneksi combined stream ke host allowlist, melanggan 2 simbol × 3 timeframe.
     expect(hub.sockets).toHaveLength(1);
-    expect(hub.sockets[0].url.startsWith('wss://fstream.binance.com/stream?streams=')).toBe(true);
+    expect(hub.sockets[0].url.startsWith('wss://fstream.binance.com/market/stream?streams=')).toBe(true);
     expect([...hub.sockets[0].streams].sort()).toEqual([
       'dwnusdt@kline_15m', 'dwnusdt@kline_1h', 'dwnusdt@kline_5m', 'synusdt@kline_15m', 'synusdt@kline_1h', 'synusdt@kline_5m',
     ]);
