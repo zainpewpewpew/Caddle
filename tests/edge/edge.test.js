@@ -72,6 +72,44 @@ describe('kasus tepi', () => {
     await locked.app.close();
   });
 
+  it('EDGE-AUTH-006 tebakan paralel melebihi ambang: hanya ambang yang diverifikasi, kata sandi benar sesudahnya ditolak', async () => {
+    const locked = await createTestApp({ env: { LOGIN_RATE_LIMIT_MAX: '100', ACCOUNT_LOCK_THRESHOLD: '3' } });
+    const { hasher } = locked.app.services;
+    // Hitung hanya verifikasi terhadap hash asli (verifyDummy memakai hash dummy).
+    const realHash = locked.db.prepare("SELECT password_hash FROM users WHERE username = 'mary'").get().password_hash;
+    let verified = 0;
+    const original = hasher.verify;
+    hasher.verify = async (hash, password) => { if (hash === realHash) verified += 1; return original.call(hasher, hash, password); };
+    try {
+      const results = await Promise.all(Array.from({ length: 12 }, (_, i) => login(locked.app, { username: 'mary', password: `bad-password-${i}` })));
+      expect(results.every((r) => r.res.statusCode === 401)).toBe(true);
+      // Tanpa reservasi atomik, ke-12 tebakan membaca baris lama dan semuanya diverifikasi.
+      expect(verified).toBeLessThanOrEqual(3);
+      const correct = await login(locked.app);
+      expect(correct.res.statusCode).toBe(401);
+      expect(verified).toBeLessThanOrEqual(3);
+      const audit = locked.db.prepare("SELECT COUNT(*) n FROM audit_logs WHERE action = 'auth.account_locked'").get().n;
+      expect(audit).toBeGreaterThanOrEqual(1);
+    } finally {
+      hasher.verify = original;
+      await locked.app.close();
+    }
+  });
+
+  it('EDGE-AUTH-007 login benar yang paralel dengan tebakan salah tidak menghapus kunci yang dipasang tebakan tersebut', async () => {
+    const locked = await createTestApp({ env: { LOGIN_RATE_LIMIT_MAX: '100', ACCOUNT_LOCK_THRESHOLD: '3' } });
+    try {
+      const attempts = [login(locked.app), ...Array.from({ length: 5 }, (_, i) => login(locked.app, { username: 'mary', password: `bad-password-${i}` }))];
+      const [ok] = await Promise.all(attempts);
+      expect(ok.res.statusCode).toBe(200);
+      const row = locked.db.prepare("SELECT locked_until FROM users WHERE username = 'mary'").get();
+      expect(row.locked_until).toBeGreaterThan(locked.clock());
+      expect((await login(locked.app)).res.statusCode).toBe(401);
+    } finally {
+      await locked.app.close();
+    }
+  });
+
   it('EDGE-AUTH-005 sesi kedaluwarsa absolut meskipun terus aktif', async () => {
     const { cookie } = await login(ctx.app);
     const step = 20 * 60_000;

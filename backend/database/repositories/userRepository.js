@@ -12,10 +12,17 @@ export function createUserRepository(db) {
                                     FROM users WHERE username = ?`),
     insert: db.prepare(`INSERT INTO users (username, password_hash, role, created_at, updated_at)
                         VALUES (@username, @passwordHash, @role, @now, @now)`),
-    failed: db.prepare(`UPDATE users SET failed_login_count = failed_login_count + 1, updated_at = @now
-                        WHERE id = @id RETURNING failed_login_count`),
-    lock: db.prepare('UPDATE users SET locked_until = @lockUntil, failed_login_count = 0 WHERE id = @id'),
-    succeeded: db.prepare(`UPDATE users SET failed_login_count = 0, locked_until = NULL,
+    // Reservasi percobaan: dihitung SEBELUM verifikasi kata sandi; ditolak bila terkunci atau
+    // percobaan yang sedang berjalan sudah mencapai ambang.
+    reserve: db.prepare(`UPDATE users SET failed_login_count = failed_login_count + 1, updated_at = @now
+                         WHERE id = @id AND (locked_until IS NULL OR locked_until <= @now) AND failed_login_count < @lockAfter
+                         RETURNING failed_login_count`),
+    lockState: db.prepare('SELECT locked_until FROM users WHERE id = ?'),
+    lock: db.prepare(`UPDATE users SET locked_until = MAX(COALESCE(locked_until, 0), @lockUntil), failed_login_count = 0,
+                        updated_at = @now WHERE id = @id`),
+    // Kunci yang masih aktif (dipasang percobaan paralel yang gagal) tidak dihapus oleh login sukses.
+    succeeded: db.prepare(`UPDATE users SET failed_login_count = 0,
+                             locked_until = CASE WHEN locked_until > @now THEN locked_until ELSE NULL END,
                              last_login_at = @now, updated_at = @now WHERE id = @id`),
     setPassword: db.prepare('UPDATE users SET password_hash = @passwordHash, updated_at = @now WHERE id = @id'),
   };
@@ -36,18 +43,32 @@ export function createUserRepository(db) {
       return Number(info.lastInsertRowid);
     },
     /**
-     * Menaikkan penghitung gagal login. `lockAfter`/`lockUntil` menentukan penguncian
-     * secara atomik di dalam satu transaksi agar aman dari race condition.
+     * Memesan satu percobaan login secara atomik sebelum verifikasi Argon2 (yang async).
+     * Tanpa ini, tebakan paralel semuanya membaca baris lama dan lolos dari penguncian.
+     * @returns {{ allowed: boolean, count?: number, lockedNow?: boolean }}
+     *   allowed false → akun terkunci (lockedNow true bila kunci baru dipasang karena ambang habis).
      */
-    async recordFailedLogin(id, { now, lockAfter, lockUntil }) {
+    async reserveLoginAttempt(id, { now, lockAfter, lockUntil }) {
       return db.transaction(() => {
-        const { failed_login_count: count } = stmt.failed.get({ id, now });
-        if (count >= lockAfter) {
-          stmt.lock.run({ id, lockUntil });
-          return { count, locked: true };
-        }
-        return { count, locked: false };
+        const row = stmt.reserve.get({ id, now, lockAfter });
+        if (row) return { allowed: true, count: row.failed_login_count };
+        const state = stmt.lockState.get(id);
+        if (state && state.locked_until !== null && state.locked_until > now) return { allowed: false, lockedNow: false };
+        // Ambang habis oleh percobaan yang masih berjalan → kunci sekarang.
+        stmt.lock.run({ id, lockUntil, now });
+        return { allowed: false, lockedNow: true };
       })();
+    },
+    /**
+     * Menyelesaikan percobaan yang gagal (sudah dihitung saat reservasi). Mengunci akun bila
+     * percobaan ini mencapai ambang.
+     */
+    async recordFailedLogin(id, { count, now, lockAfter, lockUntil }) {
+      if (count >= lockAfter) {
+        stmt.lock.run({ id, lockUntil, now });
+        return { count, locked: true };
+      }
+      return { count, locked: false };
     },
     async recordSuccessfulLogin(id, { now }) {
       stmt.succeeded.run({ id, now });

@@ -1,28 +1,50 @@
-import { requireCsrf } from '../security/requestGuards.js';
+import { isApiRoute, requireCsrf } from '../security/requestGuards.js';
 
 /**
  * Menghubungkan sesi ke request. Seluruh route /api/* WAJIB terautentikasi
  * kecuali diberi `config: { public: true }` (secure by default).
  * Route dengan `config: { roles: [...] }` dibatasi berdasarkan peran.
+ *
+ * Gerbang dipasang per route (hook onRoute) sehingga:
+ * - keputusan dibuat dari pola route saat registrasi — tidak bergantung pada bentuk URL;
+ * - berjalan SETELAH hook rate limit (didaftarkan lebih dulu), jadi request tanpa sesi ikut dihitung;
+ * - tetap di tahap onRequest — sebelum parsing & validasi body — agar request tanpa sesi
+ *   tidak pernah menerima detail validasi skema.
+ * Harus dipanggil setelah plugin rate limit terdaftar dan sebelum route didefinisikan.
  */
 export function registerAuth(app, { sessionService, cookieName }) {
   app.decorateRequest('auth', null);
 
-  // Gerbang autentikasi dijalankan di onRequest — sebelum parsing & validasi body —
-  // agar request tanpa sesi tidak pernah menerima detail validasi skema.
+  // Sesi di-resolve untuk semua request (halaman '/' & login.html memerlukannya) tanpa memperpanjang idle.
   app.addHook('onRequest', async (request, reply) => {
     const token = request.cookies[cookieName];
     if (token) request.auth = await sessionService.resolve(token);
-
+    // Fail closed: route API yang terdaftar sebelum registerAuth (tanpa gerbang) tidak pernah dilayani.
     const routeConfig = request.routeOptions.config ?? {};
-    if (!request.url.startsWith('/api/') || routeConfig.public) return;
+    if (isApiRoute(request) && !routeConfig.public && !routeConfig.authGated) {
+      request.log.error({ route: request.routeOptions.url }, 'route API tanpa gerbang autentikasi');
+      return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Autentikasi diperlukan' });
+    }
+  });
 
+  async function gate(request, reply) {
+    const routeConfig = request.routeOptions.config ?? {};
     if (!request.auth) {
       return reply.code(401).send({ error: 'UNAUTHENTICATED', message: 'Autentikasi diperlukan' });
     }
     if (routeConfig.roles && !routeConfig.roles.includes(request.auth.user.role)) {
       return reply.code(403).send({ error: 'FORBIDDEN', message: 'Akses ditolak' });
     }
-    return requireCsrf(request, reply);
+    const denied = await requireCsrf(request, reply);
+    if (denied) return denied;
+    // Hanya aktivitas API terautentikasi yang memperpanjang idle timeout.
+    await sessionService.touch(request.auth);
+  }
+
+  app.addHook('onRoute', (routeOptions) => {
+    if (!routeOptions.url.startsWith('/api/') || routeOptions.config?.public) return;
+    const existing = routeOptions.onRequest;
+    routeOptions.onRequest = [...(Array.isArray(existing) ? existing : existing ? [existing] : []), gate];
+    routeOptions.config = { ...routeOptions.config, authGated: true };
   });
 }

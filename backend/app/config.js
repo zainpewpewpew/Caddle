@@ -1,5 +1,6 @@
 // Konfigurasi aplikasi berbasis environment variable.
 // Semua nilai divalidasi saat startup; konfigurasi tidak valid menghentikan proses (fail fast).
+import { isIP } from 'node:net';
 
 const DEFAULTS = Object.freeze({
   NODE_ENV: 'development',
@@ -42,6 +43,29 @@ function parseBoolean(name, raw) {
   throw new ConfigError(`${name} harus 'true' atau 'false'`);
 }
 
+/**
+ * TRUST_PROXY: `false` (default) atau daftar alamat proxy tepercaya dipisah koma — IP, CIDR,
+ * atau kata kunci proxy-addr (`loopback`, `linklocal`, `uniquelocal`). `true` ditolak: mempercayai
+ * SEMUA hop membuat klien dapat memalsukan IP (kunci rate limit & audit) lewat X-Forwarded-For.
+ * Jumlah hop juga ditolak karena Fastify 5 tidak lagi mempercayai hop tanpa alamat (fail closed).
+ */
+const PROXY_KEYWORDS = new Set(['loopback', 'linklocal', 'uniquelocal']);
+
+function parseTrustProxy(raw) {
+  if (raw === 'false') return false;
+  const invalid = () => new ConfigError('TRUST_PROXY harus false atau daftar IP/CIDR proxy tepercaya dipisah koma (mis. 127.0.0.1)');
+  if (raw === 'true') throw new ConfigError('TRUST_PROXY=true tidak diizinkan; sebutkan IP/CIDR proxy tepercaya (mis. 127.0.0.1)');
+  const entries = raw.split(',').map((e) => e.trim());
+  for (const entry of entries) {
+    if (PROXY_KEYWORDS.has(entry)) continue;
+    const [address, prefix, extra] = entry.split('/');
+    const family = isIP(address ?? '');
+    const prefixOk = prefix === undefined || (/^\d{1,3}$/.test(prefix) && Number(prefix) <= (family === 6 ? 128 : 32));
+    if (!family || !prefixOk || extra !== undefined) throw invalid();
+  }
+  return entries;
+}
+
 function parseOrigin(raw) {
   let url;
   try {
@@ -64,8 +88,8 @@ function parseOrigin(raw) {
  */
 export function loadConfig(env = process.env) {
   const read = (name) => {
-    const value = env[name];
-    return value === undefined || value === '' ? DEFAULTS[name] : String(value).trim();
+    const value = env[name] === undefined ? '' : String(env[name]).trim();
+    return value === '' ? DEFAULTS[name] : value;
   };
 
   const nodeEnv = read('NODE_ENV');
@@ -75,8 +99,9 @@ export function loadConfig(env = process.env) {
   // Di produksi, nilai kritis wajib diset eksplisit — tidak boleh jatuh ke default pengembangan.
   if (isProduction) {
     for (const name of ['APP_ORIGIN', 'DATABASE_PATH']) {
-      if (!env[name]) throw new ConfigError(`${name} wajib diset di produksi`);
+      if (!env[name] || !String(env[name]).trim()) throw new ConfigError(`${name} wajib diset di produksi`);
     }
+    if (read('DATABASE_PATH') === ':memory:') throw new ConfigError('DATABASE_PATH :memory: tidak diizinkan di produksi');
   }
 
   const appOrigin = parseOrigin(read('APP_ORIGIN'));
@@ -100,7 +125,7 @@ export function loadConfig(env = process.env) {
     databasePath: read('DATABASE_PATH'),
     appOrigin,
     cookieSecure,
-    trustProxy: parseBoolean('TRUST_PROXY', read('TRUST_PROXY')),
+    trustProxy: parseTrustProxy(read('TRUST_PROXY')),
     logLevel,
     session: Object.freeze({
       idleMs: parseInteger('SESSION_IDLE_MINUTES', read('SESSION_IDLE_MINUTES'), { min: 1, max: 1440 }) * 60_000,

@@ -1,4 +1,5 @@
 import helmet from '@fastify/helmet';
+import { isApiRoute } from './requestGuards.js';
 
 /**
  * Header keamanan & Content Security Policy ketat.
@@ -35,7 +36,8 @@ export async function registerSecurityHeaders(app, config) {
 
   app.addHook('onSend', async (request, reply, payload) => {
     reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
-    if (request.url.startsWith('/api/')) {
+    // Berdasarkan route yang cocok (bukan URL mentah) agar /%61pi/... juga tidak di-cache.
+    if (isApiRoute(request)) {
       reply.header('Cache-Control', 'no-store');
     }
     return payload;

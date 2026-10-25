@@ -20,9 +20,9 @@ Legenda status: **Diterapkan** = ada di kode M1 dan diuji · **Sebagian** · **D
 
 | Ancaman | CWE | Kontrol | Bukti tes | Status |
 |---|---|---|---|---|
-| Bypass autentikasi | CWE-287 | Semua `/api/*` wajib sesi kecuali `public` eksplisit; gerbang di `onRequest` sebelum parsing body | NEG-AUTH-003/004/005 | Diterapkan |
+| Bypass autentikasi | CWE-287 | Semua route `/api/*` wajib sesi kecuali `public` eksplisit; gerbang per route (pola route yang cocok, bukan URL mentah) di `onRequest` sebelum parsing body; fail closed untuk route tanpa gerbang | NEG-AUTH-003/004/005, SEC-RT-001…009 | Diterapkan |
 | Broken access control | CWE-284/639 | Peran `admin`/`analyst`; ubah pengaturan hanya admin; operasi sesi dibatasi `user_id` pemilik | NEG-AZ-001/002/003 | Diterapkan |
-| Brute force / credential stuffing | CWE-307 | Rate limit login 5/15 menit per IP; kunci akun 15 menit setelah 10 gagal (atomik); Argon2id m=64MiB t=3 | NEG-RL-001, NEG-AUTH-007, EDGE-AUTH-004 | Diterapkan |
+| Brute force / credential stuffing | CWE-307 | Rate limit login 5/15 menit per IP (juga untuk path ter-encode); kunci akun 15 menit setelah 10 gagal — percobaan dipesan atomik SEBELUM verifikasi Argon2 sehingga tebakan paralel tidak melewati ambang; login sukses tidak menghapus kunci aktif; Argon2id m=64MiB t=3 | NEG-RL-001, NEG-AUTH-007, EDGE-AUTH-004/006/007, SEC-RT-005 | Diterapkan |
 | Enumerasi akun | CWE-204 | Pesan & status identik untuk user tidak ada/kata sandi salah/akun terkunci; verifikasi hash dummy untuk menyamakan waktu | NEG-AUTH-002 | Diterapkan |
 | Penyimpanan kata sandi lemah | CWE-916 | Argon2id; kebijakan 12–128 karakter; rehash otomatis bila parameter naik | UNIT-PWD-* | Diterapkan |
 | Session hijacking | CWE-384/613 | Token 256-bit acak, hanya hash SHA-256 disimpan; HttpOnly, SameSite=Strict, `__Host-` + Secure di HTTPS; idle 30 menit & absolut 12 jam; sesi lama dicabut saat login ulang; daftar & cabut sesi | UNIT-SES-*, EDGE-AUTH-003/005, E2E-AUTH-002 | Diterapkan |
@@ -52,7 +52,7 @@ Legenda status: **Diterapkan** = ada di kode M1 dan diuji · **Sebagian** · **D
 - **Sesi server-side, bukan JWT** (ADR-0003): pencabutan instan, tidak ada token di Web Storage.
 - **Tanpa pendaftaran publik**: pengguna dibuat via CLI dengan batas `MAX_USERS=2`. Kata sandi dibaca dari prompt tersembunyi/stdin, tidak pernah dari argumen CLI.
 - **Login CSRF** dicegah oleh cek Origin + JSON-only + SameSite, karena token CSRF belum ada sebelum login.
-- **`TRUST_PROXY`** default `false`; hanya diaktifkan di belakang reverse proxy tepercaya agar `request.ip` (kunci rate limit) tidak dapat dipalsukan via `X-Forwarded-For`.
+- **`TRUST_PROXY`** default `false`. Di belakang reverse proxy, isi dengan **IP/CIDR proxy tersebut** (mis. `127.0.0.1`), bukan `true`: hanya hop dari alamat itu yang dipercaya sehingga `request.ip` (kunci rate limit & audit) tidak dapat dipalsukan via `X-Forwarded-For`. Nilai `true` dan jumlah hop ditolak saat startup. Proxy wajib menimpa header (nginx: `proxy_set_header X-Forwarded-For $remote_addr;`).
 
 ## 4. Pemindaian keamanan Milestone 1
 

@@ -86,16 +86,19 @@ sequenceDiagram
   participant R as Repositori
   B->>F: PUT /api/settings/scanner (cookie, X-CSRF-Token, JSON)
   F->>G: Origin == APP_ORIGIN? Sec-Fetch-Site != cross-site?
-  F->>G: rate limit
-  G->>S: resolve(token) → hash SHA-256 → sesi aktif?
+  G->>S: resolve(token) → hash SHA-256 → sesi aktif? (tanpa memperpanjang idle)
+  F->>G: rate limit (hook per route — request tanpa sesi ikut dihitung)
   G-->>B: 401 bila tidak ada sesi (sebelum body divalidasi)
   G-->>B: 403 bila peran/CSRF tidak sesuai
+  G->>S: touch() → idle timeout diperpanjang hanya oleh aktivitas API terautentikasi
   F->>F: parse JSON (≤64KB, tolak __proto__) + JSON Schema (tanpa coercion)
   F->>H: handler
   H->>R: save(expectedVersion) dalam transaksi
   R-->>H: record / konflik
   H-->>B: 200 | 409, Cache-Control: no-store
 ```
+
+Gerbang autentikasi, rate limit, dan header `no-store` memutuskan berdasarkan **pola route yang cocok** (`request.routeOptions.url`), bukan `request.url` mentah. Router Fastify mendekode path (`/%61pi/overview` → `/api/overview`) dan membuang prefix absolute-form (`GET http://host/api/...`), sehingga pemeriksaan prefix pada URL mentah dapat dilewati (temuan review mandiri M1, regresi `SEC-RT-*`). Gerbang dipasang per route lewat hook `onRoute`; route `/api/*` yang terdaftar tanpa gerbang ditolak (fail closed), dan path `/api/*` yang tidak dikenal ditangkap route catch-all agar tetap melewati gerbang.
 
 ## 5. Frontend
 

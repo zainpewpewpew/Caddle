@@ -48,8 +48,17 @@ describe('layanan sesi', () => {
         expect(i * 25 * 60_000).toBeGreaterThanOrEqual(ABSOLUTE - 25 * 60_000);
         return;
       }
+      await svc.touch(r);
     }
     throw new Error('sesi tidak pernah kedaluwarsa absolut');
+  });
+
+  it('UNIT-SES-003 resolve saja (tanpa touch) tidak memperpanjang idle timeout', async () => {
+    const s = await svc.create(userId, {});
+    clock.advance(20 * 60_000);
+    expect(await svc.resolve(s.token)).not.toBeNull();
+    clock.advance(11 * 60_000);
+    expect(await svc.resolve(s.token)).toBeNull();
   });
 
   it('NEG-SES-001 sesi dicabut tidak dapat dipakai', async () => {

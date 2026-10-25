@@ -34,7 +34,8 @@ describe('header keamanan & permukaan serangan statis', () => {
 
   it('SEC-HDR-003 HSTS hanya aktif di produksi', async () => {
     expect((await ctx.app.inject({ url: '/api/health' })).headers['strict-transport-security']).toBeUndefined();
-    const prod = await createTestApp({ env: { NODE_ENV: 'production', APP_ORIGIN: 'https://radar.local', DATABASE_PATH: ':memory:' }, users: [] });
+    // createTestApp selalu membuka database :memory:; DATABASE_PATH hanya memenuhi validasi produksi.
+    const prod = await createTestApp({ env: { NODE_ENV: 'production', APP_ORIGIN: 'https://radar.local', DATABASE_PATH: '/tidak-dipakai.db' }, users: [] });
     const hsts = (await prod.app.inject({ url: '/api/health' })).headers['strict-transport-security'];
     expect(hsts).toMatch(/max-age=31536000/);
     await prod.app.close();

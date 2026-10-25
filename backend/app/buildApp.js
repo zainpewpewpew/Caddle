@@ -16,7 +16,7 @@ import { createSessionService } from '../auth/sessionService.js';
 import { migrate } from '../database/migrate.js';
 import { createRepositories } from '../database/repositories/index.js';
 import { registerSecurityHeaders } from '../security/headers.js';
-import { registerRequestGuards } from '../security/requestGuards.js';
+import { isApiRoute, registerRequestGuards } from '../security/requestGuards.js';
 
 const FRONTEND_ROOT = fileURLToPath(new URL('../../frontend/', import.meta.url));
 const SESSION_PURGE_INTERVAL_MS = 15 * 60_000;
@@ -70,7 +70,8 @@ export async function buildApp({ config, db, clock = Date.now, hasherOptions, lo
     max: 300,
     timeWindow: 60_000,
     // Aset statis (CSS/JS/ikon) tidak dihitung; batas ini melindungi endpoint API.
-    allowList: (request) => !request.url.startsWith('/api/'),
+    // Keputusan dari route yang cocok, bukan URL mentah (path ter-encode / absolute-form).
+    allowList: (request) => !isApiRoute(request),
     errorResponseBuilder: (request, context) => ({
       statusCode: context.statusCode,
       error: 'RATE_LIMITED',
@@ -98,6 +99,10 @@ export async function buildApp({ config, db, clock = Date.now, hasherOptions, lo
         : 'BAD_REQUEST';
     return reply.code(status).send({ error: code, message: 'Permintaan tidak dapat diproses' });
   });
+
+  // Catch-all API: path /api/* yang tidak dikenal tetap melewati gerbang auth (tanpa sesi → 401,
+  // dengan sesi → 404) sehingga peta route tidak bocor dan tidak jatuh ke handler file statis.
+  app.all('/api/*', async (request, reply) => reply.code(404).send({ error: 'NOT_FOUND', message: 'Tidak ditemukan' }));
 
   app.setNotFoundHandler((request, reply) => {
     reply.code(404).send({ error: 'NOT_FOUND', message: 'Tidak ditemukan' });

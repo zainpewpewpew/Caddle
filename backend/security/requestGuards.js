@@ -5,6 +5,16 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 export const isUnsafeMethod = (method) => UNSAFE_METHODS.has(method);
 
 /**
+ * true bila request dirutekan ke route API. Keputusan memakai pola route yang COCOK
+ * (`routeOptions.url`), bukan `request.url` mentah: router mendekode path (`/%61pi/x` → `/api/x`)
+ * dan membuang prefix absolute-form (`http://host/api/x`), sehingga URL mentah tidak dapat dipercaya.
+ */
+export function isApiRoute(request) {
+  const url = request.routeOptions?.url;
+  return typeof url === 'string' && url.startsWith('/api/');
+}
+
+/**
  * Pertahanan CSRF berlapis untuk request yang mengubah state:
  * 1. Origin harus sama dengan APP_ORIGIN (bila dikirim browser).
  * 2. Sec-Fetch-Site 'cross-site' ditolak.

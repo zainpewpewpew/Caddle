@@ -26,18 +26,19 @@ export function createAuthService({ users, audit, hasher, sessionService, config
         await hasher.verifyDummy(password);
         return fail('disabled', { userId: user.id, ip });
       }
-      if (user.locked_until !== null && user.locked_until > now) {
+      const lockOptions = { now, lockAfter: config.lockThreshold, lockUntil: now + config.lockMs };
+      const attempt = await users.reserveLoginAttempt(user.id, lockOptions);
+      if (!attempt.allowed) {
+        if (attempt.lockedNow) {
+          await audit.record({ occurredAt: now, userId: user.id, action: 'auth.account_locked', outcome: 'success', ip });
+        }
         await hasher.verifyDummy(password);
         return fail('locked', { userId: user.id, ip });
       }
 
       const valid = await hasher.verify(user.password_hash, password);
       if (!valid) {
-        const { locked } = await users.recordFailedLogin(user.id, {
-          now,
-          lockAfter: config.lockThreshold,
-          lockUntil: now + config.lockMs,
-        });
+        const { locked } = await users.recordFailedLogin(user.id, { ...lockOptions, count: attempt.count });
         if (locked) {
           await audit.record({ occurredAt: now, userId: user.id, action: 'auth.account_locked', outcome: 'success', ip });
         }

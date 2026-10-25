@@ -32,6 +32,8 @@ export function createSessionService({ sessions, users, config, clock }) {
     /**
      * Memvalidasi token cookie. Mengembalikan { session, user } atau null.
      * Sesi dianggap tidak valid bila dicabut, kedaluwarsa (absolut/idle), atau user dinonaktifkan.
+     * Tidak memperpanjang idle timeout — hanya `touch()` (dipanggil untuk aktivitas API terautentikasi)
+     * yang melakukannya, agar health check, aset statis, dan halaman publik tidak menjaga sesi tetap hidup.
      */
     async resolve(token) {
       if (!isWellFormedToken(token)) return null;
@@ -43,14 +45,18 @@ export function createSessionService({ sessions, users, config, clock }) {
 
       const user = await users.findById(session.user_id);
       if (!user || user.is_disabled) return null;
-
-      if (now - session.last_seen_at >= TOUCH_INTERVAL_MS) {
-        const idleExpiresAt = Math.min(now + config.idleMs, session.expires_at);
-        await sessions.touch(session.id, { now, idleExpiresAt });
-        session.last_seen_at = now;
-        session.idle_expires_at = idleExpiresAt;
-      }
       return { session, user };
+    },
+
+    /** Memperpanjang idle timeout (sliding), paling sering sekali per TOUCH_INTERVAL_MS. */
+    async touch(auth) {
+      const { session } = auth;
+      const now = clock();
+      if (now - session.last_seen_at < TOUCH_INTERVAL_MS) return;
+      const idleExpiresAt = Math.min(now + config.idleMs, session.expires_at);
+      await sessions.touch(session.id, { now, idleExpiresAt });
+      session.last_seen_at = now;
+      session.idle_expires_at = idleExpiresAt;
     },
 
     async revoke(sessionId, userId, reason) {
