@@ -4,7 +4,7 @@ import { ensureDefaultUser } from '../../backend/users/defaultUser.js';
 import { changePassword } from '../../backend/users/userAdmin.js';
 import { createTestApp, login } from '../helpers/testApp.js';
 
-const DEFAULT_LOGIN = { username: 'admin', password: 'alphalens-demo' };
+const DEFAULT_LOGIN = { username: 'admin', password: 'admin123@' };
 
 describe('akun default lewat API login asli', () => {
   let ctx;

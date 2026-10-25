@@ -5,12 +5,17 @@
 //   2. server hanya lokal: HOST loopback, APP_ORIGIN loopback, dan TRUST_PROXY tidak diset — origin
 //      publik atau reverse proxy berarti server dijangkau dari jaringan walau bind ke 127.0.0.1,
 //   3. tabel users kosong — akun yang ada tidak pernah ditimpa, dibuat ulang, atau di-reset.
-// Pembuatan memakai createUser, sehingga kebijakan kata sandi, Argon2id, batas MAX_USERS, dan audit
-// `user.create` sama dengan CLI. Selain itu, server menolak start bila akun default MASIH memakai
-// kata sandi default sementara server tidak lagi hanya lokal atau NODE_ENV=production.
+// Pembuatan memakai createUser, sehingga Argon2id, batas MAX_USERS, dan audit `user.create` sama dengan
+// CLI. Kata sandi default `admin123@` dipilih pemilik dan sengaja TIDAK lolos kebijakan kata sandi
+// (kurang dari 12 karakter, memuat username), jadi hanya akun ini yang dibuat tanpa cek kebijakan;
+// user:create dan user:password tetap wajib lolos. Karena itu syarat "hanya lokal" di atas wajib, dan
+// server menolak start bila akun default MASIH memakai kata sandi default (yang sekarang maupun yang
+// lama) sementara server tidak lagi hanya lokal atau NODE_ENV=production.
 import { createUser } from './userAdmin.js';
 
-export const DEFAULT_CREDENTIALS = Object.freeze({ username: 'admin', password: 'alphalens-demo', role: 'admin' });
+export const DEFAULT_CREDENTIALS = Object.freeze({ username: 'admin', password: 'admin123@', role: 'admin' });
+// Kata sandi default versi sebelumnya; database yang dibuat dengan versi itu tetap dijaga pemeriksaan paparan.
+export const LEGACY_DEFAULT_PASSWORDS = Object.freeze(['alphalens-demo']);
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const CHANGE_COMMAND = `npm run user:password -- --username ${DEFAULT_CREDENTIALS.username}`;
@@ -50,7 +55,14 @@ async function assertDefaultPasswordNotExposed({ users, hasher }, exposure) {
   const { username, password } = DEFAULT_CREDENTIALS;
   const user = await users.findByUsernameForAuth(username);
   if (!user || user.is_disabled) return;
-  if (!(await hasher.verify(user.password_hash, password))) return;
+  let isDefault = false;
+  for (const candidate of [password, ...LEGACY_DEFAULT_PASSWORDS]) {
+    if (await hasher.verify(user.password_hash, candidate)) {
+      isDefault = true;
+      break;
+    }
+  }
+  if (!isDefault) return;
   throw new DefaultUserError(
     `Akun "${username}" masih memakai kata sandi default, padahal ${exposure.detail}. Ganti dulu dengan: ${CHANGE_COMMAND}`,
   );
@@ -84,7 +96,7 @@ export async function ensureDefaultUser({ users, audit, hasher, maxUsers, clock,
   }
 
   const { username, password, role } = DEFAULT_CREDENTIALS;
-  const id = await createUser({ users, audit, hasher, maxUsers, clock }, { username, password, role, via: 'default' });
+  const id = await createUser({ users, audit, hasher, maxUsers, clock }, { username, password, role, via: 'default', skipPasswordPolicy: true });
   log.warn(`Akun default prototipe dibuat — username: ${username}, kata sandi: ${password} (peran ${role}). `
     + `HANYA untuk prototipe lokal. Ganti kata sandinya dengan: ${CHANGE_COMMAND}`);
   return { created: true, id };

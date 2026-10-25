@@ -48,7 +48,7 @@ npm start                            # http://127.0.0.1:8080
 npm run worker                       # terminal terpisah: scanner & analisis pola
 ```
 
-Pendaftaran publik sengaja tidak ada. Maksimal dua pengguna (`MAX_USERS=2`) dibuat lewat CLI di server. Kata sandi minimal 12 karakter.
+Pendaftaran publik sengaja tidak ada. Maksimal dua pengguna (`MAX_USERS=2`) dibuat lewat CLI di server. Kata sandi minimal 12 karakter (kecuali kata sandi akun default prototipe di bawah, yang dipilih pemilik).
 
 ### Login prototipe
 
@@ -56,7 +56,7 @@ Selama masih prototipe, `npm start` otomatis membuat akun default pada start per
 
 | Username | Kata sandi | Peran |
 |---|---|---|
-| `admin` | `alphalens-demo` | admin |
+| `admin` | `admin123@` | admin |
 
 - **Hanya untuk pengembangan lokal.** Akun dibuat hanya bila `NODE_ENV=development` (default), server hanya lokal (`HOST` dan `APP_ORIGIN` loopback — `127.0.0.1`, `::1`, atau `localhost` — dan `TRUST_PROXY=false`), serta tabel pengguna masih kosong. Akun yang sudah ada tidak pernah ditimpa atau di-reset. Log server menampilkan peringatan saat akun dibuat, atau alasan bila tidak dibuat.
 - **Ganti kata sandinya:** `npm run user:password -- --username admin` (prompt tersembunyi dengan konfirmasi; semua sesi akun itu dicabut). Selama `admin` masih memakai kata sandi default, server menolak start bila tidak lagi hanya lokal (mis. `HOST=0.0.0.0`) atau `NODE_ENV=production`.

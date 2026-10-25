@@ -34,10 +34,19 @@ describe('akun default prototipe lokal', () => {
     log = { warn: vi.fn() };
   });
 
-  it('UNIT-DEF-001 kredensial default lolos checkPasswordPolicy tanpa pelonggaran kebijakan', () => {
-    expect(DEFAULT_CREDENTIALS).toEqual({ username: 'admin', password: 'alphalens-demo', role: 'admin' });
+  it('UNIT-DEF-001 kredensial default pilihan pemilik (admin / admin123@) — pengecualian kebijakan HANYA untuk akun default', () => {
+    expect(DEFAULT_CREDENTIALS).toEqual({ username: 'admin', password: 'admin123@', role: 'admin' });
     expect(Object.isFrozen(DEFAULT_CREDENTIALS)).toBe(true);
-    expect(checkPasswordPolicy(DEFAULT_CREDENTIALS.password, { username: DEFAULT_CREDENTIALS.username })).toEqual([]);
+    // Sengaja tidak lolos kebijakan umum; createUser lewat CLI (tanpa skipPasswordPolicy) tetap menolaknya.
+    expect(checkPasswordPolicy(DEFAULT_CREDENTIALS.password, { username: DEFAULT_CREDENTIALS.username })).not.toEqual([]);
+  });
+
+  it('NEG-DEF-007 kata sandi default ditolak createUser biasa (jalur CLI user:create) walau dikecualikan untuk seed', async () => {
+    await expect(createUser(
+      { users: repos.users, audit: repos.audit, hasher, maxUsers: 2, clock },
+      { username: 'admin', password: 'admin123@', role: 'admin' },
+    )).rejects.toThrow(/kebijakan/);
+    expect(userCount()).toBe(0);
   });
 
   it('UNIT-DEF-002 development + loopback + tabel kosong → akun admin dibuat, kata sandi terverifikasi, audit via default', async () => {
@@ -48,7 +57,7 @@ describe('akun default prototipe lokal', () => {
     const user = await repos.users.findByUsernameForAuth('admin');
     expect(user).toMatchObject({ id: result.id, username: 'admin', role: 'admin', is_disabled: 0 });
     expect(user.password_hash.startsWith('$argon2id$')).toBe(true);
-    expect(await hasher.verify(user.password_hash, 'alphalens-demo')).toBe(true);
+    expect(await hasher.verify(user.password_hash, 'admin123@')).toBe(true);
 
     const [entry] = await repos.audit.recent(5);
     expect(entry).toMatchObject({ user_id: result.id, action: 'user.create', outcome: 'success', detail: { role: 'admin', via: 'default' } });
@@ -56,7 +65,7 @@ describe('akun default prototipe lokal', () => {
     expect(log.warn).toHaveBeenCalledTimes(1);
     const message = log.warn.mock.calls[0][0];
     expect(message).toContain('username: admin');
-    expect(message).toContain('kata sandi: alphalens-demo');
+    expect(message).toContain('kata sandi: admin123@');
     expect(message).toContain('HANYA untuk prototipe lokal');
     expect(message).toContain('npm run user:password -- --username admin');
   });
@@ -93,7 +102,7 @@ describe('akun default prototipe lokal', () => {
     const hash = hashOf('admin');
     expect(await run()).toEqual({ created: false, reason: 'users_exist' });
     expect(hashOf('admin')).toBe(hash);
-    expect(await hasher.verify(hash, 'alphalens-demo')).toBe(false);
+    expect(await hasher.verify(hash, 'admin123@')).toBe(false);
     expect((await repos.users.findByUsernameForAuth('admin')).role).toBe('analyst');
   });
 
@@ -102,7 +111,7 @@ describe('akun default prototipe lokal', () => {
     expect(userCount()).toBe(0);
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(log.warn.mock.calls[0][0]).toMatch(new RegExp(`Akun default TIDAK dibuat: HOST=${host.replace(/[.]/g, '\\.')} bukan loopback`));
-    expect(log.warn.mock.calls[0][0]).not.toContain('alphalens-demo');
+    expect(log.warn.mock.calls[0][0]).not.toContain('admin123@');
   });
 
   it.each([
@@ -167,6 +176,14 @@ describe('akun default prototipe lokal', () => {
     expect(await run()).toEqual({ created: false, reason: 'users_exist' });
   });
 
+  it('SEC-DEF-006 admin dengan kata sandi default LAMA (alphalens-demo, database versi sebelumnya) tetap memblokir start non-lokal', async () => {
+    await createUser({ users: repos.users, audit: repos.audit, hasher, maxUsers: 2, clock },
+      { username: 'admin', password: 'alphalens-demo', role: 'admin' });
+    await expect(run({ HOST: '0.0.0.0' })).rejects.toThrow(DefaultUserError);
+    await expect(run(PROD)).rejects.toThrow(/masih memakai kata sandi default/);
+    expect(await run()).toEqual({ created: false, reason: 'users_exist' });
+  });
+
   it('SEC-DEF-002 setelah kata sandi diganti, server boleh start di HOST non-loopback / produksi', async () => {
     await run();
     await changePassword({ users: repos.users, sessions: repos.sessions, audit: repos.audit, hasher, clock },
@@ -177,6 +194,6 @@ describe('akun default prototipe lokal', () => {
 
   it('SEC-DEF-003 kata sandi default tidak pernah masuk audit', async () => {
     await run();
-    expect(JSON.stringify(db.prepare('SELECT * FROM audit_logs').all())).not.toContain('alphalens-demo');
+    expect(JSON.stringify(db.prepare('SELECT * FROM audit_logs').all())).not.toContain('admin123@');
   });
 });
