@@ -196,3 +196,77 @@ test('E2E-SUP-007 callout Overview dengan keyboard: setelah start berhasil fokus
   expect(focused.inCallout).toBe(true);
   expect(errors).toEqual([]);
 });
+
+// ---- Animasi progres selama perintah scanner diproses ----
+
+/** Seperti mockCrashAfterSpawn, tetapi POST start ditahan sampai `release()` dipanggil. */
+async function mockHeldStartThenCrash(page) {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  let started = false;
+  await page.route('**/api/system/worker/start', async (route) => {
+    await held;
+    started = true;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(RUNNING) });
+  });
+  await page.route('**/api/system/worker', async (route) => {
+    if (!started) return route.fallback();
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(CRASHED) });
+  });
+  return () => release();
+}
+
+const animationOf = (locator) => locator.evaluate((el) => getComputedStyle(el, '::before').animationName);
+
+test('E2E-SUP-008 System Health: bar progres beranimasi selama start diproses & dipantau, hilang setelah state final', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, E2E_USERS.admin);
+  await page.goto('/#/health');
+  await expect(stateOf(page)).toHaveText('Berhenti');
+  const progress = card(page).getByTestId('worker-control-progress');
+  await expect(progress).toBeHidden();
+  const release = await mockHeldStartThenCrash(page);
+  await card(page).getByRole('button', { name: 'Jalankan scanner' }).click();
+  await expect(card(page).getByRole('progressbar', { name: 'Memproses perintah scanner' })).toBeVisible();
+  expect(await animationOf(progress)).toBe('lr-indeterminate');
+  release();
+  await expect(stateOf(page)).toHaveText('Berjalan');
+  // Jendela pemantauan sesaat setelah start: bar tetap tampil sampai state final diketahui.
+  await expect(progress).toBeVisible();
+  await expect(stateOf(page)).toHaveText('Gagal (kode keluar 1)', { timeout: 6_000 });
+  await expect(progress).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('E2E-SUP-009 callout Overview: bar progres tampil selama start diproses, hilang setelah state final', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, E2E_USERS.admin);
+  const callout = page.getByTestId('worker-callout');
+  await expect(callout).toContainText('Scanner belum berjalan.');
+  const progress = callout.getByTestId('worker-callout-progress');
+  await expect(progress).toBeHidden();
+  const release = await mockHeldStartThenCrash(page);
+  await callout.getByRole('button', { name: 'Jalankan scanner' }).click();
+  await expect(callout.getByRole('progressbar', { name: 'Memproses perintah scanner' })).toBeVisible();
+  expect(await animationOf(progress)).toBe('lr-indeterminate');
+  release();
+  await expect(callout).toContainText('Scanner berjalan.');
+  await expect(progress).toBeVisible();
+  await expect(callout).toContainText('Gagal (kode keluar 1)', { timeout: 6_000 });
+  await expect(progress).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('E2E-SUP-010 prefers-reduced-motion: bar progres statis (tanpa animasi)', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await signIn(page, E2E_USERS.admin);
+  await page.goto('/#/health');
+  await expect(stateOf(page)).toHaveText('Berhenti');
+  const progress = card(page).getByTestId('worker-control-progress');
+  const release = await mockHeldStartThenCrash(page);
+  await card(page).getByRole('button', { name: 'Jalankan scanner' }).click();
+  await expect(progress).toBeVisible();
+  expect(await animationOf(progress)).toBe('none');
+  release();
+  await expect(stateOf(page)).toHaveText('Gagal (kode keluar 1)', { timeout: 6_000 });
+});

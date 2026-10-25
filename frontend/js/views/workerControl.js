@@ -23,6 +23,16 @@ export function workerErrorMessage(err) {
   return err.message || 'Permintaan gagal. Coba lagi.';
 }
 
+/**
+ * Bar progres indeterminate (animasi) selama perintah scanner diproses: request berjalan, state memulai/menghentikan,
+ * dan jendela pemantauan sesaat setelah start. Tanpa persentase, karena durasi spawn/stop tidak diketahui.
+ */
+function progressBar(testid) {
+  return h('div', {
+    class: 'progress-indeterminate', role: 'progressbar', 'aria-label': 'Memproses perintah scanner', hidden: true, 'data-testid': testid,
+  });
+}
+
 function describe(status) {
   if (!status?.enabled) {
     return 'Kontrol dari website dinonaktifkan (WORKER_CONTROL=false). Jalankan worker dengan npm run worker di terminal terpisah.';
@@ -59,8 +69,10 @@ export function workerControlCard({ user, status: initial }) {
   let pollTimer = null;
   let disposed = false;
   let settleUntil = 0;
+  const settling = () => status?.state === 'running' && Date.now() < settleUntil;
 
   const stateEl = h('div', { class: 'worker-control__state', 'aria-live': 'polite', 'data-testid': 'worker-control-state' });
+  const progressEl = progressBar('worker-control-progress');
   const descEl = h('p', { class: 'worker-control__desc' });
   const errorEl = h('p', { class: 'field__error', role: 'alert', hidden: true });
 
@@ -79,7 +91,7 @@ export function workerControlCard({ user, status: initial }) {
     ? h('div', { class: 'cluster', 'data-testid': 'worker-control-actions' }, startBtn, stopBtn)
     : h('p', { class: 'subtle' }, 'Hanya admin yang dapat menjalankan atau menghentikan scanner.');
 
-  const body = h('div', { class: 'worker-control', tabindex: '-1' }, stateEl, descEl, controls, confirmEl, errorEl);
+  const body = h('div', { class: 'worker-control', tabindex: '-1' }, stateEl, progressEl, descEl, controls, confirmEl, errorEl);
   const el = panel({ title: 'Kontrol scanner', id: 'worker-control' }, body);
 
   function showError(message) {
@@ -96,6 +108,7 @@ export function workerControlCard({ user, status: initial }) {
     }
     descEl.textContent = describe(status);
     body.setAttribute('aria-busy', String(pending || isWorkerTransitional(status)));
+    progressEl.hidden = !(pending || isWorkerTransitional(status) || settling());
     startBtn.disabled = pending || !canStartWorker(status);
     stopBtn.disabled = pending || confirming || !status?.enabled || status.state !== 'running';
     confirmBtn.disabled = pending;
@@ -116,8 +129,6 @@ export function workerControlCard({ user, status: initial }) {
     render();
     if (restoreFocus && !stopBtn.disabled) stopBtn.focus();
   }
-
-  const settling = () => status?.state === 'running' && Date.now() < settleUntil;
 
   function schedulePoll() {
     if (disposed || pollTimer !== null || !(isWorkerTransitional(status) || settling())) return;
@@ -232,12 +243,14 @@ export function workerStartCallout({ user, status: initial }) {
   // tabindex -1: fokus keyboard dipindah ke pesan saat tombol yang ditekan hilang (tidak jatuh ke <body>).
   const message = h('p', { 'aria-live': 'polite', tabindex: '-1', 'data-testid': 'worker-callout-message' });
   const errorEl = h('p', { class: 'field__error', role: 'alert', hidden: true });
-  const content = h('div', { class: 'callout__content' }, message, errorEl);
+  const progressEl = progressBar('worker-callout-progress');
+  const content = h('div', { class: 'callout__content' }, message, progressEl, errorEl);
   const el = callout([content], 'warn');
   el.classList.add('callout--action');
   el.dataset.testid = 'worker-callout';
   let pollTimer = null;
   let settleUntil = 0;
+  let pending = false;
 
   const button = isAdmin ? h('button', {
     class: 'btn btn--primary btn--sm',
@@ -253,6 +266,7 @@ export function workerStartCallout({ user, status: initial }) {
 
   function show(status) {
     message.replaceChildren(...calloutMessage(status, isAdmin));
+    progressEl.hidden = !(pending || isWorkerTransitional(status) || (status?.state === 'running' && Date.now() < settleUntil));
     if (!button) return;
     if (canStartWorker(status)) {
       button.disabled = false;
@@ -289,13 +303,18 @@ export function workerStartCallout({ user, status: initial }) {
     const hadFocus = focusInCallout();
     button.disabled = true;
     errorEl.hidden = true;
+    pending = true;
+    progressEl.hidden = false;
     try {
       const status = await api('/api/system/worker/start', { method: 'POST' });
+      pending = false;
       toast('Scanner dijalankan', 'bull');
-      show(status);
       settleUntil = Date.now() + SETTLE_MS;
+      show(status);
       schedulePoll(status);
     } catch (err) {
+      pending = false;
+      progressEl.hidden = true;
       errorEl.textContent = workerErrorMessage(err);
       errorEl.hidden = false;
       button.disabled = false;
