@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GATE_CONDITIONS } from '../../../backend/patterns/conditions.js';
+import { GATE_CONDITIONS, mean } from '../../../backend/patterns/conditions.js';
 import { DEFAULT_PVA_PARAMS, PatternParamsError } from '../../../backend/patterns/params.js';
 import { PVA_CONDITIONS, detectProgressiveVolume } from '../../../backend/patterns/progressiveVolume.js';
 import {
@@ -54,15 +54,18 @@ describe('Pattern #002 Progressive Volume Accumulation', () => {
     }
   });
 
-  it('NEG-PPVA-001 satu lonjakan volume raksasa → tidak terdeteksi; alasannya noSpikeDominance', () => {
+  it('NEG-PPVA-001 satu lonjakan volume raksasa → tidak terdeteksi; alasannya kedua penjaga lonjakan', () => {
+    const spikeGuards = ['noSpikeDominance', 'growthNotSingleSpike'];
     for (const seed of SEEDS) {
       const r = detectProgressiveVolume(withVolumeSpike(progressiveVolumeCandles(seed), -3, 30));
       expect(r.detected).toBe(false);
-      const spike = cond(r, 'noSpikeDominance');
-      expect(spike.passed).toBe(false);
-      expect(spike.value).toBeGreaterThan(spike.threshold);
+      for (const id of spikeGuards) {
+        const spike = cond(r, id);
+        expect(spike.passed, id).toBe(false);
+        expect(spike.value).toBeGreaterThan(spike.threshold);
+      }
       // Kondisi wajib lain tetap lulus dan skor ≥ minScore: penolakan murni karena dominasi lonjakan.
-      for (const id of requiredIds.filter((x) => x !== 'noSpikeDominance')) expect(cond(r, id).passed, id).toBe(true);
+      for (const id of requiredIds.filter((x) => !spikeGuards.includes(x))) expect(cond(r, id).passed, id).toBe(true);
       expect(r.patternScore).toBeGreaterThanOrEqual(DEFAULT_PVA_PARAMS.minScore);
     }
   });
@@ -72,6 +75,62 @@ describe('Pattern #002 Progressive Volume Accumulation', () => {
     expect(cond(r, 'volumeGrowth').passed).toBe(true);
     expect(cond(r, 'noSpikeDominance').passed).toBe(false);
     expect(r.detected).toBe(false);
+  });
+
+  // Jalur harga persis progressiveVolumeCandles (12 + 20 candle naik bertahap), tetapi volume
+  // DATAR ±600 di seluruh fase naik.
+  const flatVolumeUp = (seed, volumeNoise = 0.1) => {
+    const up = (bars) => ({ bars, cycle: zigzag(5, 0.0015, 3, 0.0015), wick: 0.002, volume: 600, volumeNoise });
+    return generateCandles({ seed, segments: [{ bars: 48, cycle: zigzag(3, 0.002, 3, 0.002), volume: 1000, volumeNoise: 0.15 }, up(12), up(20)] });
+  };
+
+  it('NEG-PPVA-009 satu candle 3,5× rata-rata pada volume datar (porsi jendela 0,15 lolos) → ditolak growthNotSingleSpike', () => {
+    for (const seed of SEEDS) {
+      // Tanpa derau: rata-rata sub-jendela naik 1% per sub-jendela; candle ke-3 dari akhir = 2100
+      // (3,5× rata-rata) menyumbang ±95% kenaikan sub-jendela terakhir.
+      const base = flatVolumeUp(seed, 0);
+      const n = base.length;
+      const volumes = Array.from({ length: 20 }, (_, j) => (j === 17 ? 2100 : 600 * (1 + 0.01 * Math.floor(j / 5))));
+      const candles = base.map((c, i) => (i < n - 20 ? c : { ...c, volume: volumes[i - (n - 20)], quoteVolume: c.quoteVolume * (volumes[i - (n - 20)] / c.volume) }));
+      const r = detectProgressiveVolume(candles);
+      expect(r.detected, `seed ${seed}`).toBe(false);
+      expect(cond(r, 'volumeRising').passed).toBe(true);
+      expect(cond(r, 'volumeGrowth').passed).toBe(true);
+      expect(cond(r, 'noSpikeDominance')).toMatchObject({ passed: true });
+      const first = mean(volumes.slice(0, 5));
+      const last5 = volumes.slice(15);
+      const expected = (Math.max(...last5) - first) / (last5.reduce((a, b) => a + b, 0) - 5 * first);
+      expect(cond(r, 'growthNotSingleSpike')).toMatchObject({ passed: false, threshold: DEFAULT_PVA_PARAMS.maxSpikeGrowthShare });
+      expect(cond(r, 'growthNotSingleSpike').value).toBeCloseTo(expected, 9);
+      expect(cond(r, 'growthNotSingleSpike').value).toBeGreaterThan(0.9);
+    }
+  });
+
+  it('NEG-PPVA-010 satu lonjakan realistis 3–5× di sub-jendela terakhir pada volume datar berderau → tidak pernah terdeteksi', () => {
+    const results = [];
+    for (const multiplier of [3, 3.5, 4, 4.5, 5]) {
+      for (const index of [-1, -3, -5]) {
+        for (let seed = 1; seed <= 150; seed += 1) {
+          results.push({ label: `${multiplier}× @${index} seed ${seed}`, r: detectProgressiveVolume(withVolumeSpike(flatVolumeUp(seed), index, multiplier)) });
+        }
+      }
+    }
+    expect(results.filter((x) => x.r.detected).map((x) => x.label)).toEqual([]);
+    // Kasus yang lolos penjaga lama (pertumbuhan & porsi jendela) harus ditolak penjaga baru.
+    const binding = results.filter(({ r }) => cond(r, 'volumeGrowth').passed && cond(r, 'noSpikeDominance').passed);
+    expect(binding.length).toBeGreaterThan(50);
+    for (const { label, r } of binding) expect(cond(r, 'growthNotSingleSpike').passed, label).toBe(false);
+  });
+
+  it('POS-PPVA-002 ramp volume progresif asli (juga dengan satu candle 2×) tetap terdeteksi; porsi kenaikan candle terbesar jauh di bawah ambang', () => {
+    for (const seed of SEEDS) {
+      const ramp = detectProgressiveVolume(progressiveVolumeCandles(seed));
+      expect(ramp.detected, `seed ${seed}`).toBe(true);
+      expect(cond(ramp, 'growthNotSingleSpike').passed).toBe(true);
+      expect(cond(ramp, 'growthNotSingleSpike').value).toBeLessThan(0.35);
+      const mild = detectProgressiveVolume(withVolumeSpike(progressiveVolumeCandles(seed), -3, 2));
+      expect(mild.detected, `2× seed ${seed}`).toBe(true);
+    }
   });
 
   it('NEG-PPVA-003 harga datar dengan volume progresif → tidak terdeteksi (volume saja tidak cukup)', () => {
@@ -131,6 +190,7 @@ describe('Pattern #002 Progressive Volume Accumulation', () => {
     const candles = progressiveVolumeCandles(1);
     expect(() => detectProgressiveVolume(candles, { subWindows: 1 })).toThrow(PatternParamsError);
     expect(() => detectProgressiveVolume(candles, { maxSpikeDominance: 0.01 })).toThrow(/maxSpikeDominance/);
+    expect(() => detectProgressiveVolume(candles, { maxSpikeGrowthShare: 0.2 })).toThrow(/maxSpikeGrowthShare/);
     expect(() => detectProgressiveVolume(candles, { minVolumeGrowth: '2' })).toThrow(PatternParamsError);
   });
 

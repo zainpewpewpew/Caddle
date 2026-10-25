@@ -1,7 +1,12 @@
 // Pattern #002 — Progressive Volume Accumulation (PVA), versi 1.
 // Harga naik bertahap disertai volume yang meningkat progresif dari kondisi sepi. Jendela
 // progresif = subWindows × subWindowLength candle terakhir, dibagi menjadi sub-jendela berurutan.
-// Pola ditolak bila kenaikan volume didominasi satu lonjakan anomali (spikeDominance).
+// Pola ditolak bila kenaikan volume didominasi satu lonjakan anomali. Dua penjaga:
+//   - noSpikeDominance: porsi volume candle terbesar di seluruh jendela (lonjakan raksasa);
+//   - growthNotSingleSpike: porsi KENAIKAN volume sub-jendela terakhir (terhadap rata-rata
+//     sub-jendela pertama) yang berasal dari candle terbesarnya. Penjaga ini mengikat pada
+//     besaran yang sama dengan volumeGrowth, sehingga satu candle 3–5× rata-rata di volume datar
+//     (porsi jendela hanya ±0,15–0,2) tidak dapat sendirian memenuhi minVolumeGrowth.
 // Fungsi murni; tidak memanggil detektor SA. Skor bukan probabilitas — lihat conditions.js.
 import { percentChange, rvol, spikeDominance } from '../indicators/index.js';
 import { analyzeStructure, describeConditions, mean, runDetector } from './conditions.js';
@@ -12,7 +17,8 @@ import { requiredCandles, resolveParams } from './params.js';
 const DEFS = [
   { id: 'volumeRising', label: 'Volume progresif: rata-rata tiap sub-jendela naik dari sebelumnya (jumlah langkah naik ≥ ambang)', weight: 15, required: true, comparator: 'gte' },
   { id: 'volumeGrowth', label: 'Pertumbuhan volume: sub-jendela terakhir / pertama ≥ ambang', weight: 10, required: true, comparator: 'gte' },
-  { id: 'noSpikeDominance', label: 'Tidak didominasi satu lonjakan volume: porsi volume candle terbesar di jendela ≤ ambang', weight: 15, required: true, comparator: 'lte' },
+  { id: 'noSpikeDominance', label: 'Tidak didominasi satu lonjakan volume: porsi volume candle terbesar di jendela ≤ ambang', weight: 10, required: true, comparator: 'lte' },
+  { id: 'growthNotSingleSpike', label: 'Kenaikan volume tidak berasal dari satu candle: porsi kenaikan sub-jendela terakhir (terhadap rata-rata sub-jendela pertama) dari candle terbesarnya ≤ ambang', weight: 5, required: true, comparator: 'lte' },
   { id: 'priceRising', label: 'Harga naik dalam jendela progresif (perubahan > 0)', weight: 10, required: true, comparator: 'gt' },
   { id: 'riseNotSingleCandle', label: 'Kenaikan bertahap: porsi kenaikan dari satu candle ≤ ambang', weight: 10, required: true, comparator: 'lte' },
   { id: 'higherLows', label: 'Higher low terkonfirmasi berurutan ≥ ambang', weight: 10, required: true, comparator: 'gte' },
@@ -29,6 +35,7 @@ const thresholdsOf = (p) => ({
   volumeRising: p.subWindows - 1,
   volumeGrowth: p.minVolumeGrowth,
   noSpikeDominance: p.maxSpikeDominance,
+  growthNotSingleSpike: p.maxSpikeGrowthShare,
   priceRising: 0,
   riseNotSingleCandle: p.maxSingleMoveShare,
   higherLows: p.minHigherLows,
@@ -51,6 +58,13 @@ function measure(candles, p, f) {
   const first = subMeans[0];
   const growth = first > 0 ? subMeans.at(-1) / first : null;
 
+  // Kenaikan sub-jendela terakhir = Σ (volume − rata-rata sub-jendela pertama). Porsi candle
+  // terbesar: kenaikan merata → 1/L; satu lonjakan pada volume datar → ≈ 1. Tidak terdefinisi
+  // (null → gagal) bila volume tidak naik.
+  const lastVolumes = volumes.slice(last - L + 1, last + 1);
+  const increase = first === null ? null : lastVolumes.reduce((a, b) => a + b, 0) - L * first;
+  const spikeGrowthShare = increase > 0 ? (Math.max(...lastVolumes) - first) / increase : null;
+
   // RVOL sub-jendela pertama: baseline = rvolPeriod candle sebelum masing-masing candle.
   const priorRvol = mean(rvol(volumes, p.rvolPeriod).slice(start, start + L));
 
@@ -69,6 +83,7 @@ function measure(candles, p, f) {
       volumeRising: risingSteps,
       volumeGrowth: growth,
       noSpikeDominance: spikeDominance(volumes, window),
+      growthNotSingleSpike: spikeGrowthShare,
       priceRising: percentChange(closes, window)[last],
       riseNotSingleCandle: singleMoveShare,
       higherLows: structure.higherLows,

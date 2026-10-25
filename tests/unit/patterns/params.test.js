@@ -91,6 +91,14 @@ describe('parameter pola', () => {
     expect(paths(errors)).toEqual(['/maxSpikeDominance']);
   });
 
+  it('NEG-PPRM-008 aturan lintas-field PVA: maxSpikeGrowthShare harus > 1/subWindowLength (batas tepat ditolak)', () => {
+    expect(paths(validateParams({ ...DEFAULT_PVA_PARAMS, subWindowLength: 10, maxSpikeGrowthShare: 0.1 }, 'PVA'))).toEqual(['/maxSpikeGrowthShare']);
+    expect(validateParams({ ...DEFAULT_PVA_PARAMS, subWindowLength: 10, maxSpikeGrowthShare: 0.11 }, 'PVA')).toEqual([]);
+    expect(paths(validateParams({ ...DEFAULT_PVA_PARAMS, maxSpikeGrowthShare: 0.2 }, 'PVA'))).toEqual(['/maxSpikeGrowthShare']);
+    // Default sah untuk setiap subWindowLength yang diizinkan spesifikasi (min 2 → 1/2 < 0,6).
+    expect(DEFAULT_PVA_PARAMS.maxSpikeGrowthShare).toBeGreaterThan(1 / PARAM_SPECS.PVA.subWindowLength.min);
+  });
+
   it('NEG-PPRM-007 resolveParams melempar PatternParamsError (RangeError) berisi daftar error', () => {
     let caught;
     try { resolveParams('PVA', { subWindows: 1, extra: 1 }); } catch (err) { caught = err; }
