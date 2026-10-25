@@ -123,7 +123,7 @@ function normalizeSettings(raw) {
  *     => { selected: Array<{ symbol: string }>, rejected: object[] } | Promise<object>,
  *   clock?: () => number, logger?: object, setTimer?: Function, clearTimer?: Function, options?: object,
  * }} deps
- * @returns {{ start(): Promise<void>, stop(): Promise<void>, status(): object }}
+ * @returns {{ start(): Promise<void>, stop(): Promise<void>, status(): object, liquidityOf(symbol: string): object|null }}
  */
 export function createScanner({
   rest,
@@ -150,6 +150,8 @@ export function createScanner({
   const streams = new Map();
   const symbolInfo = new Map();
   let monitored = [];
+  /** @type {Map<string, { quoteVolume24h: number|null, spreadBps: number|null }>} */
+  let liquidity = new Map();
   let dbMonitoredChecked = false;
   let stream = null;
   let reconnectsBase = 0;
@@ -501,8 +503,10 @@ export function createScanner({
       limiter.run(() => rest.getBookTickers()),
     ]);
     const result = await discoverSymbols({ symbols, tickers, bookTickers, settings: settings.raw });
-    const selected = (result?.selected ?? []).map((s) => s.symbol).filter((s) => typeof s === 'string');
-    return { symbols: Array.isArray(symbols) ? symbols : [], selected };
+    const chosen = (result?.selected ?? []).filter((s) => typeof s?.symbol === 'string');
+    // Likuiditas terakhir per simbol (quote volume 24 jam, spread) untuk risk flag di pipeline analisis.
+    liquidity = new Map(chosen.map((s) => [s.symbol, { quoteVolume24h: s.quoteVolume24h ?? null, spreadBps: s.spreadBps ?? null }]));
+    return { symbols: Array.isArray(symbols) ? symbols : [], selected: chosen.map((s) => s.symbol) };
   }
 
   async function syncSymbols(exchange, selected, now) {
@@ -624,7 +628,9 @@ export function createScanner({
 
   async function heartbeat() {
     try {
-      await repos.ingestion.heartbeat({ at: clock(), state: currentState(), metrics: status() });
+      // `state` = snapshot status() lengkap (memuat field `state`); disimpan apa adanya sebagai JSON
+      // dan dibaca kembali oleh /api/system/status.
+      await repos.ingestion.heartbeat({ at: clock(), state: status() });
     } catch (err) {
       logger.error({ err: errorMessage(err) }, 'heartbeat ingesti gagal');
     }
@@ -642,6 +648,10 @@ export function createScanner({
   }
 
   return {
+    /** Likuiditas dari discovery terakhir (null bila belum ada / memakai fallback daftar DB). */
+    liquidityOf(symbol) {
+      return liquidity.get(symbol) ?? null;
+    },
     /** Menjalankan discovery + bootstrap pertama lalu loop berkala. Tidak reject karena error REST/DB. */
     start() {
       if (startPromise) return startPromise;

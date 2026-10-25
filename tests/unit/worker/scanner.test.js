@@ -639,8 +639,8 @@ describe('heartbeat, status, stop', () => {
     await timers.advance(90_000);
     const beats = repos.ingestion.heartbeat.mock.calls.map(([b]) => b);
     expect(beats.map((b) => b.at)).toEqual([START + 30_000, START + 60_000, START + 90_000]);
-    expect(beats.every((b) => b.state === 'running')).toBe(true);
-    expect(beats[0].metrics).toMatchObject({ symbols: 2, streams: 2, errors: 0 });
+    expect(beats.every((b) => b.state.state === 'running')).toBe(true);
+    expect(beats[0].state).toMatchObject({ symbols: 2, streams: 2, errors: 0 });
     await scanner.stop();
   });
 
@@ -651,7 +651,7 @@ describe('heartbeat, status, stop', () => {
     await scanner.stop();
     expect(timers.pending.size).toBe(0);
     expect(streams.current().stopped).toBe(true);
-    expect(repos.ingestion.heartbeat.mock.calls.at(-1)[0]).toMatchObject({ state: 'stopped' });
+    expect(repos.ingestion.heartbeat.mock.calls.at(-1)[0]).toMatchObject({ state: { state: 'stopped' } });
     expect(scanner.status().state).toBe('stopped');
     const n = repos.ingestion.heartbeat.mock.calls.length;
     await timers.advance(10 * 3_600_000);

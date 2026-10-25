@@ -79,15 +79,27 @@ export function patternDefinitions(params = {}) {
 /**
  * Handler `onClosedCandles` untuk scanner. Evaluasi per (simbol, timeframe) diserialkan agar
  * candle WebSocket dan backfill yang datang bersamaan tidak membuka dua sinyal.
- * @param {{ repos: { candles: any }, signals: any, getLiquidity?: (symbol: string) => object|undefined,
- *   logger?: any, params?: object, lookback?: number,
+ *
+ * Setiap candle dasar BARU dievaluasi berurutan (replay) — mis. setelah backfill gap beberapa candle
+ * sekaligus — sehingga transisi state terjadi pada candle yang benar, sama seperti backtest.
+ * Alert hanya untuk candle terbaru; transisi historis hasil replay disimpan tanpa alert.
+ * Evaluasi pertama sebuah seri tanpa riwayat event hanya memakai candle terakhir (bootstrap = histori).
+ *
+ * @param {{ repos: { candles: any }, signals: any, getLiquidity?: (symbol: string) => object|null|undefined,
+ *   logger?: any, params?: object, lookback?: number, maxReplay?: number, settleMs?: number,
+ *   sleep?: (ms: number) => Promise<void>,
  *   onAlert?: (alert: { symbol: string, timeframe: string, state: string, event: object, view: object }) => void }} deps
+ *   settleMs: bila candle timeframe lebih tinggi yang tutup bersamaan belum tersimpan, tunggu sekali
+ *   selama ini agar konteks live sama dengan replay (stream per timeframe diproses paralel).
  */
 export function createAnalysisPipeline({
-  repos, signals, getLiquidity = () => undefined, logger, params = {}, lookback = ANALYSIS_LOOKBACK, onAlert,
+  repos, signals, getLiquidity = () => undefined, logger, params = {}, lookback = ANALYSIS_LOOKBACK,
+  maxReplay = 288, settleMs = 0, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onAlert,
 }) {
   if (!repos?.candles || !signals) throw new TypeError('repos.candles dan signals wajib ada');
   if (!Number.isInteger(lookback) || lookback < 100 || lookback > 1500) throw new RangeError('lookback harus 100..1500');
+  if (!Number.isInteger(maxReplay) || maxReplay < 1 || maxReplay > 5000) throw new RangeError('maxReplay harus 1..5000');
+  if (!Number.isInteger(settleMs) || settleMs < 0 || settleMs > 30_000) throw new RangeError('settleMs harus 0..30000');
   const definitions = patternDefinitions(params);
   let definitionsReady = null;
   const queues = new Map();
@@ -106,39 +118,69 @@ export function createAnalysisPipeline({
     return definitionsReady;
   }
 
+  /** Tunggu sekali bila candle HTF yang seharusnya tutup bersamaan dengan candle dasar belum tersimpan. */
+  async function settleHigherTimeframes(symbol, timeframe, evaluationTime) {
+    if (settleMs === 0) return;
+    for (const tf of HIGHER_TIMEFRAMES[timeframe]) {
+      const htfMs = TIMEFRAME_MS[tf];
+      if ((evaluationTime + 1) % htfMs !== 0) continue;
+      const lastOpen = await repos.candles.getLastOpenTime({ symbol, timeframe: tf });
+      if (lastOpen === null || lastOpen < evaluationTime + 1 - htfMs) {
+        await sleep(settleMs);
+        return;
+      }
+    }
+  }
+
   async function evaluate({ symbol, timeframe }) {
     if (!TIMEFRAMES.includes(timeframe)) throw new RangeError(`Timeframe tidak didukung: ${timeframe}`);
     await ensureDefinitions();
-    const candlesByTimeframe = {};
-    for (const tf of [timeframe, ...HIGHER_TIMEFRAMES[timeframe]]) {
-      candlesByTimeframe[tf] = await repos.candles.getLatest({ symbol, timeframe: tf, limit: lookback });
-    }
-    const base = candlesByTimeframe[timeframe];
+    const key = `${symbol}:${timeframe}`;
+    const base = await repos.candles.getLatest({ symbol, timeframe, limit: lookback + maxReplay });
     if (!base.length) return { symbol, timeframe, skipped: 'NO_DATA' };
     const last = base[base.length - 1];
-    const key = `${symbol}:${timeframe}`;
     if (!lastEvaluated.has(key)) lastEvaluated.set(key, await signals.lastEventCandleTime({ symbol, timeframe }));
     const seen = lastEvaluated.get(key);
     if (seen !== null && last.openTime <= seen) return { symbol, timeframe, skipped: 'ALREADY_EVALUATED' };
 
-    const prev = await signals.getOpen({ symbol, timeframe });
-    const result = analyzeAt({ symbol, timeframe, candlesByTimeframe, prev, liquidity: getLiquidity(symbol), params });
-    if (result.event || (prev && result.next !== prev)) {
-      await signals.save({ symbol, timeframe, snapshot: result.next, event: result.event, explanation: result.view.explanation });
+    const fresh = seen === null ? [base.length - 1] : base.map((c, i) => (c.openTime > seen ? i : -1)).filter((i) => i >= 0);
+    const pending = fresh.slice(-maxReplay);
+    if (pending.length < fresh.length) {
+      logger?.warn?.({ symbol, timeframe, dropped: fresh.length - pending.length, maxReplay }, 'replay dipotong: candle lama tidak dievaluasi');
     }
-    lastEvaluated.set(key, last.openTime);
+
+    await settleHigherTimeframes(symbol, timeframe, last.closeTime);
+    const higher = {};
+    const span = (pending.length + 1) * TIMEFRAME_MS[timeframe];
+    for (const tf of HIGHER_TIMEFRAMES[timeframe]) {
+      higher[tf] = await repos.candles.getLatest({ symbol, timeframe: tf, limit: Math.min(10_000, lookback + Math.ceil(span / TIMEFRAME_MS[tf]) + 2) });
+    }
+
+    const liquidity = getLiquidity(symbol) ?? undefined;
+    let result = null;
+    for (const index of pending) {
+      const candle = base[index];
+      const window = base.slice(Math.max(0, index + 1 - lookback), index + 1);
+      const prev = await signals.getOpen({ symbol, timeframe });
+      result = analyzeAt({ symbol, timeframe, candlesByTimeframe: { [timeframe]: window, ...higher }, prev, liquidity, params });
+      if (result.event || (prev && result.next !== prev)) {
+        await signals.save({ symbol, timeframe, snapshot: result.next, event: result.event, explanation: result.view.explanation });
+      }
+      lastEvaluated.set(key, candle.openTime);
+    }
+
     if (result.alert) {
       logger?.info?.({ symbol, timeframe, state: result.next.state, reason: result.event?.reason }, 'alert sinyal');
       onAlert?.({ symbol, timeframe, state: result.next.state, event: result.event, view: result.view });
     }
     return {
-      symbol, timeframe, evaluationTime: result.evaluationTime, state: result.next.state,
+      symbol, timeframe, evaluationTime: result.evaluationTime, state: result.next.state, evaluated: pending.length,
       classification: result.patterns.classification, event: result.event, alert: result.alert,
     };
   }
 
   return {
-    /** @param {{ symbol: string, timeframe: string }} series */
+    /** @param {{ symbol: string, timeframe: string, candles?: object[], reason?: string }} series */
     onClosedCandles(series) {
       const key = `${series?.symbol}:${series?.timeframe}`;
       const run = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(() => evaluate(series));

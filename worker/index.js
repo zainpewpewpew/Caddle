@@ -1,7 +1,9 @@
-// Entry point proses worker scanner (Milestone 2): `npm run worker`.
-// Merakit dependensi nyata (REST/WS Binance, SQLite, repositori), menjalankan scanner,
-// dan menangani graceful shutdown (SIGTERM/SIGINT). Log terstruktur JSON per baris ke stdout.
+// Entry point proses worker scanner (Milestone 2–3): `npm run worker`.
+// Merakit dependensi nyata (REST/WS Binance, SQLite, repositori, pipeline analisis SA/PVA),
+// menjalankan scanner, dan menangani graceful shutdown (SIGTERM/SIGINT).
+// Log terstruktur JSON per baris ke stdout.
 
+import { createAnalysisPipeline } from '../backend/analysis/pipeline.js';
 import { ConfigError, loadConfig } from '../backend/app/config.js';
 import { openDatabase } from '../backend/database/connection.js';
 import { migrate } from '../backend/database/migrate.js';
@@ -77,15 +79,29 @@ async function main() {
 
   const getSettings = async () => (await repos.settings.get(SCANNER_SETTINGS_KEY))?.value ?? DEFAULT_SCANNER_SETTINGS;
 
-  const scanner = createScanner({
+  // Pipeline analisis per candle tertutup: pola → konteks multi-timeframe → skor → state machine → SQLite.
+  // settleMs: stream per timeframe diproses paralel; beri jeda singkat agar candle 15m/1h yang tutup
+  // bersamaan sudah tersimpan sebelum candle 5m dievaluasi (konteks live = replay).
+  let scanner = null;
+  const pipeline = createAnalysisPipeline({
+    repos,
+    signals: repos.signals,
+    getLiquidity: (symbol) => scanner?.liquidityOf(symbol),
+    settleMs: 3_000,
+    logger,
+    onAlert: (alert) => logger.info({ symbol: alert.symbol, timeframe: alert.timeframe, state: alert.state, reason: alert.event?.reason }, 'sinyal baru / naik tahap'),
+  });
+  await pipeline.ensureDefinitions();
+
+  scanner = createScanner({
     rest,
     streamFactory: (opts) => createKlineStream(opts),
     repos,
     getSettings,
     discoverSymbols,
-    // Pipeline analisis (indikator → pola → sinyal, Milestone 3) dipasang di sini saat integrasi.
     onClosedCandles: async ({ symbol, timeframe, candles, reason }) => {
-      logger.debug({ symbol, timeframe, reason, count: candles.length, lastOpenTime: candles.at(-1)?.openTime }, 'candle tertutup siap dianalisis');
+      const result = await pipeline.onClosedCandles({ symbol, timeframe, candles, reason });
+      logger.debug({ symbol, timeframe, reason, count: candles.length, ...result }, 'candle tertutup dianalisis');
     },
     clock: Date.now,
     logger,

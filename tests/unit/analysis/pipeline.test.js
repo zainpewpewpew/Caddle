@@ -231,4 +231,64 @@ describe('createAnalysisPipeline (SQLite)', () => {
     const ctx = await setup();
     expect(() => createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, params: { sa: { minScore: 500 } } })).toThrow(RangeError);
   });
+
+  it('EDGE-PIPE-005 backfill beberapa candle sekaligus di-replay berurutan: event identik dengan pemrosesan per candle', async () => {
+    const all = silentAccumulationCandles(1);
+    const sequential = await setup();
+    const p1 = createAnalysisPipeline({ repos: sequential.repos, signals: sequential.signals });
+    for (let k = 1; k <= all.length; k += 1) await feed({ ...sequential, pipeline: p1 }, all, k);
+
+    const batched = await setup();
+    const alerts = [];
+    const p2 = createAnalysisPipeline({ repos: batched.repos, signals: batched.signals, onAlert: (a) => alerts.push(a) });
+    for (let k = 1; k <= 55; k += 1) await feed({ ...batched, pipeline: p2 }, all, k);
+    // Candle 56..76 tiba sekaligus (mis. hasil backfill gap setelah reconnect).
+    await batched.repos.candles.upsertClosed(all.slice(55), { now: NOW });
+    const r = await p2.onClosedCandles({ symbol: SYMBOL, timeframe: '5m', candles: all.slice(55), reason: 'gap' });
+    expect(r.evaluated).toBe(all.length - 55);
+
+    const strip = (h) => h.map((sig) => sig.events.map((e) => [e.candleTime, e.fromState, e.toState]));
+    expect(strip(await batched.signals.history({ symbol: SYMBOL }))).toEqual(strip(await sequential.signals.history({ symbol: SYMBOL })));
+    // Transisi historis dalam replay tidak memicu alert; hanya candle terbaru yang boleh.
+    expect(alerts.length).toBeLessThanOrEqual(1);
+  });
+
+  it('EDGE-PIPE-006 replay dibatasi maxReplay dan pemotongan dicatat (tidak diam-diam)', async () => {
+    const ctx = await setup();
+    const warnings = [];
+    const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, maxReplay: 5, logger: { warn: (f, m) => warnings.push({ f, m }), info: () => {} } });
+    const all = silentAccumulationCandles(1);
+    await feed({ ...ctx, pipeline }, all, 1);
+    await ctx.repos.candles.upsertClosed(all.slice(1, 30), { now: NOW });
+    const r = await pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
+    expect(r.evaluated).toBe(5);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].f).toMatchObject({ dropped: 24, maxReplay: 5 });
+  });
+
+  it('UNIT-PIPE-005 candle 5m di batas jam menunggu sekali bila candle 1h yang tutup bersamaan belum tersimpan', async () => {
+    const ctx = await setup();
+    const sleeps = [];
+    const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, settleMs: 1500, sleep: async (ms) => { sleeps.push(ms); } });
+    const all = silentAccumulationCandles(1);
+    // Candle ke-12 (indeks 11) tutup tepat di 01:00 UTC → candle 1h 00:00 juga tutup saat itu.
+    await ctx.repos.candles.upsertClosed(all.slice(0, 12), { now: NOW });
+    await pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
+    expect(sleeps).toEqual([1500]);
+    // Bila candle 15m & 1h yang tutup bersamaan sudah ada, tidak menunggu.
+    await ctx.repos.candles.upsertClosed([...aggregate(all.slice(0, 24), '15m'), ...aggregate(all.slice(0, 24), '1h'), ...all.slice(12, 24)], { now: NOW });
+    await pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
+    expect(sleeps).toEqual([1500]);
+    // Candle yang tidak di batas 15m/1h tidak pernah menunggu.
+    await ctx.repos.candles.upsertClosed([all[24]], { now: NOW });
+    await pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
+    expect(sleeps).toEqual([1500]);
+  });
+
+  it('POS-PIPE-003 likuiditas dari discovery diteruskan ke skor → risk flag likuiditas/spread', () => {
+    const all = silentAccumulationCandles(1);
+    const r = analyzeAt({ symbol: SYMBOL, timeframe: '5m', candlesByTimeframe: byTimeframe(all.slice(0, 63)), prev: null,
+      liquidity: { quoteVolume24h: 1_000, spreadBps: 80 } });
+    expect(r.view.riskFlags).toEqual(expect.arrayContaining(['POOR_LIQUIDITY', 'WIDE_SPREAD']));
+  });
 });
