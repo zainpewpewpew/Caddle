@@ -201,7 +201,11 @@ function liquidityThresholds(raw) {
  *   clock?: () => number, localClock?: () => number, closureClock?: () => number, logger?: object, setTimer?: Function,
  *   clearTimer?: Function, options?: object,
  *   serverClock?: { sync(): Promise<{ ok: boolean, message?: string }>, offsetMs(): number },
+ *   heartbeatOwner?: { pid: number, host: string } | null,
  * }} deps
+ *   heartbeatOwner: identitas proses penulis heartbeat (worker/index.js: process.pid + hostname). Disimpan sebagai
+ *   `state.owner` di setiap heartbeat (tidak di status()) agar supervisor server yang baru start dapat mengenali
+ *   heartbeat segar dari worker yang sudah mati tanpa heartbeat akhir. Tidak pernah dikirim ke klien API.
  *   clock: waktu server (worker: serverClock.now); localClock: jam host (worker: Date.now; default = clock) untuk
  *   stempel yang dibandingkan /api/system/status dengan Date.now proses API (heartbeat, run, error, lastIngestionAt).
  *   closureClock: acuan rencana REST & staleness sweep (worker: serverClock.closureNow; default = clock) — saat jam
@@ -239,12 +243,18 @@ export function createScanner({
   clearTimer = globalThis.clearTimeout,
   options = {},
   serverClock = null,
+  heartbeatOwner = null,
 }) {
   assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, serverClock });
   if (typeof clock !== 'function' || typeof localClock !== 'function' || typeof closureClock !== 'function') {
     throw new TypeError('clock, localClock, dan closureClock wajib berupa fungsi');
   }
   if (listOpenSeries !== null && typeof listOpenSeries !== 'function') throw new TypeError('listOpenSeries harus fungsi atau null');
+  if (heartbeatOwner !== null && (typeof heartbeatOwner !== 'object' || !Number.isSafeInteger(heartbeatOwner.pid)
+    || heartbeatOwner.pid <= 0 || typeof heartbeatOwner.host !== 'string' || heartbeatOwner.host.length === 0)) {
+    throw new TypeError('heartbeatOwner harus null atau { pid: bilangan bulat > 0, host: string tidak kosong }');
+  }
+  const owner = heartbeatOwner === null ? null : Object.freeze({ pid: heartbeatOwner.pid, host: heartbeatOwner.host });
   const cfg = { ...SCANNER_DEFAULTS, ...options };
   if (!Number.isInteger(cfg.closeMarginMs) || cfg.closeMarginMs < 0 || cfg.closeMarginMs > 60_000) {
     throw new RangeError('options.closeMarginMs harus bilangan bulat 0..60000');
@@ -970,9 +980,9 @@ export function createScanner({
 
   async function heartbeat() {
     try {
-      // `state` = snapshot status() lengkap (memuat field `state`); disimpan apa adanya sebagai JSON
-      // dan dibaca kembali oleh /api/system/status.
-      await repos.ingestion.heartbeat({ at: localClock(), state: status() });
+      // `state` = snapshot status() lengkap (memuat field `state`) + `owner` bila ada; disimpan apa adanya
+      // sebagai JSON dan dibaca kembali oleh /api/system/status (owner tidak diteruskan) & supervisor worker.
+      await repos.ingestion.heartbeat({ at: localClock(), state: owner ? { ...status(), owner } : status() });
     } catch (err) {
       logger.error({ err: errorMessage(err) }, 'heartbeat ingesti gagal');
     }

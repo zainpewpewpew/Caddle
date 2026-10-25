@@ -925,3 +925,89 @@ th[aria-sort="descending"] .sort-btn::after {
   border: 0;
   margin: var(--lr-space-2) 0;
 }
+
+/* ---- Kontrol scanner (System Health & Overview) ---- */
+.worker-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-3);
+}
+
+.worker-control:focus-visible {
+  box-shadow: none;
+}
+
+.worker-control__state .status {
+  color: var(--lr-text);
+  font-size: var(--lr-text-md);
+  font-weight: var(--lr-weight-medium);
+  white-space: normal;
+}
+
+.worker-control__desc {
+  max-width: 72ch;
+  color: var(--lr-text-2);
+}
+
+.worker-control__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  padding: var(--lr-space-3);
+  border: 1px solid var(--lr-bear-line);
+  border-radius: var(--lr-radius-sm);
+  background: var(--lr-bear-soft);
+  color: var(--lr-text);
+}
+
+/* Bar progres indeterminate: perintah scanner sedang diproses (durasi tidak diketahui, jadi tanpa persentase). */
+.progress-indeterminate {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--lr-radius-pill);
+  background: var(--lr-accent-soft);
+}
+
+.progress-indeterminate::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--lr-accent);
+  animation: lr-indeterminate 1.3s var(--lr-ease) infinite;
+}
+
+@keyframes lr-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Tanpa gerakan: bar penuh statis tetap menandakan "sedang diproses". */
+  .progress-indeterminate::before {
+    width: 100%;
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+.callout__content .progress-indeterminate {
+  margin-top: var(--lr-space-2);
+}
+
+.callout--action {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.callout__content {
+  display: flex;
+  flex: 1 1 16rem;
+  flex-direction: column;
+  gap: var(--lr-space-1);
+  min-width: 0;
+}
+

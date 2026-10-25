@@ -20,7 +20,7 @@ import { gateHasher } from '../helpers/gatedHasher.js';
 import { TEST_HASHER_OPTIONS, TEST_ORIGIN, login } from '../helpers/testApp.js';
 
 const script = (name) => fileURLToPath(new URL(`../../scripts/${name}`, import.meta.url));
-const DEFAULT_LOGIN = { username: 'admin', password: 'admin123@' };
+const DEFAULT_LOGIN = { username: 'admin', password: 'alphalens-demo' }; // kata sandi lama apa pun yang lolos kebijakan
 const NEW_PASSWORD = 'kata-sandi-baru-yang-kuat';
 
 describe('balapan server vs CLI di proses lain', () => {

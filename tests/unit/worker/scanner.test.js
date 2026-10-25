@@ -245,6 +245,7 @@ function setup({
   discover = fakeDiscover,
   start = START,
   closureClock,
+  heartbeatOwner,
 } = {}) {
   const log = [];
   const timers = createFakeTimers(start);
@@ -278,6 +279,7 @@ function setup({
     ...(localClock ? { localClock: localClock(timers) } : {}),
     ...(listOpenSeries ? { listOpenSeries } : {}),
     ...(closureClock ? { closureClock } : {}),
+    ...(heartbeatOwner !== undefined ? { heartbeatOwner } : {}),
   });
   return { scanner, rest, repos, streams, timers, analysed, log, settings };
 }
@@ -1379,6 +1381,28 @@ describe('heartbeat, status, stop', () => {
     expect(() => createScanner({
       rest, repos, streamFactory: () => ({}), getSettings: async () => ({}), discoverSymbols: fakeDiscover, localClock: 5,
     })).toThrow(TypeError);
+  });
+
+  it('UNIT-SCN-028 heartbeatOwner { pid, host } ikut di setiap heartbeat (bukan di status()); tanpa opsi heartbeat tidak berubah; nilai tidak valid ditolak', async () => {
+    const owner = { pid: 31_337, host: 'host-a' };
+    const { scanner, repos } = setup({ symbols: ['BTCUSDT'], heartbeatOwner: owner });
+    await scanner.start();
+    await scanner.stop();
+    const beats = repos.ingestion.heartbeat.mock.calls.map(([b]) => b.state);
+    expect(beats.length).toBeGreaterThanOrEqual(3);
+    for (const st of beats) expect(st.owner).toEqual(owner);
+    expect(beats.at(-1).state).toBe('stopped');
+    expect(scanner.status()).not.toHaveProperty('owner');
+
+    const plain = setup({ symbols: ['BTCUSDT'] });
+    await plain.scanner.start();
+    expect(plain.repos.ingestion.heartbeat.mock.calls[0][0].state).not.toHaveProperty('owner');
+
+    const { rest, repos: r, streams } = setup();
+    const base = { rest, repos: r, streamFactory: streams.factory, getSettings: async () => ({}), discoverSymbols: fakeDiscover };
+    for (const bad of [{ pid: 0, host: 'h' }, { pid: 1.5, host: 'h' }, { pid: 1, host: '' }, { pid: 1 }, 'pid']) {
+      expect(() => createScanner({ ...base, heartbeatOwner: bad })).toThrow(TypeError);
+    }
   });
 
   it('NEG-SCN-006 dependensi wajib tidak lengkap ditolak', () => {

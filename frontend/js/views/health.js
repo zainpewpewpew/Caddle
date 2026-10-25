@@ -2,6 +2,7 @@ import { api } from '../lib/api.js';
 import { dataTable, page, panel, stat, statusPill } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { EMPTY, formatBytes, formatDuration, formatInteger, formatRelative, formatUtc } from '../lib/format.js';
+import { workerControlCard } from './workerControl.js';
 import { binancePill, scannerPill } from './workerFormat.js';
 
 const REFRESH_MS = 10_000;
@@ -26,7 +27,7 @@ function render(data) {
           h('dt', null, 'Database'), h('dd', null, db.status === 'ok' ? statusPill('ok', 'OK') : statusPill('error', 'Gagal')),
           h('dt', null, 'Worker scanner'), h('dd', { 'data-testid': 'health-scanner' }, scannerPill(sc)),
           h('dt', null, 'WebSocket Binance'), h('dd', { 'data-testid': 'health-binance' }, binancePill(data.binance)),
-          h('dt', null, 'Heartbeat worker'), h('dd', null, running ? `${formatRelative(sc.heartbeatAt, data.serverTime)} · ${formatUtc(sc.heartbeatAt)}` : 'Worker belum pernah berjalan (npm run worker)'))),
+          h('dt', null, 'Heartbeat worker'), h('dd', null, running ? `${formatRelative(sc.heartbeatAt, data.serverTime)} · ${formatUtc(sc.heartbeatAt)}` : 'Worker belum pernah berjalan (tombol "Jalankan scanner" atau npm run worker)'))),
       panel({ title: 'Ingesti data' },
         h('dl', { class: 'kv' },
           h('dt', null, 'Ingesti terakhir'), h('dd', null, sc.lastIngestionAt ? `${formatRelative(sc.lastIngestionAt, data.serverTime)} · ${formatUtc(sc.lastIngestionAt)}` : EMPTY),
@@ -55,19 +56,28 @@ function render(data) {
   ];
 }
 
-export async function healthView() {
-  const body = h('div', { class: 'stack' }, render(await api('/api/system/status')));
+export async function healthView(ctx) {
+  const initial = await api('/api/system/status');
+  // Kartu kontrol dibuat sekali (state konfirmasi/request tetap utuh); metrik di bawahnya dirender ulang.
+  const control = workerControlCard({ user: ctx?.user, status: initial.workerControl });
+  const metrics = h('div', { class: 'stack' }, render(initial));
   const timer = setInterval(async () => {
     try {
       // Auto-refresh bukan aktivitas pengguna: tidak memperpanjang idle timeout sesi.
-      body.replaceChildren(...render(await api('/api/system/status', { background: true })));
+      const data = await api('/api/system/status', { background: true });
+      metrics.replaceChildren(...render(data));
+      control.update(data.workerControl);
     } catch {
       // Error ditampilkan oleh indikator koneksi di topbar.
     }
   }, REFRESH_MS);
 
   return {
-    el: page({ title: 'System Health', subtitle: 'Metrik nyata dari proses server dan heartbeat worker, diperbarui setiap 10 detik.' }, body),
-    cleanup: () => clearInterval(timer),
+    el: page({ title: 'System Health', subtitle: 'Metrik nyata dari proses server dan heartbeat worker, diperbarui setiap 10 detik.' },
+      h('div', { class: 'stack' }, control.el, metrics)),
+    cleanup: () => {
+      clearInterval(timer);
+      control.cleanup();
+    },
   };
 }

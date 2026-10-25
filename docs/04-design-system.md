@@ -94,7 +94,9 @@ Angka finansial memakai `font-variant-numeric: tabular-nums` agar kolom sejajar.
 | Form | `.field`, `.input`, `.select`, `.segmented`, `.switch` | Error per field `[data-error-for]` |
 | Tabel | `.table` dalam `.table-wrap` | Header sticky, sortable via `<button>` + `aria-sort`, baris 34px |
 | Empty state | `.empty` | Selalu menjelaskan *mengapa* kosong dan kapan terisi |
-| Callout, toast, timeline | `.callout`, `.toast`, `.timeline` | |
+| Callout, toast, timeline | `.callout`, `.toast`, `.timeline` | `.callout--action` + `.callout__content`: callout dengan tombol (membungkus di layar sempit). Bila tombol yang ditekan dilepas (mis. scanner berhasil dijalankan), fokus dipindah ke pesan callout (`tabindex="-1"`, `aria-live="polite"`) agar tidak jatuh ke `<body>` |
+| Kontrol scanner | `.worker-control`, `__state`, `__desc`, `__confirm` | State dalam wilayah `aria-live="polite"`; konfirmasi stop inline (`role="group"`, fokus ke **Batal**, Esc menutup) |
+| Bar progres indeterminate | `.progress-indeterminate` | `role="progressbar"` tanpa nilai (durasi tidak diketahui), label "Memproses perintah scanner". Tampil di kartu Kontrol scanner dan callout Overview selama request start/stop berjalan, state *Memulai…*/*Menghentikan…*, dan 10 detik pemantauan setelah start; hilang saat state final diketahui. `prefers-reduced-motion: reduce` → bar penuh statis tanpa animasi |
 
 ## 6. Aksesibilitas
 

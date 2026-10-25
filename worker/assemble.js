@@ -34,12 +34,14 @@ const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {}
  *   onAlert?: (alert: object) => void,
  *   onAnalysed?: (e: { symbol: string, timeframe: string, candles: object[], reason: string, result: object }) => void,
  *   onMonitoringStopped?: (e: { symbol: string, timeframes: string[]|null, reason: string, at: number }) => void,
+ *   heartbeatOwner?: { pid: number, host: string } | null,
  * }} deps
  *   clock: jam LOKAL host (default Date.now). Jam server (`serverClock.now` = jam lokal + offset terukur)
  *   dibuat di sini dan menjadi jam repositori, klien REST, dan scanner (`clock`); jam lokal menjadi
  *   `localClock` scanner untuk stempel operasional (heartbeat, run, error, lastIngestionAt).
  *   fetch/restSleep/restRandom/streamFactory/setTimer/clearTimer/pipelineSleep: injeksi I/O (default produksi).
  *   onAnalysed/onMonitoringStopped: pengamat (log/tes) — dipanggil SETELAH analisis / SEBELUM penutupan sinyal.
+ *   heartbeatOwner: identitas proses untuk heartbeat (worker/index.js mengisi pid + hostname; default null).
  * @returns {{ serverClock: object, repos: object, rest: object, pipeline: object, scanner: object,
  *   getSettings: () => Promise<object> }}
  *   Pemanggil wajib `await pipeline.ensureDefinitions()` sebelum `scanner.start()`.
@@ -60,6 +62,7 @@ export function assembleWorker({
   onAlert,
   onAnalysed,
   onMonitoringStopped,
+  heartbeatOwner = null,
 } = {}) {
   if (!db) throw new TypeError('db wajib ada');
 
@@ -119,6 +122,7 @@ export function assembleWorker({
     setTimer,
     clearTimer,
     options: { ...scannerOptions, closeMarginMs },
+    heartbeatOwner,
   });
 
   return { serverClock, repos, rest, pipeline, scanner, getSettings };

@@ -86,3 +86,35 @@ describe('konfigurasi DEFAULT_USER (akun default prototipe)', () => {
     expect(() => loadConfig({ DEFAULT_USER: value })).toThrow(/DEFAULT_USER harus 'true' atau 'false'/);
   });
 });
+
+describe('konfigurasi WORKER_CONTROL & WORKER_AUTOSTART (tombol scanner di website)', () => {
+  const PROD = { NODE_ENV: 'production', APP_ORIGIN: 'https://radar.local', DATABASE_PATH: '/data/lr.db' };
+
+  it('UNIT-CFG-007 WORKER_CONTROL kosong: aktif hanya di development, nonaktif di test & produksi', () => {
+    expect(loadConfig({}).workerControl).toBe(true);
+    expect(loadConfig({ WORKER_CONTROL: '  ' }).workerControl).toBe(true);
+    expect(loadConfig({ NODE_ENV: 'test' }).workerControl).toBe(false);
+    expect(loadConfig(PROD).workerControl).toBe(false);
+  });
+
+  it('UNIT-CFG-008 WORKER_CONTROL eksplisit true/false dihormati (termasuk mengaktifkan di produksi)', () => {
+    expect(loadConfig({ WORKER_CONTROL: 'false' }).workerControl).toBe(false);
+    expect(loadConfig({ NODE_ENV: 'test', WORKER_CONTROL: 'true' }).workerControl).toBe(true);
+    expect(loadConfig({ ...PROD, WORKER_CONTROL: 'true' }).workerControl).toBe(true);
+  });
+
+  it('UNIT-CFG-009 WORKER_AUTOSTART default false; true/false eksplisit dihormati', () => {
+    expect(loadConfig({}).workerAutostart).toBe(false);
+    expect(loadConfig(PROD).workerAutostart).toBe(false);
+    expect(loadConfig({ WORKER_AUTOSTART: 'true' }).workerAutostart).toBe(true);
+    expect(loadConfig({ WORKER_AUTOSTART: 'false' }).workerAutostart).toBe(false);
+  });
+
+  it.each([
+    ['WORKER_CONTROL', 'yes'], ['WORKER_CONTROL', '1'], ['WORKER_CONTROL', 'TRUE'], ['WORKER_CONTROL', 'on'],
+    ['WORKER_AUTOSTART', 'yes'], ['WORKER_AUTOSTART', '0'], ['WORKER_AUTOSTART', 'False'],
+  ])('NEG-CFG-008 %s=%s tidak valid ditolak dengan pesan berbahasa Indonesia', (name, value) => {
+    expect(() => loadConfig({ [name]: value })).toThrow(ConfigError);
+    expect(() => loadConfig({ [name]: value })).toThrow(`${name} harus 'true' atau 'false'`);
+  });
+});

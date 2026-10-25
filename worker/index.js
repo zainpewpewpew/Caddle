@@ -1,8 +1,11 @@
-// Entry point proses worker scanner (Milestone 2–3): `npm run worker`.
+// Entry point proses worker scanner (Milestone 2–3): `npm run worker`, atau dijalankan server sebagai child
+// process lewat tombol "Jalankan scanner" (backend/system/workerSupervisor.js).
 // Membuka SQLite + migrasi, merakit dependensi nyata lewat worker/assemble.js (REST/WS Binance, jam
-// server, repositori, pipeline analisis SA/PVA), menjalankan scanner, dan menangani graceful shutdown (SIGTERM/SIGINT).
+// server, repositori, pipeline analisis SA/PVA), menjalankan scanner, dan menangani graceful shutdown
+// (SIGTERM/SIGINT/SIGHUP — SIGHUP dikirim saat jendela terminal ditutup).
 // Log terstruktur JSON per baris ke stdout.
 
+import { hostname } from 'node:os';
 import { ConfigError, loadConfig } from '../backend/app/config.js';
 import { openDatabase } from '../backend/database/connection.js';
 import { migrate } from '../backend/database/migrate.js';
@@ -45,6 +48,11 @@ function createJsonLogger({ level = 'info', write = (line) => process.stdout.wri
 }
 
 async function main() {
+  // Saat dijalankan dari website, stdout/stderr adalah pipe ke server. Bila server mati, tulisan log gagal
+  // (EPIPE) sebagai event 'error' asinkron; tanpa listener event itu menjadi uncaughtException yang
+  // handler-nya menulis log lagi (EPIPE lagi) dan graceful shutdown tidak pernah selesai. Log yang tidak
+  // dapat ditulis dibuang saja.
+  for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {});
   let config;
   try {
     config = loadConfig();
@@ -71,6 +79,9 @@ async function main() {
     db,
     logger,
     clock: Date.now,
+    // Identitas proses di heartbeat: server yang baru start dapat mengenali heartbeat segar dari worker yang sudah
+    // mati (SIGKILL/OOM) sebelum sempat menulis heartbeat akhir, sehingga tombol scanner tidak tertahan 90 detik.
+    heartbeatOwner: { pid: process.pid, host: hostname() },
     onAlert: (alert) => logger.info({ symbol: alert.symbol, timeframe: alert.timeframe, state: alert.state, reason: alert.event?.reason }, 'sinyal baru / naik tahap'),
     onAnalysed: ({ symbol, timeframe, reason, candles, result }) => {
       logger.debug({ symbol, timeframe, reason, count: candles.length, ...result }, 'candle tertutup dianalisis');
@@ -110,6 +121,11 @@ async function main() {
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  // Menutup jendela terminal mengirim SIGHUP; tanpa handler, worker mati tanpa heartbeat akhir 'stopped'.
+  process.on('SIGHUP', () => shutdown('SIGHUP'));
+  // Dijalankan dari website (child process server dengan kanal IPC): bila server mati tanpa sempat
+  // menghentikan worker, kanal IPC terputus → worker berhenti sendiri, tidak menjadi proses yatim.
+  if (typeof process.send === 'function') process.on('disconnect', () => shutdown('disconnect'));
   process.on('unhandledRejection', (err) => {
     logger.fatal({ err }, 'unhandled rejection');
     shutdown('unhandledRejection', 1);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HEARTBEAT_STALE_MS, summarizeWorker } from '../../../backend/system/workerStatus.js';
+import { HEARTBEAT_STALE_MS, isHeartbeatLive, summarizeWorker } from '../../../backend/system/workerStatus.js';
 
 const NOW = Date.UTC(2026, 5, 1);
 const beat = (state, ageMs = 0) => ({ heartbeat: { at: NOW - ageMs, state }, lastRun: null, recentErrors: [] });
@@ -41,5 +41,15 @@ describe('ringkasan status worker', () => {
     expect(r.scanner.queue).toBeNull();
     expect(r.scanner.errors).toBe(3);
     expect(r.ingestion.recentErrors.map((e) => e.id)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('UNIT-WST-005 isHeartbeatLive: segar & bukan stopped; batas basi inklusif; input rusak → false', () => {
+    expect(isHeartbeatLive({ at: NOW, state: { state: 'running' } }, NOW)).toBe(true);
+    expect(isHeartbeatLive({ at: NOW - HEARTBEAT_STALE_MS, state: { state: 'starting' } }, NOW)).toBe(true);
+    expect(isHeartbeatLive({ at: NOW - HEARTBEAT_STALE_MS - 1, state: { state: 'running' } }, NOW)).toBe(false);
+    expect(isHeartbeatLive({ at: NOW, state: { state: 'stopped' } }, NOW)).toBe(false);
+    expect(isHeartbeatLive({ at: NOW, state: 'running' }, NOW)).toBe(true);
+    expect(isHeartbeatLive(null, NOW)).toBe(false);
+    expect(isHeartbeatLive({ at: 'x', state: {} }, NOW)).toBe(false);
   });
 });

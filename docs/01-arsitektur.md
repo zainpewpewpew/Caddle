@@ -2,7 +2,7 @@
 
 ## 1. Prinsip
 
-1. **Modular monolith** — satu proses API + satu proses worker (mulai M2), berbagi kode domain. Tanpa microservice (ADR-0001).
+1. **Modular monolith** — satu proses API + satu proses worker (mulai M2), berbagi kode domain. Tanpa microservice (ADR-0001). Worker selalu proses terpisah: dijalankan server sebagai child process lewat tombol **Jalankan scanner** di System Health (`backend/system/workerSupervisor.js`), atau mandiri di terminal lain (`npm run worker`) — tidak keduanya sekaligus.
 2. **Logika bisnis terpisah** dari HTTP handler dan persistensi: `api/` tipis → service → repositori.
 3. **Dependency injection eksplisit** — `buildApp({ config, db, clock })` merakit semua dependensi; tes memakai jam deterministik dan database in-memory.
 4. **Secure by default** — setiap route `/api/*` wajib terautentikasi kecuali ditandai `public`.
@@ -27,6 +27,7 @@ flowchart LR
 
   UI -- "HTTPS, cookie sesi" --> RP --> API
   API --> DB
+  API -. "fork / SIGTERM (tombol scanner, admin)" .-> W
   W --> DB
   W -- "hanya data publik" --> BN
   API --> FS
@@ -113,7 +114,26 @@ Gerbang autentikasi, rate limit, dan header `no-store` memutuskan berdasarkan **
 
 - Konfigurasi hanya dari environment (`config/.env.example`), divalidasi saat startup. Produksi wajib `APP_ORIGIN` https, cookie `Secure`, dan `DATABASE_PATH` eksplisit — bila tidak, proses berhenti.
 - `GET /api/health` (liveness) dan `GET /api/ready` (cek database) publik dengan respons minimal.
-- `SIGTERM`/`SIGINT` → `app.close()` (berhenti menerima request, 503 saat closing) → tutup database; paksa keluar setelah 10 detik.
+- `SIGTERM`/`SIGINT`/`SIGHUP` (jendela terminal ditutup) → hentikan worker yang dijalankan dari website (SIGTERM → tunggu ≤ 15 detik → SIGKILL) → `app.close()` (berhenti menerima request, 503 saat closing) → tutup database; paksa keluar setelah 20 detik (worker di-SIGKILL lebih dulu). Bila server mati tanpa sempat menutup (SIGKILL), worker berhenti sendiri saat kanal IPC ke server terputus.
+
+### Model proses worker scanner
+
+```mermaid
+stateDiagram-v2
+  [*] --> stopped
+  stopped --> starting: POST /api/system/worker/start (admin + CSRF) / WORKER_AUTOSTART
+  crashed --> starting: start ulang (≥ 10 detik setelah keluar)
+  starting --> running: event spawn
+  starting --> crashed: spawn gagal
+  running --> stopping: POST /api/system/worker/stop · shutdown server
+  stopping --> stopped: child keluar (SIGKILL setelah 15 detik)
+  running --> crashed: keluar tak terduga (kode ≠ 0 / sinyal)
+  running --> stopped: keluar sendiri kode 0
+  stopped --> external: heartbeat segar dari worker luar (npm run worker)
+  external --> stopped: worker luar berhenti / heartbeat basi / pid heartbeat tidak hidup lagi
+```
+
+Server menjalankan **hanya** `worker/index.js` (path tetap di kode) dengan `child_process.fork`: argv kosong, env = environment server + `DATABASE_PATH` dari konfigurasi, stdout/stderr child diteruskan per baris (≤ 16 KiB) ke stdout server. Satu child per server; start ditolak bila heartbeat worker lain masih segar (dua worker pada satu database menggandakan ingesti) — kecuali pid penulis heartbeat (`state.owner`, host yang sama) sudah tidak hidup. Start ulang menunggu 10 detik setelah child keluar agar restart beruntun tidak mengulang request discovery ke Binance tanpa backoff. Kontrak lengkap: `docs/07-kontrak-modul.md` §11. Konfigurasi: `WORKER_CONTROL` (default aktif hanya di development) dan `WORKER_AUTOSTART` (default `false`).
 - Log terstruktur JSON (pino) dengan redaksi header `cookie`, `x-csrf-token`, dan `set-cookie`.
 - Sesi kedaluwarsa dibersihkan setiap 15 menit.
 

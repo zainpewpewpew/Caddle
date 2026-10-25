@@ -8,6 +8,18 @@ export const HEARTBEAT_STALE_MS = 90_000;
 const numberOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 /**
+ * true bila heartbeat menandakan worker yang masih hidup: fase bukan 'stopped' dan umur ≤ HEARTBEAT_STALE_MS.
+ * Dipakai summarizeWorker dan supervisor worker (deteksi worker di luar website).
+ * @param {null|{ at: number, state: unknown }} beat
+ * @param {number} now
+ */
+export function isHeartbeatLive(beat, now) {
+  if (!beat || typeof beat.at !== 'number' || !Number.isFinite(beat.at)) return false;
+  const st = beat.state !== null && typeof beat.state === 'object' ? beat.state : {};
+  return st.state !== 'stopped' && Math.max(0, now - beat.at) <= HEARTBEAT_STALE_MS;
+}
+
+/**
  * @param {{ heartbeat: null|{ at: number, state: object }, lastRun: object|null, recentErrors: object[] }|null} ingestion
  *   hasil repos.ingestion.getStatus()
  * @param {number} now

@@ -40,6 +40,7 @@
 | WebSocket kline (hanya `x=true` ke tabel kanonik, candle berjalan ke `provisional_candles`), reconnect + jitter, rotasi koneksi, deteksi stale | Selesai | `backend/ingestion/binance/wsClient.js` |
 | Backfill REST setelah reconnect/gap, duplikat & out-of-order | Selesai | `backend/ingestion/backfill.js`, `worker/scanner.js` |
 | Proses `worker/` terpisah (`npm run worker`), heartbeat + metrik ke System Health | Selesai | `worker/`, `backend/system/workerStatus.js` |
+| Tombol **Jalankan/Hentikan scanner** di website: server mem-fork worker sebagai child process (admin + CSRF + audit, satu instance, tolak bila worker luar berjalan), cukup `npm start` | Selesai | `backend/system/workerSupervisor.js`, `backend/api/workerRoutes.js`, `frontend/js/views/workerControl.js` |
 | Tes fixture sintetis deterministik + uji live opt-in (`npm run test:live`) | Selesai; **REST + WebSocket live terverifikasi** di mesin pemilik (2026-10-25, 6/6 setelah perbaikan rute `/market`) (lihat `docs/laporan/milestone-2-3-pengujian.md` §6.1) | `tests/unit/ingestion/`, `tests/live/` |
 
 ## Milestone 3 — Mesin pola (selesai, di `main`)

@@ -9,6 +9,7 @@ import { healthRoutes } from '../api/healthRoutes.js';
 import { settingsRoutes } from '../api/settingsRoutes.js';
 import { signalRoutes } from '../api/signalRoutes.js';
 import { systemRoutes } from '../api/systemRoutes.js';
+import { workerRoutes } from '../api/workerRoutes.js';
 import { registerAuth } from '../auth/authPlugin.js';
 import { createAuthService } from '../auth/authService.js';
 import { createPasswordHasher } from '../auth/password.js';
@@ -17,6 +18,7 @@ import { migrate } from '../database/migrate.js';
 import { createRepositories } from '../database/repositories/index.js';
 import { registerSecurityHeaders } from '../security/headers.js';
 import { isApiRoute, registerRequestGuards } from '../security/requestGuards.js';
+import { WORKER_SCRIPT_PATH, WorkerSupervisorError, createWorkerSupervisor } from '../system/workerSupervisor.js';
 
 const FRONTEND_ROOT = fileURLToPath(new URL('../../frontend/', import.meta.url));
 const SESSION_PURGE_INTERVAL_MS = 15 * 60_000;
@@ -24,9 +26,16 @@ const SESSION_PURGE_INTERVAL_MS = 15 * 60_000;
 /**
  * Merakit aplikasi Fastify. Seluruh dependensi diinjeksi agar dapat diuji tanpa jaringan.
  * @param {{ config: ReturnType<import('./config.js').loadConfig>, db: import('better-sqlite3').Database,
- *           clock?: () => number, hasherOptions?: object, logger?: any }} options
+ *           clock?: () => number, hasherOptions?: object, logger?: any,
+ *           workerSupervisor?: ReturnType<typeof createWorkerSupervisor>, workerScriptPath?: string,
+ *           workerRestartCooldownMs?: number }} options
+ *   workerSupervisor / workerScriptPath / workerRestartCooldownMs: KHUSUS tes & E2E (supervisor dengan fork tiruan,
+ *   skrip worker tiruan, jeda start ulang lebih pendek). Tidak pernah dibaca dari env maupun request; server produksi
+ *   selalu menjalankan worker/index.js dengan jeda RESTART_COOLDOWN_MS.
  */
-export async function buildApp({ config, db, clock = Date.now, hasherOptions, logger }) {
+export async function buildApp({
+  config, db, clock = Date.now, hasherOptions, logger, workerSupervisor, workerScriptPath, workerRestartCooldownMs,
+}) {
   const app = Fastify({
     logger: logger ?? {
       level: config.logLevel,
@@ -60,7 +69,18 @@ export async function buildApp({ config, db, clock = Date.now, hasherOptions, lo
   // Prefix __Host- memaksa cookie Secure, path=/, tanpa Domain (hanya bila HTTPS).
   const cookieName = config.cookieSecure ? '__Host-lr_session' : 'lr_session';
 
-  app.decorate('services', { hasher, sessionService, authService, repos });
+  // Worker scanner sebagai child process terpisah (tombol di System Health). DATABASE_PATH diteruskan
+  // eksplisit agar child selalu menulis ke database yang sama dengan server.
+  const supervisor = workerSupervisor ?? createWorkerSupervisor({
+    scriptPath: workerScriptPath ?? WORKER_SCRIPT_PATH,
+    env: { ...process.env, DATABASE_PATH: config.databasePath },
+    logger: app.log.child({ module: 'worker-supervisor' }),
+    clock,
+    readExternalHeartbeat: async () => (await repos.ingestion.getStatus()).heartbeat,
+    ...(workerRestartCooldownMs !== undefined ? { restartCooldownMs: workerRestartCooldownMs } : {}),
+  });
+
+  app.decorate('services', { hasher, sessionService, authService, repos, workerSupervisor: supervisor });
 
   await registerSecurityHeaders(app, config);
   registerRequestGuards(app, config);
@@ -112,7 +132,11 @@ export async function buildApp({ config, db, clock = Date.now, hasherOptions, lo
   await app.register(healthRoutes, deps);
   await app.register(authRoutes, { ...deps, authService, sessionService });
   await app.register(settingsRoutes, deps);
-  await app.register(systemRoutes, { ...deps, ingestion: repos.ingestion, candles: repos.candles, schemaVersion, startedAt: clock() });
+  await app.register(systemRoutes, {
+    ...deps, ingestion: repos.ingestion, candles: repos.candles, schemaVersion, startedAt: clock(),
+    workerSupervisor: supervisor, workerControl: config.workerControl,
+  });
+  await app.register(workerRoutes, { supervisor, enabled: config.workerControl, audit: repos.audit, clock });
   await app.register(signalRoutes, { signals: repos.signals, candles: repos.candles });
 
   // Frontend statis. index.html hanya disajikan lewat route '/' yang memeriksa sesi.
@@ -144,6 +168,26 @@ export async function buildApp({ config, db, clock = Date.now, hasherOptions, lo
     purgeTimer.unref();
   });
   app.addHook('onClose', async () => clearInterval(purgeTimer));
+
+  // WORKER_AUTOSTART: worker dijalankan saat server siap (sebelum listen), tercatat di audit tanpa user.
+  app.addHook('onReady', async () => {
+    if (!config.workerAutostart) return;
+    if (!config.workerControl) {
+      app.log.warn('WORKER_AUTOSTART=true diabaikan karena WORKER_CONTROL=false');
+      return;
+    }
+    const record = (outcome, detail) => repos.audit.record({ occurredAt: clock(), action: 'worker.start', outcome, detail });
+    try {
+      const status = await supervisor.start();
+      await record('success', { via: 'autostart', state: status.state });
+    } catch (err) {
+      if (!(err instanceof WorkerSupervisorError)) throw err;
+      app.log.warn({ code: err.code }, 'autostart worker scanner dibatalkan');
+      await record('failure', { via: 'autostart', reason: err.code });
+    }
+  });
+  // Child tidak boleh menjadi yatim: menutup aplikasi selalu menghentikan worker lebih dulu.
+  app.addHook('onClose', async () => supervisor.shutdown());
 
   return app;
 }
