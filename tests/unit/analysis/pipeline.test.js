@@ -293,8 +293,23 @@ describe('createAnalysisPipeline (SQLite)', () => {
     await expect(pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '1d' })).rejects.toThrow(RangeError);
     expect(() => createAnalysisPipeline({ repos: {}, signals: ctx.signals })).toThrow(TypeError);
     expect(() => createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, lookback: 10 })).toThrow(RangeError);
-    // Kegagalan satu panggilan tidak memblokir antrean seri tersebut.
+    // Panggilan berikutnya setelah panggilan yang gagal tetap berjalan.
     expect(await pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '15m' })).toMatchObject({ skipped: 'NO_DATA' });
+
+    // Kegagalan satu evaluasi tidak memblokir antrean seri YANG SAMA: dua panggilan SYNUSDT:15m diantrekan
+    // bersamaan, yang pertama gagal (DB sementara gagal sekali), yang kedua — sudah menunggu di belakangnya — tetap selesai.
+    let failures = 0;
+    const flaky = { ...ctx.repos, candles: { ...ctx.repos.candles, getLatest: async (a) => {
+      if (failures === 0) { failures += 1; throw new Error('db sementara gagal'); }
+      return ctx.repos.candles.getLatest(a);
+    } } };
+    const queued = createAnalysisPipeline({ repos: flaky, signals: ctx.signals });
+    const first = queued.onClosedCandles({ symbol: SYMBOL, timeframe: '15m' });
+    const second = queued.onClosedCandles({ symbol: SYMBOL, timeframe: '15m' });
+    const [a, b] = await Promise.allSettled([first, second]);
+    expect(a).toMatchObject({ status: 'rejected', reason: { message: 'db sementara gagal' } });
+    expect(b).toMatchObject({ status: 'fulfilled', value: { skipped: 'NO_DATA' } });
+    expect(failures).toBe(1);
   });
 
   it('NEG-PIPE-005 parameter pola tidak valid ditolak saat pipeline dibuat', async () => {
