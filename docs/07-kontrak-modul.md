@@ -179,8 +179,10 @@ assembleWorker({ db, logger, clock = Date.now /* jam lokal */, fetch?, restSleep
 ## 6. Pola — `backend/patterns/`
 
 ```
-PATTERN_VERSION = 1
-DEFAULT_SA_PARAMS, DEFAULT_PVA_PARAMS, PARAM_SPECS        // konfigurabel; validateParams/resolveParams
+PATTERN_VERSION = 2          // v1 → v2: earlyScore diukur dari awal struktur; penjaga lonjakan PVA (volumeGrowthBroad)
+DEFAULT_SA_PARAMS, DEFAULT_PVA_PARAMS, PARAM_SPECS        // konfigurabel
+validateParams(params, pattern, { maxWarmup? }), resolveParams(pattern, overrides, { maxWarmup? })
+  // menolak kombinasi dengan requiredCandles > min(maxWarmup, MAX_WARMUP_CANDLES = 300) — PatternParamsError
 requiredCandles(pattern, params) → number                  // warm-up
 detectSilentAccumulation(candles, params?) → PatternResult
 detectProgressiveVolume(candles, params?)  → PatternResult
@@ -188,7 +190,7 @@ evaluatePatterns(candles, { sa?, pva? }) → { classification: 'SA'|'PVA'|'BOTH'
 SA_CONDITIONS, PVA_CONDITIONS, GATE_CONDITIONS             // daftar kondisi untuk dokumentasi/UI
 
 PatternResult = {
-  pattern: 'SA'|'PVA', version: 1, detected: boolean,
+  pattern: 'SA'|'PVA', version: PATTERN_VERSION, detected: boolean,
   patternScore: 0..100, earlyScore: 0..100,
   conditions: [{ id, label, passed, value, threshold, weight }],
   invalidationPrice: number|null, evaluatedAt: closeTime candle terakhir,
@@ -196,7 +198,15 @@ PatternResult = {
 }
 ```
 
-`candles`: tertutup, satu simbol & timeframe, urut naik. Data kurang dari warm-up → `detected: false, insufficientData: true`. `detected` = semua kondisi gerbang (`GATE_CONDITIONS`) lulus **dan** `patternScore ≥ minScore`. Parameter tak dikenal ditolak `PatternParamsError`.
+`candles`: tertutup, satu simbol & timeframe, urut naik. Data kurang dari warm-up → `detected: false, insufficientData: true`. `detected` = kondisi gerbang (`GATE_CONDITIONS`: `enoughData`, `dataQuality`) lulus **dan** setiap kondisi `required: true` lulus **dan** `patternScore ≥ minScore` (default 85) **dan** `!insufficientData`. Parameter tak dikenal ditolak `PatternParamsError`.
+
+`patternScore` = Σ bobot kondisi lulus / Σ bobot × 100. Kondisi (bobot; * = wajib):
+
+| SA | PVA |
+|---|---|
+| `rvolLow`* 20, `priceRising`* 10, `priceGradual`* 10, `higherLows`* 20, `ema7Rising`* 10, `atrPercentLow`* 5, `ema25NotFalling` 10, `atrNotExpanding` 5, `notExtended` 5, `liquidity` 5 (rata-rata quote volume per candle) | `volumeRising`* 15, `volumeGrowth`* 10, `noSpikeDominance`* 10, `volumeGrowthBroad`* 5 (median bawah sub-jendela terakhir / rata-rata sub-jendela pertama — menolak pertumbuhan yang dipasok satu–dua lonjakan), `priceRising`* 10, `riseNotSingleCandle`* 10, `higherLows`* 10, `atrPercentLow`* 5, `priorQuiet` 15, `ema7Rising` 5, `atrNotExpanding` 5 |
+
+`earlyScore` = `distanceWeight` (0,6) × komponen jarak + `ageWeight` (0,4) × komponen umur, dengan jarak = (close − low pertama rantai higher low) / ATR, bernilai 0 pada ≥ `EARLY_SCORE.maxRunAtr` (6) ATR, dan umur = bar sejak awal struktur, 0 pada ≥ `maxAgeBars` (60). Keduanya diukur dari **awal struktur** sehingga skor tidak naik lagi setelah pullback. `invalidationPrice` tetap dari swing low terbaru dikurangi `invalidationBufferAtr` × ATR.
 
 ## 7. Timeframe, sinyal, skor — `backend/timeframe/`, `backend/signals/`, `backend/scoring/`
 
@@ -248,7 +258,7 @@ createSignalRepository(db, { clock }) → {
 
 Tabel transisi lengkap (kondisi, reason, kapan alert) didokumentasikan di kepala `backend/signals/stateMachine.js` dan diuji di `tests/unit/signals/`. Satu-satunya transisi di luar `transition()` adalah penutupan sinyal simbol yang berhenti dipantau (`EXPIRED` dengan reason `SYMBOL_DELISTED`/`MONITORING_STOPPED`, tanpa alert) lewat `closeOpenForSymbol`, karena simbol tersebut tidak lagi menerima candle sehingga `NO_PROGRESS` tidak akan pernah tercapai. Ringkasnya: transisi maju hanya ke peringkat lebih tinggi (tanpa downgrade, sehingga alert untuk state yang sama tidak berulang), satu transisi per candle baru, candle duplikat/lama idempoten, `INVALIDATED` bila close < harga invalidasi, `EXPIRED` bila tidak ada kemajuan selama `expiryBars[state]` bar.
 
-Skor **bukan probabilitas**. `patternScore` = jumlah bobot kondisi yang lulus; `earlyScore` = seberapa dini posisi harga (jarak dari awal struktur dalam ATR dan umur struktur). HTF, likuiditas, dan kualitas data hanya menambah risk flag dan baris penjelasan — tidak mengubah skor.
+Skor **bukan probabilitas**. `patternScore` = jumlah bobot kondisi yang lulus (§6); `earlyScore` = seberapa dini posisi harga (jarak dari awal struktur dalam ATR dan umur struktur, §6). Konteks HTF, likuiditas 24 jam (ticker), dan kualitas data seri hanya menambah risk flag dan baris penjelasan di `buildSignalView` — tidak mengubah skor. Pengecualian yang disengaja: kondisi pola SA `liquidity` (quote volume rata-rata per candle di jendela pola) adalah kondisi berbobot 5 di `patternScore`.
 
 ## 8. Pipeline analisis — `backend/analysis/pipeline.js`
 
