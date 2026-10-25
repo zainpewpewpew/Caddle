@@ -1,0 +1,10 @@
+{
+  "_catatan": "fixture sintetis — bukan data pasar nyata. Simbol harga sangat kecil untuk menguji presisi desimal string (format GET /fapi/v1/klines Binance USDT-M Futures).",
+  "endpoint": "GET /fapi/v1/klines?symbol=TINYUSDT&interval=1h&limit=2",
+  "status": 200,
+  "headers": { "Content-Type": "application/json", "X-MBX-USED-WEIGHT-1M": "2" },
+  "body": [
+    [1767225600000, "0.00001230", "0.00001240", "0.00001225", "0.00001234", "987654321098", 1767229199999, "12187654.32100000", 51234, "500000000000", "6170000.00000000", "0"],
+    [1767229200000, "0.00001234", "0.00001234", "0.00001234", "0.00001234", "0", 1767232799999, "0.00000000", 0, "0", "0.00000000", "0"]
+  ]
+}

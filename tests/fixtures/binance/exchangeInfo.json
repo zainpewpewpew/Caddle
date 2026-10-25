@@ -1,0 +1,113 @@
+{
+  "_catatan": "fixture sintetis — bukan data pasar nyata. Mengikuti format dokumentasi resmi Binance USDT-M Futures GET /fapi/v1/exchangeInfo (field disederhanakan; simbol uji LOWVOL/WIDE/NOTICK/TINY/OLD/HALT bersifat fiktif).",
+  "endpoint": "GET /fapi/v1/exchangeInfo",
+  "status": 200,
+  "headers": { "Content-Type": "application/json", "X-MBX-USED-WEIGHT-1M": "1" },
+  "body": {
+    "timezone": "UTC",
+    "serverTime": 1767225610000,
+    "futuresType": "U_MARGINED",
+    "rateLimits": [
+      { "rateLimitType": "REQUEST_WEIGHT", "interval": "MINUTE", "intervalNum": 1, "limit": 2400 },
+      { "rateLimitType": "ORDERS", "interval": "MINUTE", "intervalNum": 1, "limit": 1200 }
+    ],
+    "exchangeFilters": [],
+    "assets": [{ "asset": "USDT", "marginAvailable": true, "autoAssetExchange": "-10000" }],
+    "symbols": [
+      {
+        "symbol": "BTCUSDT", "pair": "BTCUSDT", "contractType": "PERPETUAL", "deliveryDate": 4133404800000, "onboardDate": 1569398400000,
+        "status": "TRADING", "baseAsset": "BTC", "quoteAsset": "USDT", "marginAsset": "USDT", "pricePrecision": 2, "quantityPrecision": 3,
+        "baseAssetPrecision": 8, "quotePrecision": 8, "underlyingType": "COIN", "underlyingSubType": ["PoW"],
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "556.80", "maxPrice": "4529764", "tickSize": "0.10" },
+          { "filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "1000", "stepSize": "0.001" },
+          { "filterType": "MARKET_LOT_SIZE", "minQty": "0.001", "maxQty": "120", "stepSize": "0.010" },
+          { "filterType": "MAX_NUM_ORDERS", "limit": 200 },
+          { "filterType": "MIN_NOTIONAL", "notional": "100" },
+          { "filterType": "PERCENT_PRICE", "multiplierUp": "1.0500", "multiplierDown": "0.9500", "multiplierDecimal": "4" }
+        ],
+        "orderTypes": ["LIMIT", "MARKET"], "timeInForce": ["GTC", "IOC", "FOK", "GTX"]
+      },
+      {
+        "symbol": "ETHUSDT", "pair": "ETHUSDT", "contractType": "PERPETUAL", "deliveryDate": 4133404800000, "onboardDate": 1569398400000,
+        "status": "TRADING", "baseAsset": "ETH", "quoteAsset": "USDT", "marginAsset": "USDT",
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "39.86", "maxPrice": "306177", "tickSize": "0.01" },
+          { "filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "10000", "stepSize": "0.001" }
+        ]
+      },
+      {
+        "symbol": "1000PEPEUSDT", "pair": "1000PEPEUSDT", "contractType": "PERPETUAL", "deliveryDate": 4133404800000, "onboardDate": 1683244800000,
+        "status": "TRADING", "baseAsset": "1000PEPE", "quoteAsset": "USDT", "marginAsset": "USDT",
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "0.0000010", "maxPrice": "200", "tickSize": "0.0000001" },
+          { "filterType": "LOT_SIZE", "minQty": "1", "maxQty": "80000000", "stepSize": "1" }
+        ]
+      },
+      {
+        "symbol": "TINYUSDT", "pair": "TINYUSDT", "contractType": "PERPETUAL", "deliveryDate": 4133404800000, "onboardDate": 1735689600000,
+        "status": "TRADING", "baseAsset": "TINY", "quoteAsset": "USDT", "marginAsset": "USDT",
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "0.00000001", "maxPrice": "1", "tickSize": "0.00000001" },
+          { "filterType": "LOT_SIZE", "minQty": "1", "maxQty": "9000000000000", "stepSize": "1" }
+        ]
+      },
+      {
+        "symbol": "LOWVOLUSDT", "pair": "LOWVOLUSDT", "contractType": "PERPETUAL", "deliveryDate": 4133404800000, "onboardDate": 1735689600000,
+        "status": "TRADING", "baseAsset": "LOWVOL", "quoteAsset": "USDT", "marginAsset": "USDT",
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "0.0001", "maxPrice": "1000", "tickSize": "0.0001" },
+          { "filterType": "LOT_SIZE", "minQty": "0.1", "maxQty": "1000000", "stepSize": "0.1" }
+        ]
+      },
+      {
+        "symbol": "WIDEUSDT", "pair": "WIDEUSDT", "contractType": "PERPETUAL", "deliveryDate": 4133404800000, "onboardDate": 1735689600000,
+        "status": "TRADING", "baseAsset": "WIDE", "quoteAsset": "USDT", "marginAsset": "USDT",
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "0.0001", "maxPrice": "1000", "tickSize": "0.0001" },
+          { "filterType": "LOT_SIZE", "minQty": "1", "maxQty": "1000000", "stepSize": "1" }
+        ]
+      },
+      {
+        "symbol": "NOTICKUSDT", "pair": "NOTICKUSDT", "contractType": "PERPETUAL", "deliveryDate": 4133404800000, "onboardDate": 1767139200000,
+        "status": "TRADING", "baseAsset": "NOTICK", "quoteAsset": "USDT", "marginAsset": "USDT",
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "0.001", "maxPrice": "1000", "tickSize": "0.001" },
+          { "filterType": "LOT_SIZE", "minQty": "1", "maxQty": "1000000", "stepSize": "1" }
+        ]
+      },
+      {
+        "symbol": "BTCUSDT_261225", "pair": "BTCUSDT", "contractType": "CURRENT_QUARTER", "deliveryDate": 1798185600000, "onboardDate": 1758873600000,
+        "status": "TRADING", "baseAsset": "BTC", "quoteAsset": "USDT", "marginAsset": "USDT",
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "576.30", "maxPrice": "1000000", "tickSize": "0.10" },
+          { "filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "500", "stepSize": "0.001" }
+        ]
+      },
+      {
+        "symbol": "BTCUSDC", "pair": "BTCUSDC", "contractType": "PERPETUAL", "deliveryDate": 4133404800000, "onboardDate": 1704700800000,
+        "status": "TRADING", "baseAsset": "BTC", "quoteAsset": "USDC", "marginAsset": "USDC",
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "1000", "maxPrice": "2000000", "tickSize": "0.1" },
+          { "filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "500", "stepSize": "0.001" }
+        ]
+      },
+      {
+        "symbol": "OLDUSDT", "pair": "OLDUSDT", "contractType": "PERPETUAL", "deliveryDate": 1767312000000, "onboardDate": 1640995200000,
+        "status": "SETTLING", "baseAsset": "OLD", "quoteAsset": "USDT", "marginAsset": "USDT",
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "0.0001", "maxPrice": "1000", "tickSize": "0.0001" },
+          { "filterType": "LOT_SIZE", "minQty": "1", "maxQty": "1000000", "stepSize": "1" }
+        ]
+      },
+      {
+        "symbol": "HALTUSDT", "pair": "HALTUSDT", "contractType": "PERPETUAL", "deliveryDate": 4133404800000, "onboardDate": 1640995200000,
+        "status": "BREAK", "baseAsset": "HALT", "quoteAsset": "USDT", "marginAsset": "USDT",
+        "filters": [
+          { "filterType": "PRICE_FILTER", "minPrice": "0.0001", "maxPrice": "1000", "tickSize": "0.0001" },
+          { "filterType": "LOT_SIZE", "minQty": "1", "maxQty": "1000000", "stepSize": "1" }
+        ]
+      }
+    ]
+  }
+}

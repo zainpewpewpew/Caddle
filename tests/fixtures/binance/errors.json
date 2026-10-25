@@ -1,0 +1,23 @@
+{
+  "_catatan": "fixture sintetis — bukan data pasar nyata. Body & header error mengikuti format dokumentasi resmi Binance USDT-M Futures (kode -1121 Invalid symbol, -1003 Too many requests).",
+  "invalidSymbol": {
+    "status": 400,
+    "headers": { "Content-Type": "application/json", "X-MBX-USED-WEIGHT-1M": "4" },
+    "body": { "code": -1121, "msg": "Invalid symbol." }
+  },
+  "rateLimited": {
+    "status": 429,
+    "headers": { "Content-Type": "application/json", "X-MBX-USED-WEIGHT-1M": "2401", "Retry-After": "7" },
+    "body": { "code": -1003, "msg": "Too many requests; current limit of IP is 2400 requests per minute. Please use the websocket for live updates to avoid polling the API." }
+  },
+  "ipBanned": {
+    "status": 418,
+    "headers": { "Content-Type": "application/json", "Retry-After": "120" },
+    "body": { "code": -1003, "msg": "Way too many requests; IP banned until 1767225730000. Please use the websocket for live updates to avoid bans." }
+  },
+  "serverError": {
+    "status": 503,
+    "headers": { "Content-Type": "application/json" },
+    "body": { "code": -1001, "msg": "Internal error; unable to process your request. Please try again." }
+  }
+}
