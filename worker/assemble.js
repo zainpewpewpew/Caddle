@@ -64,7 +64,7 @@ export function assembleWorker({
   // Jam tersinkron waktu server Binance untuk REST, repositori (validasi "tertutup"), dan scanner.
   // Klien REST butuh jam saat dibuat, jam server butuh klien REST untuk sinkronisasi: keduanya saling
   // merujuk lewat fungsi yang baru dipanggil kemudian, jadi tidak ada dependensi melingkar saat konstruksi.
-  const serverClock = createServerClock({ getServerTime: () => rest.getServerTime(), clock, logger });
+  const serverClock = createServerClock({ getServerTime: (opts) => rest.sampleServerTime(opts), clock, logger });
   const repos = createRepositories(db, { clock: serverClock.now });
   const rest = createBinanceRestClient({ fetch, clock: serverClock.now, sleep: restSleep, random: restRandom, logger });
 

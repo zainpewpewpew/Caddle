@@ -249,6 +249,24 @@ export function createBinanceRestClient({
       return parseServerTime(await request(PATHS.time, {}, ENDPOINT_WEIGHTS.time));
     },
 
+    /**
+     * Satu sampel waktu server untuk sinkronisasi jam (backend/ingestion/serverClock.js): SATU percobaan,
+     * tanpa retry/backoff. `sentAt`/`receivedAt` diambil dengan `clock` pemanggil SETELAH antrean pembatas
+     * bobot (acquire), tepat sebelum fetch dan tepat setelah body terbaca — jeda limiter, Retry-After, dan
+     * backoff tidak pernah masuk round-trip. Error (termasuk 429/5xx) langsung dilempar; 429 dengan
+     * Retry-After dan 418 tetap menahan limiter seperti request lain.
+     * @param {{ clock?: () => number }} [options] jam untuk stempel (default jam klien)
+     * @returns {Promise<{ serverTime: number, sentAt: number, receivedAt: number }>}
+     */
+    async sampleServerTime({ clock: sampleClock = clock } = {}) {
+      if (typeof sampleClock !== 'function') throw new TypeError('clock wajib fungsi');
+      const ticket = await limiter.acquire(ENDPOINT_WEIGHTS.time, { maxBlockWaitMs: MAX_INLINE_WAIT_MS });
+      const sentAt = sampleClock();
+      const body = await fetchJsonOnce(buildUrl(PATHS.time, {}), PATHS.time, ticket);
+      const receivedAt = sampleClock();
+      return { serverTime: parseServerTime(body), sentAt, receivedAt };
+    },
+
     /** @returns {Promise<import('./parse.js').SymbolInfo[]>} */
     async getExchangeInfo() {
       return parseExchangeInfo(await request(PATHS.exchangeInfo, {}, ENDPOINT_WEIGHTS.exchangeInfo));

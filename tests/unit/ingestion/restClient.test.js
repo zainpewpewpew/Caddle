@@ -341,6 +341,43 @@ describe('klien REST Binance — retry, rate limit, timeout', () => {
   });
 });
 
+describe('klien REST Binance — sampel waktu server (sinkronisasi jam)', () => {
+  it('UNIT-BNR-011 sampleServerTime: 429 Retry-After 4 d → langsung dilempar tanpa retry/tidur; sampel berikutnya menunggu limiter 4 d DULU, stempel sentAt/receivedAt dengan jam pemanggil diambil sesudahnya', async () => {
+    const { client, fetch, time, logger } = makeClient([
+      response(429, { code: -1003, msg: 'Too many requests' }, { 'Retry-After': '4' }),
+      () => {
+        time.advance(120); // request yang berhasil memakan 120 ms
+        return response(200, { serverTime: 1767225615000 });
+      },
+    ]);
+    const err = await client.sampleServerTime().catch((e) => e);
+    expect(err).toMatchObject({ status: 429, retryable: true, retryAfterMs: 4_000 });
+    expect(time.sleeps).toEqual([]);
+    expect(fetch.calls).toHaveLength(1);
+    expect(logger.warn).not.toHaveBeenCalled();
+
+    const local = vi.fn(() => time.clock() - 50_000); // jam lokal pemanggil (berbeda dari jam klien)
+    const sample = await client.sampleServerTime({ clock: local });
+    expect(time.sleeps).toEqual([4_000]); // antrean limiter (Retry-After) terjadi SEBELUM sentAt
+    expect(sample).toEqual({ serverTime: 1767225615000, sentAt: T0 + 4_000 - 50_000, receivedAt: T0 + 4_120 - 50_000 });
+    expect(fetch.calls.map((c) => c.url.pathname)).toEqual(['/fapi/v1/time', '/fapi/v1/time']);
+  });
+
+  it('NEG-BNR-013 sampleServerTime: 503 / error jaringan → dilempar setelah SATU percobaan (tanpa backoff); serverTime tidak valid → BinanceDataError; clock bukan fungsi ditolak', async () => {
+    const { client, fetch, time } = makeClient([
+      response(503, { code: -1001, msg: 'Internal error' }),
+      new TypeError('fetch failed'),
+      response(200, { serverTime: 'x' }),
+    ]);
+    await expect(client.sampleServerTime()).rejects.toMatchObject({ status: 503, retryable: true });
+    await expect(client.sampleServerTime()).rejects.toMatchObject({ code: ERROR_CODES.NETWORK, retryable: true });
+    await expect(client.sampleServerTime()).rejects.toBeInstanceOf(BinanceDataError);
+    expect(fetch.calls).toHaveLength(3);
+    expect(time.sleeps).toEqual([]);
+    await expect(client.sampleServerTime({ clock: 5 })).rejects.toThrow(TypeError);
+  });
+});
+
 describe('klien REST Binance — allowlist host & opsi', () => {
   it('NEG-BNR-011 baseUrl di luar allowlist / tidak aman ditolak saat pembuatan klien', () => {
     const fetch = createFakeFetch([]);

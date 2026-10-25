@@ -93,17 +93,20 @@ describe('serverClock', () => {
     expect(SERVER_CLOCK_DEFAULTS.maxOffsetMs).toBe(600_000);
   });
 
-  it('EDGE-SCK-001 offset tepat di batas (−10 menit) diterapkan; RTT tepat di batas 5000 ms diterima, 5001 ms dibuang', async () => {
+  it('EDGE-SCK-001 offset tepat di batas (−10 menit) diterapkan; RTT tepat di batas default 1000 ms diterima, 1001 ms dibuang (setelah maxAttempts sampel)', async () => {
     const srv = fakeServer({ skewMs: -600_000 });
     const clock = createServerClock({ getServerTime: srv.getServerTime, clock: srv.clock });
     expect(await clock.sync()).toMatchObject({ ok: true, offsetMs: -600_000 });
 
-    const rtt = fakeServer({ skewMs: 40, rttMs: 5_000 });
+    expect(SERVER_CLOCK_DEFAULTS.maxRoundTripMs).toBe(1_000);
+    const rtt = fakeServer({ skewMs: 40, rttMs: 1_000 });
     const c2 = createServerClock({ getServerTime: rtt.getServerTime, clock: rtt.clock });
-    expect(await c2.sync()).toMatchObject({ ok: true, offsetMs: 40, roundTripMs: 5_000 });
-    rtt.state.rttMs = 5_001;
+    expect(await c2.sync()).toMatchObject({ ok: true, offsetMs: 40, roundTripMs: 1_000 });
+    rtt.state.rttMs = 1_001;
     rtt.state.skewMs = 900;
-    expect(await c2.sync()).toMatchObject({ ok: false, reason: 'ROUND_TRIP_TOO_LONG', offsetMs: 40, roundTripMs: 5_001 });
+    rtt.state.calls = 0;
+    expect(await c2.sync()).toMatchObject({ ok: false, reason: 'ROUND_TRIP_TOO_LONG', offsetMs: 40, roundTripMs: 1_001 });
+    expect(rtt.state.calls).toBe(SERVER_CLOCK_DEFAULTS.maxAttempts);
     expect(c2.offsetMs()).toBe(40);
   });
 
@@ -126,10 +129,87 @@ describe('serverClock', () => {
     expect(srv.state.calls).toBe(2);
   });
 
+  it('UNIT-SCK-004 sampel bertimestamp { serverTime, sentAt, receivedAt }: jeda 3 d SEBELUM request (antrean limiter/Retry-After) dan 3 d SESUDAHNYA (event loop sibuk) tidak menggeser offset; getServerTime menerima jam lokal', async () => {
+    const srv = fakeServer({ skewMs: 250 });
+    const seen = [];
+    const getServerTime = async ({ clock: local }) => {
+      seen.push(local);
+      srv.advance(3_000); // menunggu limiter sebelum request dikirim
+      const sentAt = local();
+      srv.advance(40);
+      const serverTime = srv.clock() + 250; // server membaca jamnya di tengah round-trip 80 ms
+      srv.advance(40);
+      const receivedAt = local();
+      srv.advance(3_000); // continuation tertunda setelah respons diterima
+      return { serverTime, sentAt, receivedAt };
+    };
+    const clock = createServerClock({ getServerTime, clock: srv.clock });
+    expect(await clock.sync()).toEqual({ ok: true, offsetMs: 250, measuredOffsetMs: 250, roundTripMs: 80 });
+    expect(seen).toEqual([srv.clock]);
+
+    // Kontrol: getServerTime yang hanya mengembalikan angka mengukur seluruh panggilan (RTT 6080 → dibuang).
+    const plain = createServerClock({ getServerTime: async (o) => (await getServerTime(o)).serverTime, clock: srv.clock, maxAttempts: 1 });
+    expect(await plain.sync()).toMatchObject({ ok: false, reason: 'ROUND_TRIP_TOO_LONG', roundTripMs: 6_080 });
+  });
+
+  it('UNIT-SCK-005 percobaan gagal retryable (503) → sampel baru diambil langsung (maks maxAttempts), offset dari sampel yang berhasil saja; error retryable:false (400) tidak diulang', async () => {
+    const srv = fakeServer({ skewMs: -300, rttMs: 20 });
+    let failures = 2;
+    const getServerTime = async () => {
+      if (failures > 0) {
+        failures -= 1;
+        srv.advance(500);
+        throw Object.assign(new Error('Binance /fapi/v1/time gagal: HTTP 503'), { status: 503, retryable: true });
+      }
+      return srv.getServerTime();
+    };
+    const clock = createServerClock({ getServerTime, clock: srv.clock });
+    expect(await clock.sync()).toEqual({ ok: true, offsetMs: -300, measuredOffsetMs: -300, roundTripMs: 20 });
+    expect(srv.state.calls).toBe(1);
+
+    let calls = 0;
+    const rejecting = createServerClock({
+      clock: srv.clock,
+      getServerTime: async () => {
+        calls += 1;
+        throw Object.assign(new Error('HTTP 400'), { status: 400, retryable: false });
+      },
+    });
+    expect(await rejecting.sync()).toMatchObject({ ok: false, reason: 'REQUEST_FAILED', offsetMs: 0 });
+    expect(calls).toBe(1);
+
+    let always = 0;
+    const down = createServerClock({ clock: srv.clock, getServerTime: async () => { always += 1; throw new Error('kesalahan jaringan'); } });
+    expect(await down.sync()).toMatchObject({ ok: false, reason: 'REQUEST_FAILED' });
+    expect(always).toBe(SERVER_CLOCK_DEFAULTS.maxAttempts);
+  });
+
+  it('NEG-SCK-006 stempel sampel tidak valid (di luar rentang panggilan, terbalik, bukan bilangan bulat) → BAD_RESPONSE tanpa percobaan ulang, offset tidak berubah', async () => {
+    const srv = fakeServer();
+    const start = srv.clock();
+    const bad = [
+      { serverTime: start + 9, sentAt: start - 1, receivedAt: start },
+      { serverTime: start + 9, sentAt: start, receivedAt: start + 1 },
+      { serverTime: start + 9, sentAt: start + 1, receivedAt: start },
+      { serverTime: start + 9, sentAt: start + 0.5, receivedAt: start + 1 },
+    ];
+    for (const sample of bad) {
+      let calls = 0;
+      const getServerTime = async () => {
+        calls += 1;
+        return sample; // jam lokal tidak maju selama panggilan → rentang sah hanya [start, start]
+      };
+      const clock = createServerClock({ getServerTime, clock: srv.clock });
+      expect(await clock.sync()).toMatchObject({ ok: false, reason: 'BAD_RESPONSE', offsetMs: 0 });
+      expect(calls).toBe(1);
+    }
+  });
+
   it('NEG-SCK-005 dependensi/parameter tidak valid ditolak saat konstruksi', () => {
     expect(() => createServerClock({})).toThrow(TypeError);
     expect(() => createServerClock({ getServerTime: async () => 1, clock: 5 })).toThrow(TypeError);
     expect(() => createServerClock({ getServerTime: async () => 1, maxOffsetMs: -1 })).toThrow(RangeError);
     expect(() => createServerClock({ getServerTime: async () => 1, maxRoundTripMs: 1.5 })).toThrow(RangeError);
+    expect(() => createServerClock({ getServerTime: async () => 1, maxAttempts: 0 })).toThrow(RangeError);
   });
 });

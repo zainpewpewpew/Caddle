@@ -40,6 +40,9 @@ createBinanceRestClient({ fetch = globalThis.fetch, baseUrl = 'https://fapi.bina
   allowedHosts = ['fapi.binance.com'] /* hanya untuk tes */, random = Math.random /* jitter */ })
 → {
   getServerTime(): Promise<number>,
+  sampleServerTime({ clock? }): Promise<{ serverTime, sentAt, receivedAt }>,
+      // SATU percobaan tanpa retry/backoff; sentAt/receivedAt (jam pemanggil) diambil setelah antrean limiter,
+      // tepat di sekitar fetch → jeda Retry-After/backoff tidak masuk round-trip (sinkronisasi jam, §4)
   getExchangeInfo(): Promise<SymbolInfo[]>,
   getKlines({ symbol, timeframe, startTime?, endTime?, limit? = 500 (maks 1500) }): Promise<Candle[]>,
       // isClosed = closeTime < clock(); source 'rest'; worker memberi clock = serverClock.now (§4)
@@ -115,12 +118,15 @@ lastClosedOpenTime(now, timeframe) → number
 planBackfill({ lastOpenTime, now, timeframe, maxCandles, chunkSize = 1500 }) → Array<{ startTime, endTime, limit }>
 planGapFill({ gaps, timeframe, now, mergeWithin = 0, chunkSize = 1500 }) → Array<{ startTime, endTime, limit }>
 
-createServerClock({ getServerTime, clock = Date.now, logger, maxOffsetMs = 600_000, maxRoundTripMs = 5_000 })
+createServerClock({ getServerTime, clock = Date.now, logger, maxOffsetMs = 600_000, maxRoundTripMs = 1_000, maxAttempts = 3 })
   → { now(), offsetMs(), lastSync(), sync(): Promise<{ ok, offsetMs, measuredOffsetMs, roundTripMs, reason?, message? }> }
-  // backend/ingestion/serverClock.js. offset = serverTime − titik tengah round-trip. sync() tidak pernah reject:
+  // backend/ingestion/serverClock.js. offset = serverTime − titik tengah round-trip (galat ≤ RTT/2). sync() tidak pernah reject:
   // gagal (REQUEST_FAILED/BAD_RESPONSE) → offset terakhir (awal 0) tetap; RTT > maxRoundTripMs → sampel dibuang;
   // |offset| > maxOffsetMs → TIDAK diterapkan (OFFSET_OUT_OF_RANGE, kemungkinan jam host/NTP rusak) dan dilaporkan.
-  // getServerTime dipanggil malas (`() => rest.getServerTime()`), sehingga klien REST boleh memakai serverClock.now.
+  // getServerTime({ clock }) dipanggil malas dengan jam lokal → sampel { serverTime, sentAt, receivedAt } (stempel di dalam
+  // rentang panggilan, selain itu BAD_RESPONSE) atau angka (RTT = durasi panggilan). Worker: `(o) => rest.sampleServerTime(o)`,
+  // sehingga klien REST boleh memakai serverClock.now. Percobaan gagal retryable / RTT terlalu panjang → sampel BARU
+  // (maks maxAttempts per sync); error retryable:false (mis. HTTP 400) dan BAD_RESPONSE tidak diulang.
 
 createScanner({ rest, streamFactory, repos, getSettings, onClosedCandles, onMonitoringStopped?, discoverSymbols,
   clock, logger, setTimer, clearTimer, options /* SCANNER_DEFAULTS */, serverClock? })
@@ -276,7 +282,7 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 | Sinyal simbol yang delisted/berhenti dipantau tetap terbuka selamanya | `closeOpenForSymbol` + `pipeline.closeSymbol` + `onMonitoringStopped` scanner | Expiry hanya maju saat ada candle baru; tanpa penutupan eksplisit screener terus menampilkan sinyal basi |
 | `upsertFromExchange` → `{ inserted, updated, rejected }` (tak terbatas, diabaikan scanner) | `+ rejectedCount`, `rejected` dibatasi 50; scanner mencatatnya per discovery | Simbol yang tidak lolos pola (kontrak delivery) sebelumnya hilang tanpa jejak |
 | Perakitan worker hanya di `main()` `worker/index.js` (tes integrasi menyalin perakitannya) | `worker/assemble.js` → `assembleWorker` | Regresi perakitan (mis. repositori/REST kembali ke `Date.now`) tidak tertangkap tes |
-| Worker memakai jam lokal (`Date.now`) | `createServerClock` + sinkronisasi `/fapi/v1/time` tiap siklus scanner | Jam lokal yang lebih cepat membuat kline final WS ditolak ("belum tertutup"); yang lebih lambat dapat menganggap candle berjalan tertutup |
+| Worker memakai jam lokal (`Date.now`) | `createServerClock` + sinkronisasi `/fapi/v1/time` tiap siklus scanner (sampel satu percobaan `rest.sampleServerTime`, RTT ≤ 1 detik) | Jam lokal yang lebih cepat membuat kline final WS ditolak ("belum tertutup"); yang lebih lambat dapat menganggap candle berjalan tertutup |
 | Risk flag likuiditas selalu dinilai dengan `DEFAULT_VIEW_PARAMS` | `liquidityOf` menyertakan `thresholds` dari `settings.liquidity`; `analyzeAt` menerima `params.view` | Batas pengguna (terutama mode manual) harus sama dengan batas yang ditampilkan di penjelasan; backtest tetap dapat memberi ambangnya sendiri |
 | `createSignalRepository(db)` | `+ { clock }`, `lastEventCandleTime` | Tes deterministik; titik awal replay yang persisten |
 | Kolom tracking (`barsInState`, `peakPrice`, `lastCandleTime`) di tabel `signals` | Disimpan di `explanation_json.tracking` | Menghindari migrasi skema saat M3; kandidat migrasi `004` (lihat `docs/05-database.md`) |

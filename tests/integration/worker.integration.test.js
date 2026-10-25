@@ -1152,6 +1152,40 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(problems(logs)).toEqual(['sinkronisasi jam server gagal, offset terakhir dipakai', 'galat scanner']);
   });
 
+  it('INT-WRK-018 /fapi/v1/time dijawab 429 (Retry-After 4 d) saat start lalu 503 saat rediscovery → sampel jam satu percobaan tanpa retry/antrean limiter di dalam round-trip: offset tetap 0 (bukan +2000 / +187), tanpa error ingesti', async () => {
+    const faults = ['429', null, '503'];
+    let phase = 0;
+    const { scanner, repos, binance, driver, serverClock, logs } = await setup({
+      restSleep: (timers) => async (ms) => { timers.jump(ms); },
+      configure: (b) => {
+        const fetch = b.fetch;
+        b.fetch = async (href, init) => {
+          if (new URL(href).pathname !== '/fapi/v1/time') return fetch(href, init);
+          const fault = faults[phase];
+          phase += 1;
+          if (fault === '429') {
+            return new Response(JSON.stringify({ code: -1003, msg: 'Too many requests' }), { status: 429, headers: { 'retry-after': '4' } });
+          }
+          if (fault === '503') return new Response(JSON.stringify({ code: -1001, msg: 'Internal error' }), { status: 503 });
+          return fetch(href, init);
+        };
+      },
+    });
+    await scanner.start();
+    // Jam host = jam server (selisih nyata 0): jeda Retry-After 4 d terjadi SEBELUM request yang berhasil.
+    expect(serverClock.offsetMs()).toBe(0);
+    expect(serverClock.lastSync()).toMatchObject({ ok: true, offsetMs: 0, roundTripMs: 0 });
+
+    // Start bergeser 4 d (Retry-After) → rediscovery pertama pada START + 4 d + 1 jam.
+    await driver.runUntil(START + H1 + 10_000);
+    expect(phase).toBe(4); // 429 → sukses (start), 503 → sukses (rediscovery)
+    expect(serverClock.offsetMs()).toBe(0);
+    expect(serverClock.lastSync()).toMatchObject({ ok: true, offsetMs: 0, roundTripMs: 0 });
+    expect(binance.calls.filter((c) => c.path === '/fapi/v1/time')).toHaveLength(2); // dua percobaan yang dijawab sukses
+    expect((await repos.ingestion.getStatus()).recentErrors).toEqual([]);
+    expect(problems(logs)).toEqual([]);
+  });
+
   it('INT-WRK-017 perakitan produksi (worker/assemble.js), jam server 4 m 54 d di DEPAN jam lokal → candle 5m #48 yang sudah tertutup menurut server (belum menurut jam lokal) ikut di-bootstrap: isClosed REST & validasi repositori memakai serverClock.now; candle #49 yang masih berjalan ditolak repositori', async () => {
     const SKEW = M5 - 6_000;
     const { scanner, repos, binance, serverClock, logs } = await setup({ serverSkewMs: SKEW });

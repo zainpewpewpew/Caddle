@@ -5,10 +5,17 @@
 // lebih cepat, kline final WebSocket ditolak sebagai "belum tertutup"; bila lebih lambat, candle yang
 // masih berjalan bisa dianggap tertutup. Jam ini mengoreksi jam lokal dengan offset terukur.
 //
-// Pengukuran: offset = serverTime − titik tengah round-trip (sentAt + RTT/2), dibulatkan ke ms.
+// Pengukuran: offset = serverTime − titik tengah round-trip (sentAt + RTT/2), dibulatkan ke ms. Rumus ini
+// mengandaikan server membaca jamnya di tengah round-trip, sehingga galat maksimum = RTT/2. Karena itu:
+// - Sampel sebaiknya berupa SATU percobaan HTTP dengan stempel sentAt/receivedAt di sekitar fetch itu saja
+//   (`rest.sampleServerTime`): antrean limiter, Retry-After, backoff, dan retry terjadi SEBELUM request
+//   yang berhasil dan akan menggeser titik tengah bila ikut terukur. Bila `getServerTime` hanya
+//   mengembalikan angka, RTT diukur di sekitar panggilannya (mencakup semua jeda di dalamnya).
+// - Percobaan yang gagal dengan error retryable (atau RTT terlalu panjang) diulang sebagai sampel BARU,
+//   maks `maxAttempts` per sync; tiap sampel diukur sendiri, jadi jeda antarpercobaan tidak memengaruhi offset.
 // Aturan keamanan:
 // - Sinkronisasi gagal (jaringan/HTTP/body) → offset terakhir dipertahankan (awal 0); tidak pernah throw.
-// - RTT > maxRoundTripMs (mis. request sempat di-retry/backoff) → sampel dibuang (ketidakpastian RTT/2 terlalu besar).
+// - RTT > maxRoundTripMs (default 1 detik, galat ≤ 500 ms) → sampel dibuang.
 // - |offset terukur| > maxOffsetMs (default 10 menit) → TIDAK diterapkan: offset sebesar itu hampir pasti
 //   berarti jam host rusak (perbaiki NTP) atau respons tidak wajar; menerapkannya diam-diam akan
 //   menggeser semua stempel waktu. Hasil sync melaporkannya agar worker mencatat error ingesti.
@@ -17,7 +24,8 @@
 
 export const SERVER_CLOCK_DEFAULTS = Object.freeze({
   maxOffsetMs: 10 * 60_000,
-  maxRoundTripMs: 5_000,
+  maxRoundTripMs: 1_000,
+  maxAttempts: 3,
 });
 
 export const CLOCK_SYNC_FAILURES = Object.freeze(['REQUEST_FAILED', 'BAD_RESPONSE', 'ROUND_TRIP_TOO_LONG', 'OFFSET_OUT_OF_RANGE']);
@@ -28,10 +36,14 @@ const MESSAGE_MAX = 300;
 const errorText = (err) => String(err?.message ?? err).slice(0, MESSAGE_MAX);
 
 /**
- * @param {{ getServerTime: () => Promise<number>, clock?: () => number, logger?: object,
- *   maxOffsetMs?: number, maxRoundTripMs?: number }} deps
- *   getServerTime: biasanya `() => rest.getServerTime()` — dipanggil malas, sehingga klien REST boleh
- *   dibuat SETELAH jam ini dan memakai `serverClock.now` sebagai jamnya (tanpa dependensi melingkar).
+ * @param {{ getServerTime: (opts: { clock: () => number }) => Promise<number | { serverTime: number, sentAt: number, receivedAt: number }>,
+ *   clock?: () => number, logger?: object, maxOffsetMs?: number, maxRoundTripMs?: number, maxAttempts?: number }} deps
+ *   getServerTime: biasanya `(opts) => rest.sampleServerTime(opts)` — dipanggil malas dengan `{ clock }` (jam
+ *   lokal ini), sehingga klien REST boleh dibuat SETELAH jam ini dan memakai `serverClock.now` sebagai jamnya.
+ *   Mengembalikan sampel `{ serverTime, sentAt, receivedAt }` (stempel dengan `clock` yang diberikan, di
+ *   dalam rentang panggilan) atau angka serverTime saja (RTT = durasi panggilan).
+ *   maxAttempts: jumlah sampel maksimum per sync; diulang hanya bila error tidak bertanda `retryable: false`
+ *   atau RTT terlalu panjang.
  * @returns {{ now(): number, offsetMs(): number, lastSync(): object|null,
  *   sync(): Promise<{ ok: boolean, offsetMs: number, measuredOffsetMs: number|null, roundTripMs: number|null,
  *     reason?: string, message?: string }> }}
@@ -42,11 +54,13 @@ export function createServerClock({
   logger = NOOP_LOGGER,
   maxOffsetMs = SERVER_CLOCK_DEFAULTS.maxOffsetMs,
   maxRoundTripMs = SERVER_CLOCK_DEFAULTS.maxRoundTripMs,
+  maxAttempts = SERVER_CLOCK_DEFAULTS.maxAttempts,
 } = {}) {
   if (typeof getServerTime !== 'function') throw new TypeError('getServerTime wajib fungsi');
   if (typeof clock !== 'function') throw new TypeError('clock wajib fungsi');
   if (!Number.isInteger(maxOffsetMs) || maxOffsetMs < 0) throw new RangeError('maxOffsetMs harus bilangan bulat ≥ 0');
   if (!Number.isInteger(maxRoundTripMs) || maxRoundTripMs < 0) throw new RangeError('maxRoundTripMs harus bilangan bulat ≥ 0');
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10) throw new RangeError('maxAttempts harus bilangan bulat 1..10');
 
   let offset = 0;
   let last = null;
@@ -67,23 +81,49 @@ export function createServerClock({
     ok: false, reason, message, offsetMs: offset, measuredOffsetMs: null, roundTripMs: null, ...extra,
   });
 
-  async function measure() {
-    const sentAt = clock();
-    let serverTime;
+  /** Satu sampel → { ok: true, measuredOffsetMs, roundTripMs } | { ok: false, reason, message, retry, ...extra }. */
+  async function sample() {
+    const callStart = clock();
+    let raw;
     try {
-      serverTime = await getServerTime();
+      raw = await getServerTime({ clock });
     } catch (err) {
-      return fail('REQUEST_FAILED', `sinkronisasi jam server gagal: ${errorText(err)}`);
+      return { ok: false, reason: 'REQUEST_FAILED', message: `sinkronisasi jam server gagal: ${errorText(err)}`, retry: err?.retryable !== false };
     }
-    const receivedAt = clock();
+    const callEnd = clock();
+    const timed = raw !== null && typeof raw === 'object';
+    const serverTime = timed ? raw.serverTime : raw;
+    const sentAt = timed ? raw.sentAt : callStart;
+    const receivedAt = timed ? raw.receivedAt : callEnd;
     if (!Number.isSafeInteger(serverTime) || serverTime <= 0) {
-      return fail('BAD_RESPONSE', 'sinkronisasi jam server gagal: serverTime tidak valid');
+      return { ok: false, reason: 'BAD_RESPONSE', message: 'sinkronisasi jam server gagal: serverTime tidak valid', retry: false };
+    }
+    // Stempel sampel harus berada di dalam rentang panggilan dan berurutan (jam yang sama).
+    if (!Number.isSafeInteger(sentAt) || !Number.isSafeInteger(receivedAt)
+      || sentAt < callStart || receivedAt < sentAt || receivedAt > callEnd) {
+      return { ok: false, reason: 'BAD_RESPONSE', message: 'sinkronisasi jam server gagal: stempel sampel tidak valid', retry: false };
     }
     const roundTripMs = receivedAt - sentAt;
-    if (roundTripMs < 0 || roundTripMs > maxRoundTripMs) {
-      return fail('ROUND_TRIP_TOO_LONG', `sinkronisasi jam server dilewati: round-trip ${roundTripMs} ms > ${maxRoundTripMs} ms`, { roundTripMs });
+    if (roundTripMs > maxRoundTripMs) {
+      return {
+        ok: false, reason: 'ROUND_TRIP_TOO_LONG', retry: true, roundTripMs,
+        message: `sinkronisasi jam server dilewati: round-trip ${roundTripMs} ms > ${maxRoundTripMs} ms`,
+      };
     }
-    const measuredOffsetMs = Math.round(serverTime - (sentAt + roundTripMs / 2));
+    return { ok: true, measuredOffsetMs: Math.round(serverTime - (sentAt + roundTripMs / 2)), roundTripMs };
+  }
+
+  async function measure() {
+    let s = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      s = await sample();
+      if (s.ok || !s.retry) break;
+    }
+    if (!s.ok) {
+      const extra = s.roundTripMs === undefined ? {} : { roundTripMs: s.roundTripMs };
+      return fail(s.reason, s.message, extra);
+    }
+    const { measuredOffsetMs, roundTripMs } = s;
     if (Math.abs(measuredOffsetMs) > maxOffsetMs) {
       return fail('OFFSET_OUT_OF_RANGE',
         `selisih jam lokal vs server ${measuredOffsetMs} ms melebihi batas ±${maxOffsetMs} ms; tidak diterapkan (periksa NTP host)`,
