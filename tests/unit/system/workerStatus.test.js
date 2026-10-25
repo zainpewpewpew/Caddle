@@ -24,6 +24,16 @@ describe('ringkasan status worker', () => {
     expect(r.binance.status).toBe(binance);
   });
 
+  it('UNIT-WST-004 offset jam & clockFault diteruskan; nilai clockFault tak dikenal dibuang', () => {
+    const r = summarizeWorker(beat({ state: 'degraded', ws: 'open', clockOffsetMs: -1234, clockFault: 'OFFSET_OUT_OF_RANGE' }), NOW);
+    expect(r.scanner.status).toBe('degraded');
+    expect(r.scanner.clockOffsetMs).toBe(-1234);
+    expect(r.scanner.clockFault).toBe('OFFSET_OUT_OF_RANGE');
+    const other = summarizeWorker(beat({ state: 'running', clockOffsetMs: 'x', clockFault: '<script>' }), NOW);
+    expect(other.scanner.clockOffsetMs).toBeNull();
+    expect(other.scanner.clockFault).toBeNull();
+  });
+
   it('UNIT-WST-003 metrik non-angka tidak diteruskan; error dibatasi 5 terbaru', () => {
     const errors = Array.from({ length: 9 }, (_, i) => ({ id: i, at: NOW - i, source: 'ws', message: `e${i}` }));
     const r = summarizeWorker({ heartbeat: { at: NOW, state: { state: 'running', symbols: '40', queue: Number.NaN, errors: 3 } }, lastRun: null, recentErrors: errors }, NOW);

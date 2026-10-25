@@ -53,6 +53,9 @@ export function summarizeWorker(ingestion, now) {
       errors: numberOrNull(st.errors),
       gaps: numberOrNull(st.gaps),
       duplicates: numberOrNull(st.duplicates),
+      clockOffsetMs: numberOrNull(st.clockOffsetMs),
+      // Hanya kode alasan yang dikenal yang diteruskan (mis. OFFSET_OUT_OF_RANGE), bukan teks bebas.
+      clockFault: st.clockFault === 'OFFSET_OUT_OF_RANGE' ? st.clockFault : null,
     },
     // Status koneksi WebSocket hanya bermakna selama heartbeat masih segar.
     binance: { status: !live ? 'unknown' : ws === 'open' ? 'ok' : (ws ?? 'unknown'), ws: live ? ws : null },

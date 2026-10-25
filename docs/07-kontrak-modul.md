@@ -373,7 +373,7 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 
 Filter `alignment` diterapkan di server sebelum `LIMIT`. Screener mengirim semua filter ke server dengan `limit=500`; karena API tidak memberi total, `count` = 500 hanya berarti batas tercapai — UI menampilkan `≥ 500 hasil` dan callout "hasil mungkin terpotong", bukan klaim ada sisa.
 
-`backend/system/workerStatus.js` — `summarizeWorker(ingestion, now)` membaca heartbeat di database; `now` = `Date.now()` proses API, sehingga `heartbeat.at` (dan `lastIngestionAt`, `lastRun`, `recentErrors[].at`) wajib distempel jam lokal host oleh worker (`localClock` scanner), bukan waktu server Binance. Heartbeat lebih tua dari 90 detik → `stale`; tanpa heartbeat → `not_running` (tidak pernah angka palsu). `clockOffsetMs`/`clockFault` dari heartbeat belum diteruskan ke respons (UI hanya melihat status `degraded`); `streams` termasuk seri konteks HTF.
+`backend/system/workerStatus.js` — `summarizeWorker(ingestion, now)` membaca heartbeat di database; `now` = `Date.now()` proses API, sehingga `heartbeat.at` (dan `lastIngestionAt`, `lastRun`, `recentErrors[].at`) wajib distempel jam lokal host oleh worker (`localClock` scanner), bukan waktu server Binance. Heartbeat lebih tua dari 90 detik → `stale`; tanpa heartbeat → `not_running` (tidak pernah angka palsu). `scanner.clockOffsetMs` (angka atau null) dan `scanner.clockFault` (hanya `'OFFSET_OUT_OF_RANGE'` atau null) diteruskan dari heartbeat; System Health menampilkan offset atau peringatan NTP; `streams` termasuk seri konteks HTF.
 
 `backend/system/marketContext.js` — `buildMarketContext(candles, symbols = ['BTCUSDT', 'ETHUSDT'])` → `classifyTrend` pada 120 candle 1h terakhir per simbol:
 

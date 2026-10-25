@@ -34,6 +34,10 @@ function render(data) {
           h('dt', null, 'Simbol / stream'), h('dd', { class: 'mono' }, running ? `${formatInteger(sc.symbols)} / ${formatInteger(sc.streams)} (basi ${formatInteger(sc.staleStreams)})` : EMPTY),
           h('dt', null, 'Reconnect / gap / duplikat'), h('dd', { class: 'mono' }, running ? `${formatInteger(sc.reconnects)} / ${formatInteger(sc.gaps)} / ${formatInteger(sc.duplicates)}` : EMPTY),
           h('dt', null, 'Error tercatat'), h('dd', null, formatInteger(sc.errors)),
+          h('dt', null, 'Offset jam Binance'), h('dd', { class: 'mono', 'data-testid': 'health-clock' },
+            sc.clockFault === 'OFFSET_OUT_OF_RANGE'
+              ? 'Jam host menyimpang > 10 menit dari Binance — periksa NTP'
+              : (running && typeof sc.clockOffsetMs === 'number' ? `${formatInteger(sc.clockOffsetMs)} ms` : EMPTY)),
           h('dt', null, 'Waktu server'), h('dd', { class: 'mono' }, formatUtc(data.serverTime))))),
     panel({ title: 'Error ingesti terbaru', flush: true },
       dataTable({
