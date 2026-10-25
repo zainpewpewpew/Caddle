@@ -17,6 +17,11 @@ const isNonNegativeFinite = (value) => typeof value === 'number' && Number.isFin
 const isNonNegativeInteger = (value) => Number.isSafeInteger(value) && value >= 0;
 const exceeds = (part, total) => part - total > TAKER_TOLERANCE * Math.max(1, Math.abs(total));
 
+/** Format simbol yang diterima sistem: huruf besar & angka ASCII, 1–32 karakter. */
+export function isValidSymbol(symbol) {
+  return typeof symbol === 'string' && SYMBOL_PATTERN.test(symbol);
+}
+
 function assertTime(value, name) {
   if (typeof value !== 'number' || !Number.isFinite(value)) throw new TypeError(`${name} wajib berupa epoch ms`);
 }
@@ -39,7 +44,7 @@ export function validateCandle(candle, { now } = {}) {
   const errors = [];
   const { symbol, timeframe, openTime, closeTime } = candle;
 
-  if (typeof symbol !== 'string' || !SYMBOL_PATTERN.test(symbol)) errors.push('symbol tidak valid (harus [A-Z0-9]{1,32})');
+  if (!isValidSymbol(symbol)) errors.push('symbol tidak valid (harus [A-Z0-9]{1,32})');
 
   const timeframeOk = TIMEFRAMES.includes(timeframe);
   if (!timeframeOk) errors.push(`timeframe tidak didukung: ${String(timeframe)}`);
