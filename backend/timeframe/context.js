@@ -60,11 +60,15 @@ function trendFor(timeframe, candles, t, { maxStaleBars, settleWindowMs, trendPa
   const allowedLag = settling ? maxStaleBars : Math.max(0, maxStaleBars - 1);
   if (lagBars > allowedLag) return { trend: null, reasons: ['STALE_DATA'], asOf, candleCount: closed.length };
   const { trend, reasons, score } = classifyTrend(closed, trendParams);
+  // Data kurang dari warm-up: trend tidak diketahui (null), bukan NEUTRAL yang tampak nyata.
+  if (reasons.includes('INSUFFICIENT_DATA')) return { trend: null, reasons, asOf, candleCount: closed.length };
   return { trend, reasons, score, asOf, candleCount: closed.length };
 }
 
 /**
- * Membangun konteks multi-timeframe.
+ * Membangun konteks multi-timeframe. Trend per timeframe null (tidak tersedia) dengan reason
+ * 'NO_DATA' (tanpa candle tertutup), 'STALE_DATA' (candle HTF terlambat), atau 'INSUFFICIENT_DATA'
+ * (candle kurang dari warm-up trend) — konteks tidak pernah dikarang dari data yang tidak cukup.
  * @param {{ baseTimeframe: '5m'|'15m'|'1h', evaluationTime: number,
  *   candlesByTimeframe: Record<string, import('../market/contracts.js').Candle[]>,
  *   params?: { maxStaleBars?: number, settleWindowMs?: number, trend?: object } }} input

@@ -7,6 +7,24 @@ import { binancePill, scannerPill } from './workerFormat.js';
 
 const TREND_TONE = { BULLISH: 'bull', NEUTRAL: undefined, BEARISH: 'bear' };
 
+/**
+ * Label badge trend konteks pasar. Trend null (data 1h kurang dari warm-up / tidak diketahui) tampil
+ * sebagai "tidak tersedia" bernada peringatan — tidak pernah sebagai badge NEUTRAL.
+ * @returns {{ text: string, tone: string|undefined }}
+ */
+export function marketTrendBadge(item) {
+  if (item?.trend && Object.hasOwn(TREND_TONE, item.trend)) return { text: item.trend, tone: TREND_TONE[item.trend] };
+  const count = Number.isInteger(item?.candleCount) ? ` (${item.candleCount} candle 1h)` : '';
+  return { text: item?.status === 'insufficient_data' ? `Trend tidak tersedia: data kurang${count}` : 'Trend tidak tersedia', tone: 'warn' };
+}
+
+const HAS_PRICE = new Set(['ok', 'insufficient_data']);
+
+function trendBadge(item) {
+  const { text, tone } = marketTrendBadge(item);
+  return badge(text, tone);
+}
+
 export async function overviewView() {
   const data = await api('/api/overview');
 
@@ -23,14 +41,14 @@ export async function overviewView() {
     }),
   );
 
-  const hasContext = data.marketContext.some((m) => m.status === 'ok');
+  const hasContext = data.marketContext.some((m) => HAS_PRICE.has(m.status));
   const market = panel({ title: 'Konteks pasar · BTC & ETH', actions: badge('1h · candle tertutup') },
     hasContext
       ? h('dl', { class: 'kv' }, data.marketContext.flatMap((m) => [
         h('dt', { class: 'mono' }, m.symbol),
-        h('dd', null, m.status === 'ok'
+        h('dd', null, HAS_PRICE.has(m.status)
           ? h('span', { class: 'cluster' },
-            badge(m.trend, TREND_TONE[m.trend]),
+            trendBadge(m),
             h('span', { class: 'num' }, formatPrice(m.lastPrice)),
             h('span', { class: 'num' }, `24j ${formatPercent(m.change24h)}`),
             h('span', { class: 'muted' }, formatUtc(m.asOf)))

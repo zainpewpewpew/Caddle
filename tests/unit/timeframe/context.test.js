@@ -167,7 +167,8 @@ describe('buildTimeframeContext — tanpa lookahead', () => {
       baseTimeframe: '15m', evaluationTime: at(9, 59, 59, 999),
       candlesByTimeframe: { '15m': [], '1h': series('1h', 5, up, { end: at(10, 0) }) },
     });
-    expect(short.trends['1h']).toMatchObject({ trend: 'NEUTRAL', reasons: ['INSUFFICIENT_DATA'] });
+    // Data kurang dari warm-up → trend tidak diketahui (null), bukan NEUTRAL yang tampak seperti trend nyata.
+    expect(short.trends['1h']).toEqual({ trend: null, reasons: ['INSUFFICIENT_DATA'], asOf: at(9, 59, 59, 999), candleCount: 5 });
     expect(short.alignment).toBe('UNCONFIRMED');
   });
 

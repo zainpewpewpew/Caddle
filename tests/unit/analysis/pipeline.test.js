@@ -111,6 +111,17 @@ describe('analyzeAt (murni)', () => {
     expect(withFuture.next).toEqual(past.next);
   });
 
+  it('UNIT-PIPE-007 HTF dengan candle kurang dari warm-up (15m: 22, 1h: 5) → trend null INSUFFICIENT_DATA; penjelasan menyebut "tidak tersedia", bukan NEUTRAL', () => {
+    const all = silentAccumulationCandles(2);
+    const r = analyzeAt({ symbol: SYMBOL, timeframe: '5m', candlesByTimeframe: byTimeframe(all.slice(0, 66)), prev: null });
+    expect(r.context.trends['15m']).toMatchObject({ trend: null, reasons: ['INSUFFICIENT_DATA'], candleCount: 22 });
+    expect(r.context.trends['1h']).toMatchObject({ trend: null, reasons: ['INSUFFICIENT_DATA'], candleCount: 5 });
+    const alignment = r.view.explanation.find((e) => e.factor === 'CONTEXT:ALIGNMENT').detail;
+    expect(alignment).toContain('15m tidak tersedia');
+    expect(alignment).toContain('1h tidak tersedia');
+    expect(alignment).not.toMatch(/(15m|1h) NEUTRAL/);
+  });
+
   it('UNIT-PIPE-003 kualitas seri: celah, candle belum tertutup, campuran seri terdeteksi', () => {
     const all = silentAccumulationCandles(1);
     expect(assessSeriesQuality(all, '5m')).toEqual({ ok: true, issues: [] });
