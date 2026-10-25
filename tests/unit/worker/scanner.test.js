@@ -982,6 +982,32 @@ describe('heartbeat, status, stop', () => {
     await scanner.stop();
   });
 
+  it('UNIT-SCN-022 serverClock OFFSET_OUT_OF_RANGE → state "degraded" + clockFault di status/heartbeat, error ingesti "clock", peringatan log; kegagalan sync lain tidak mengubah state; sync berhasil berikutnya → "running"', async () => {
+    const results = [
+      { ok: false, reason: 'OFFSET_OUT_OF_RANGE', offsetMs: 0, measuredOffsetMs: 900_000, message: 'selisih jam lokal vs server 900000 ms melebihi batas' },
+      { ok: false, reason: 'REQUEST_FAILED', offsetMs: 0, message: 'sinkronisasi jam server gagal: HTTP 503' },
+      { ok: true, offsetMs: 40 },
+      { ok: false, reason: 'REQUEST_FAILED', offsetMs: 40, message: 'sinkronisasi jam server gagal: HTTP 503' },
+    ];
+    const serverClock = { sync: vi.fn(async () => results.shift()), offsetMs: () => 0 };
+    const warns = [];
+    const logger = { ...silentLogger, warn: (fields, msg) => warns.push(msg) };
+    const { scanner, repos, timers } = setup({ serverClock, logger });
+    await scanner.start();
+    expect(scanner.status()).toMatchObject({ state: 'degraded', clockFault: 'OFFSET_OUT_OF_RANGE', ws: 'open', streams: 2 });
+    expect(repos.ingestion.heartbeat.mock.calls.at(-1)[0].state).toMatchObject({ state: 'degraded', clockFault: 'OFFSET_OUT_OF_RANGE' });
+    expect(recordedErrors(repos)).toEqual([{ at: START, source: 'clock', message: 'selisih jam lokal vs server 900000 ms melebihi batas' }]);
+    expect(warns).toContain('jam host menyimpang dari waktu server Binance melebihi batas; worker degraded (periksa NTP host)');
+
+    await timers.advance(3_600_000); // REQUEST_FAILED: belum ada sync berhasil → tetap degraded
+    expect(scanner.status()).toMatchObject({ state: 'degraded', clockFault: 'OFFSET_OUT_OF_RANGE' });
+    await timers.advance(3_600_000); // sync berhasil
+    expect(scanner.status()).toMatchObject({ state: 'running', clockFault: null });
+    await timers.advance(3_600_000); // REQUEST_FAILED biasa → offset terakhir sah, tetap running
+    expect(scanner.status()).toMatchObject({ state: 'running', clockFault: null });
+    await scanner.stop();
+  });
+
   it('EDGE-SCN-007 tanpa serverClock → clockOffsetMs null; serverClock tanpa sync()/offsetMs() ditolak', async () => {
     const { scanner, rest, repos, streams } = setup();
     await scanner.start();

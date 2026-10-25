@@ -159,7 +159,8 @@ function liquidityThresholds(raw) {
  *   clock: waktu server (worker: serverClock.now); localClock: jam host (worker: Date.now; default = clock) untuk
  *   stempel yang dibandingkan /api/system/status dengan Date.now proses API (heartbeat, run, error, lastIngestionAt).
  *   serverClock: jam tersinkron server (backend/ingestion/serverClock.js); sync() dipanggil tiap siklus,
- *   kegagalan dicatat sebagai error ingesti sumber 'clock' (offset terakhir tetap dipakai).
+ *   kegagalan dicatat sebagai error ingesti sumber 'clock' (offset terakhir tetap dipakai). Hasil
+ *   reason OFFSET_OUT_OF_RANGE → state 'degraded' + status().clockFault sampai sync berikutnya berhasil.
  *   onMonitoringStopped: dipanggil setelah stream dilepas untuk (a) simbol yang sebelumnya dipantau (termasuk
  *   daftar di DB saat siklus pertama) dan tidak terpilih lagi — reason SYMBOL_DELISTED bila delisted, selain itu
  *   MONITORING_STOPPED, timeframes null (= semua); (b) simbol yang tetap dipantau tetapi timeframe-nya dilepas
@@ -223,6 +224,8 @@ export function createScanner({
   let lastIngestionAt = null;
   let latestCloseTime = null;
   let discoveryFailures = 0;
+  /** Alasan jam server diketahui rusak (OFFSET_OUT_OF_RANGE) dari sync terakhir, null bila sehat/tidak diketahui. */
+  let clockFault = null;
   let cycleStats = null;
   const counters = { gaps: 0, duplicates: 0 };
 
@@ -707,12 +710,27 @@ export function createScanner({
     return counts.reduce((a, b) => a + b, 0);
   }
 
-  /** Sinkronisasi jam server; tidak pernah melempar — kegagalan dicatat, offset terakhir tetap dipakai. */
+  /**
+   * Sinkronisasi jam server; tidak pernah melempar — kegagalan dicatat, offset terakhir tetap dipakai.
+   * OFFSET_OUT_OF_RANGE (selisih jam host vs server melebihi batas serverClock) berarti jam yang dipakai
+   * diketahui salah: worker tetap berjalan tetapi berstatus 'degraded' (status().clockFault) sampai sync
+   * berikutnya berhasil. Kegagalan lain (jaringan/HTTP/RTT) tidak mengubah state: offset terakhir masih sah.
+   */
   async function syncClock() {
     if (!serverClock) return;
     try {
       const result = await limiter.run(() => serverClock.sync());
-      if (result?.ok === false) await report('clock', result.message ?? 'sinkronisasi jam server gagal');
+      if (result?.ok === true) {
+        if (clockFault !== null) logger.info({ offsetMs: result.offsetMs }, 'jam server kembali tersinkron');
+        clockFault = null;
+      } else if (result?.ok === false) {
+        if (result.reason === 'OFFSET_OUT_OF_RANGE') {
+          clockFault = result.reason;
+          logger.warn({ reason: result.reason, measuredOffsetMs: result.measuredOffsetMs, offsetMs: result.offsetMs },
+            'jam host menyimpang dari waktu server Binance melebihi batas; worker degraded (periksa NTP host)');
+        }
+        await report('clock', result.message ?? 'sinkronisasi jam server gagal');
+      }
     } catch (err) {
       await report('clock', err);
     }
@@ -772,7 +790,7 @@ export function createScanner({
 
   function currentState() {
     if (phase !== 'running') return phase;
-    if (stream === null) return 'degraded';
+    if (stream === null || clockFault !== null) return 'degraded';
     return stream.state()?.state === 'open' ? 'running' : 'degraded';
   }
 
@@ -798,6 +816,7 @@ export function createScanner({
       gaps: counters.gaps,
       duplicates: counters.duplicates,
       clockOffsetMs: serverClock ? serverClock.offsetMs() : null,
+      clockFault,
     };
   }
 

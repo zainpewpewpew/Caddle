@@ -661,7 +661,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       at: START,
       state: {
         state: 'running', lastIngestionAt: START, candleLagMs: 7_001, reconnects: 0, errors: 0, scanDurationMs: 0, queue: 0,
-        symbols: 2, streams: 6, staleStreams: 0, ws: 'open', gaps: 0, duplicates: 0, clockOffsetMs: 0,
+        symbols: 2, streams: 6, staleStreams: 0, ws: 'open', gaps: 0, duplicates: 0, clockOffsetMs: 0, clockFault: null,
       },
     });
 
@@ -1241,6 +1241,35 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(serverClock.offsetMs()).toBe(300);
     expect(scanner.status().clockOffsetMs).toBe(300);
     expect(problems(logs)).toEqual(['sinkronisasi jam server gagal, offset terakhir dipakai', 'galat scanner']);
+  });
+
+  it('INT-WRK-024 /fapi/v1/time melaporkan jam 11 menit di depan (melebihi batas ±10 menit, OFFSET_OUT_OF_RANGE) → offset tidak diterapkan, worker tetap ingest tetapi heartbeat "degraded" + clockFault, error ingesti "clock" tercatat; sync normal berikutnya → "running" lagi', async () => {
+    let lie = 11 * 60_000;
+    const { scanner, repos, driver, serverClock, logs } = await setup({
+      configure: (b) => {
+        const fetch = b.fetch;
+        b.fetch = async (href, init) => {
+          if (new URL(href).pathname !== '/fapi/v1/time') return fetch(href, init);
+          const res = await fetch(href, init);
+          const body = await res.json();
+          return new Response(JSON.stringify({ serverTime: body.serverTime + lie }), { status: 200 });
+        };
+      },
+    });
+    await scanner.start();
+    expect(serverClock.offsetMs()).toBe(0);
+    expect(scanner.status()).toMatchObject({ state: 'degraded', clockFault: 'OFFSET_OUT_OF_RANGE', ws: 'open', symbols: 2, streams: 6 });
+    const status = await repos.ingestion.getStatus();
+    expect(status.heartbeat.state).toMatchObject({ state: 'degraded', clockFault: 'OFFSET_OUT_OF_RANGE' });
+    expect(status.recentErrors).toEqual([expect.objectContaining({
+      source: 'clock', message: expect.stringContaining('melebihi batas ±600000 ms'),
+    })]);
+    expect(problems(logs)).toContain('jam host menyimpang dari waktu server Binance melebihi batas; worker degraded (periksa NTP host)');
+
+    lie = 0;
+    await driver.runUntil(START + H1 + 1_000);
+    expect(scanner.status()).toMatchObject({ state: 'running', clockFault: null });
+    expect((await repos.ingestion.getStatus()).heartbeat.state).toMatchObject({ state: 'running', clockFault: null });
   });
 
   it('INT-WRK-018 /fapi/v1/time dijawab 429 (Retry-After 4 d) saat start lalu 503 saat rediscovery → sampel jam satu percobaan tanpa retry/antrean limiter di dalam round-trip: offset tetap 0 (bukan +2000 / +187), tanpa error ingesti', async () => {
