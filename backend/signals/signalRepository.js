@@ -22,7 +22,7 @@ const SYMBOL_RE = /^[A-Z0-9]{2,30}$/;
 const PATTERN_KEY_RE = /^[A-Z0-9_]{1,32}$/;
 const DEFINITION_STATUSES = Object.freeze(['draft', 'review', 'validated', 'active', 'retired']);
 const HISTORY_MAX = 500;
-const ACTIVE_MAX = 1000;
+const ACTIVE_MAX = 500;
 
 const isFiniteNumber = (v) => typeof v === 'number' && Number.isFinite(v);
 

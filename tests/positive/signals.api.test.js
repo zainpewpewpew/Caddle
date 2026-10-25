@@ -135,6 +135,12 @@ describe('API sinyal — filter & urutan atas matriks sinyal sintetis', () => {
     expect(await symbols(`/api/signals/active?${qs}`)).toEqual(expected);
   });
 
+  it.each(['1', '9', '10', '99', '100', '499', '500'])('POS-SIG-013 limit=%s (batas 1–500) diterima untuk daftar aktif & riwayat', async (limit) => {
+    const n = Number(limit);
+    expect(await symbols(`/api/signals/active?limit=${limit}`)).toHaveLength(Math.min(n, 6));
+    expect(await symbols(`/api/signals/history?limit=${limit}`)).toHaveLength(Math.min(n, 7));
+  });
+
   it('POS-SIG-012 riwayat memuat sinyal tertutup, urut deteksi terbaru, limit & simbol membedakan baris', async () => {
     expect(await symbols('/api/signals/history')).toEqual(
       ['FFFUSDT', 'GGGUSDT', 'EEEUSDT', 'DDDUSDT', 'CCCUSDT', 'BBBUSDT', 'AAAUSDT'],

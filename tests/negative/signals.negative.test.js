@@ -63,6 +63,26 @@ describe('API sinyal — alur negatif', () => {
     expect(res.json().error).toBe('VALIDATION_ERROR');
   });
 
+  // Kontrak docs/07 §9: limit 1–500. Nilai di atas batas ditolak, bukan dipotong diam-diam ke 500.
+  it.each([
+    ['active limit 501', '/api/signals/active?limit=501'],
+    ['active limit 750', '/api/signals/active?limit=750'],
+    ['active limit 999', '/api/signals/active?limit=999'],
+    ['history limit 501', '/api/signals/history?limit=501'],
+    ['history limit 999', '/api/signals/history?limit=999'],
+  ])('NEG-SIG-005 %s (di atas 500) → 400 VALIDATION_ERROR', async (_label, url) => {
+    const res = await ctx.app.inject({ url, headers: { cookie: auth.cookie } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('VALIDATION_ERROR');
+  });
+
+  it('NEG-SIG-006 listActive dengan limit 501 → RangeError (batas repositori = batas API 500); 500 diterima', async () => {
+    const { signals } = ctx.app.services.repos;
+    await expect(signals.listActive({ limit: 501 })).rejects.toThrow(RangeError);
+    await expect(signals.listActive({ limit: 1000 })).rejects.toThrow(RangeError);
+    await expect(signals.listActive({ limit: 500 })).resolves.toEqual([]);
+  });
+
   it.each(['POST', 'PUT', 'DELETE'])('NEG-SIG-003 %s ke endpoint sinyal (baca saja) → 404', async (method) => {
     const res = await ctx.app.inject({
       method, url: '/api/signals/active',

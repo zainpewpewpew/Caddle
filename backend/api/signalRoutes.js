@@ -3,7 +3,8 @@
 import { TIMEFRAMES } from '../market/contracts.js';
 import { PATTERN_STATES } from '../signals/index.js';
 
-const LIMIT = { type: 'string', pattern: '^[1-9][0-9]{0,2}$' };
+// limit 1..500 (sama dengan batas listActive/history di repositori). Di luar rentang → 400, tidak dipotong diam-diam.
+const LIMIT = { type: 'string', pattern: '^([1-9][0-9]?|[1-4][0-9]{2}|500)$' };
 
 const activeQuerySchema = {
   type: 'object',
@@ -40,7 +41,7 @@ export async function signalRoutes(app, { signals, candles }) {
 
   app.get('/api/signals/active', { schema: { querystring: activeQuerySchema } }, async (request) => {
     const q = request.query;
-    const limit = Math.min(toInt(q.limit, 200), 500);
+    const limit = toInt(q.limit, 200);
     const rows = await signals.listActive({
       timeframe: q.timeframe ?? null,
       classification: q.classification ?? null,
@@ -52,7 +53,7 @@ export async function signalRoutes(app, { signals, candles }) {
   });
 
   app.get('/api/signals/history', { schema: { querystring: historyQuerySchema } }, async (request) => {
-    const limit = Math.min(toInt(request.query.limit, 100), 500);
+    const limit = toInt(request.query.limit, 100);
     const items = await signals.history({ symbol: request.query.symbol ?? null, limit });
     return { items, count: items.length };
   });
