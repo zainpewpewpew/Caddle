@@ -2,7 +2,7 @@
 // Tidak ada koneksi ke Binance. Memverifikasi sinyal OS, kode keluar, heartbeat lintas proses, dan
 // bahwa tidak ada proses yang tertinggal.
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ import { loadConfig } from '../../backend/app/config.js';
 import { openDatabase } from '../../backend/database/connection.js';
 import { migrate } from '../../backend/database/migrate.js';
 import { createIngestionStateRepository } from '../../backend/database/repositories/ingestionStateRepository.js';
-import { MAX_LINE_LENGTH, createWorkerSupervisor } from '../../backend/system/workerSupervisor.js';
+import { MAX_LINE_LENGTH, createWorkerSupervisor, isProcessAlive } from '../../backend/system/workerSupervisor.js';
 import { createUser } from '../../backend/users/userAdmin.js';
 import { ADMIN, TEST_HASHER_OPTIONS, TEST_ORIGIN, login } from '../helpers/testApp.js';
 import { postWorker } from '../helpers/workerTestApp.js';
@@ -105,15 +105,18 @@ describe('supervisor worker dengan proses nyata (worker tiruan)', () => {
     expect(isAlive(pid)).toBe(false);
   });
 
-  it('INT-SUP-003 child yang keluar sendiri dengan kode 3 → crashed (kode keluar 3); start ulang berhasil', async () => {
-    create({ WORKER_STUB_EXIT_CODE: '3' });
+  it('INT-SUP-003 child yang keluar sendiri dengan kode 3 → crashed (kode keluar 3); start ulang ditolak selama jeda, lalu berhasil', async () => {
+    // Jeda dipendekkan (300 ms) agar tes cepat; nilai produksi RESTART_COOLDOWN_MS = 10 detik (UNIT-SUP-027).
+    create({ WORKER_STUB_EXIT_CODE: '3' }, { restartCooldownMs: 300 });
     await supervisor.start();
     const crashed = await waitFor(async () => {
       const s = await supervisor.status();
       return s.state === 'crashed' ? s : null;
     }, { label: 'crash' });
     expect(crashed).toMatchObject({ exitCode: 3, signal: null });
-    expect((await supervisor.start()).state).toBe('running');
+    await expect(supervisor.start()).rejects.toMatchObject({ code: 'WORKER_COOLDOWN', statusCode: 429 });
+    const restarted = await waitFor(() => supervisor.start().catch((err) => (err.code === 'WORKER_COOLDOWN' ? null : Promise.reject(err))), { label: 'jeda selesai' });
+    expect(restarted.state).toBe('running');
   });
 
   it('INT-SUP-004 baris stdout raksasa dari child dipotong pada MAX_LINE_LENGTH', async () => {
@@ -142,6 +145,47 @@ describe('supervisor worker dengan proses nyata (worker tiruan)', () => {
     } finally {
       parent.kill('SIGKILL');
     }
+  });
+
+  it('INT-SUP-008 worker milik server dibunuh paksa tanpa heartbeat akhir, lalu server restart (supervisor baru) → heartbeat segar dengan pid mati bukan "external"; start diizinkan', async () => {
+    create({ WORKER_STUB_HEARTBEAT: '1', WORKER_STUB_IGNORE_SIGTERM: '1' }, { stopTimeoutMs: 300 });
+    await supervisor.start();
+    const pid = await waitFor(() => pidFrom(lines), { label: 'log mulai' });
+    await waitFor(async () => (await ingestion.getStatus()).heartbeat?.state?.state === 'running', { label: 'heartbeat running' });
+    expect(await supervisor.stop()).toMatchObject({ state: 'stopped', signal: 'SIGKILL' });
+    expect(isAlive(pid)).toBe(false);
+    const { heartbeat } = await ingestion.getStatus();
+    // Heartbeat terakhir masih "running" dan segar, memuat identitas proses penulisnya.
+    expect(heartbeat.state).toMatchObject({ state: 'running', owner: { pid } });
+    expect(Date.now() - heartbeat.at).toBeLessThan(5_000);
+
+    // Restart server: supervisor baru tidak tahu child lama pernah ada (lastExitAt hanya di memori).
+    const previous = supervisor;
+    supervisor = null;
+    await previous.shutdown();
+    create({ WORKER_STUB_HEARTBEAT: '1' });
+    expect((await supervisor.status()).state).toBe('stopped');
+    expect((await supervisor.start()).state).toBe('running');
+  });
+
+  it.skipIf(!existsSync('/proc/self/stat'))('INT-SUP-009 isProcessAlive pada proses nyata: proses hidup → true; zombie (sudah keluar, belum di-reap induknya) → false; pid yang sudah di-reap → false', async () => {
+    // `sh` menjalankan `sleep 0.1` di latar lalu exec `sleep 5`: proses `sleep 5` tidak pernah me-reap anak itu,
+    // jadi setelah 0,1 detik anak tersebut menjadi zombie — sama seperti worker yang dibunuh bersama servernya.
+    const holder = spawn('sh', ['-c', 'sleep 0.1 & echo $!; exec sleep 5'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      let out = '';
+      holder.stdout.setEncoding('utf8');
+      holder.stdout.on('data', (chunk) => { out += chunk; });
+      const zombie = await waitFor(() => Number.parseInt(out, 10) || null, { label: 'pid anak latar' });
+      expect(isProcessAlive(holder.pid)).toBe(true);
+      // kill(pid, 0) masih berhasil untuk zombie; hanya /proc yang membedakannya.
+      await waitFor(() => !isProcessAlive(zombie), { label: 'anak menjadi zombie' });
+      expect(isAlive(zombie)).toBe(true);
+    } finally {
+      holder.kill('SIGKILL');
+    }
+    await waitFor(() => !isAlive(holder.pid), { label: 'holder di-reap' });
+    expect(isProcessAlive(holder.pid)).toBe(false);
   });
 
   it('INT-SUP-005 skrip yang tidak ada → node keluar kode 1 → crashed, error tampil di log server', async () => {

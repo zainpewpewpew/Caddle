@@ -5,6 +5,7 @@
 //   WORKER_STUB_IGNORE_SIGTERM=1    abaikan SIGTERM (menguji eskalasi SIGKILL supervisor)
 //   WORKER_STUB_EXIT_CODE=<n>       keluar sendiri dengan kode n setelah ±100 ms (menguji crash)
 //   WORKER_STUB_LONG_LINE=<n>       tulis satu baris stdout sepanjang n karakter saat mulai (menguji batas baris)
+import { hostname } from 'node:os';
 import { openDatabase } from '../../backend/database/connection.js';
 import { migrate } from '../../backend/database/migrate.js';
 import { createIngestionStateRepository } from '../../backend/database/repositories/ingestionStateRepository.js';
@@ -21,7 +22,10 @@ if (env.WORKER_STUB_HEARTBEAT === '1') {
   migrate(db);
   ingestion = createIngestionStateRepository(db);
 }
-const beat = (state) => ingestion?.heartbeat({ at: Date.now(), state: { state, symbols: 0, streams: 0, ws: null } });
+// Sama dengan worker/index.js: heartbeat memuat identitas proses penulis (owner) agar server yang baru start dapat
+// mengenali heartbeat segar dari worker yang sudah mati.
+const owner = { pid: process.pid, host: hostname() };
+const beat = (state) => ingestion?.heartbeat({ at: Date.now(), state: { state, symbols: 0, streams: 0, ws: null, owner } });
 
 log('worker stub mulai', { pid: process.pid });
 if (env.WORKER_STUB_LONG_LINE) process.stdout.write(`${'x'.repeat(Number(env.WORKER_STUB_LONG_LINE))}\n`);

@@ -5,8 +5,12 @@
 // Keamanan: path skrip tetap di kode (WORKER_SCRIPT_PATH); argv selalu kosong; env berasal dari environment
 // server, tidak pernah dari request. Hanya satu child per server, dan start ditolak bila heartbeat segar
 // menunjukkan worker lain (mis. `npm run worker` di terminal) sudah menulis ke database yang sama.
+// Start ulang dibatasi jeda RESTART_COOLDOWN_MS setelah child keluar: tiap proses worker baru memulai limiter
+// bobot & status blokir 418/429 Binance dari nol (hanya di memori), jadi restart beruntun tidak boleh membanjiri Binance.
 
 import { fork as nodeFork } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { hostname as osHostname } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isHeartbeatLive } from './workerStatus.js';
@@ -19,6 +23,8 @@ export const STOP_TIMEOUT_MS = 15_000;
 export const START_TIMEOUT_MS = 10_000;
 /** Panjang maksimum satu baris log child yang diteruskan; sisanya dibuang sampai newline berikutnya. */
 export const MAX_LINE_LENGTH = 16_384;
+/** Jeda minimum sejak child yang sempat berjalan keluar (stop maupun crash) sampai start berikutnya diizinkan. */
+export const RESTART_COOLDOWN_MS = 10_000;
 
 export const WORKER_STATES = Object.freeze(['stopped', 'starting', 'running', 'stopping', 'crashed', 'external']);
 
@@ -28,26 +34,68 @@ const ERRORS = Object.freeze({
   WORKER_STOPPING: [409, 'Scanner sedang dihentikan. Tunggu sampai berhenti.'],
   WORKER_EXTERNAL: [409, 'Worker lain sudah berjalan di luar website (mis. npm run worker di terminal). Hentikan dari terminal tersebut.'],
   WORKER_NOT_RUNNING: [409, 'Scanner tidak sedang berjalan.'],
+  WORKER_COOLDOWN: [429, 'Scanner baru saja berhenti. Tunggu beberapa detik lalu coba lagi.'],
   WORKER_SHUTTING_DOWN: [503, 'Server sedang berhenti.'],
   WORKER_SPAWN_FAILED: [500, 'Scanner gagal dijalankan. Periksa log server.'],
 });
 
 export class WorkerSupervisorError extends Error {
-  /** @param {keyof typeof ERRORS} code */
-  constructor(code) {
+  /**
+   * @param {keyof typeof ERRORS} code
+   * @param {{ retryAfterMs?: number }} [options] retryAfterMs: sisa jeda (WORKER_COOLDOWN), untuk header Retry-After
+   */
+  constructor(code, { retryAfterMs } = {}) {
     const [statusCode, message] = ERRORS[code];
     super(message);
     this.name = 'WorkerSupervisorError';
     this.code = code;
     this.statusCode = statusCode;
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
   }
+}
+
+/**
+ * Huruf state proses dari /proc/<pid>/stat (Linux), mis. 'R', 'S', 'Z' (zombie); null bila tidak tersedia
+ * (bukan Linux, proses sudah hilang). Nama proses di dalam kurung dapat memuat spasi/kurung, jadi state dibaca
+ * setelah ')' terakhir.
+ * @param {number} pid bilangan bulat > 0 (sudah divalidasi pemanggil)
+ */
+function procState(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return stat.slice(stat.lastIndexOf(')') + 2).charAt(0) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * true bila proses dengan `pid` masih hidup di host ini. kill(pid, 0): ESRCH → tidak ada; EPERM → ada (milik
+ * pengguna lain); error lain → dianggap ada (aman: worker kedua tidak dijalankan). Di Linux, proses zombie
+ * ('Z'/'X' di /proc — sudah keluar tetapi belum di-reap, mis. induknya ikut dibunuh) dianggap mati, karena
+ * kill(pid, 0) masih berhasil untuknya. pid ≤ 0 tidak pernah dikirimi sinyal (kill(0)/kill(-n) menyasar grup proses).
+ * @param {number} pid
+ * @param {{ readState?: (pid: number) => string|null }} [options] readState: injeksi untuk tes (default /proc)
+ */
+export function isProcessAlive(pid, { readState = procState } = {}) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+  } catch (err) {
+    return err?.code !== 'ESRCH';
+  }
+  const st = readState(pid);
+  return st !== 'Z' && st !== 'X';
 }
 
 const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {} });
 const TRUNCATED_MARK = ' …[dipotong]';
-// Karakter kontrol (kecuali tab) dibuang agar output child tidak dapat menyisipkan escape terminal.
+// Karakter kontrol dibuang agar output child (yang dapat memuat teks dari Binance, mis. `msg` error HTTP) tidak
+// dapat menyisipkan escape terminal: C0 kecuali tab, DEL, dan C1 U+0080–U+009F (CSI U+009B, OSC U+009D, ST U+009C
+// dijalankan terminal xterm/VTE dalam UTF-8). Kontrol arah bidi (U+061C, U+200E/F, U+202A–E, U+2066–9) juga dibuang
+// agar baris log tidak dapat disamarkan (Trojan Source).
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
+const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 /**
  * Pemecah stream teks menjadi baris. Baris yang melebihi `maxLength` diteruskan terpotong (+ penanda) dan
@@ -105,6 +153,9 @@ export function createLineForwarder(write, maxLength = MAX_LINE_LENGTH) {
  *   readExternalHeartbeat?: () => Promise<null|{ at: number, state: unknown }>,
  *   output?: (line: string) => void,
  *   maxLineLength?: number,
+ *   restartCooldownMs?: number,
+ *   isPidAlive?: (pid: number) => boolean,
+ *   hostname?: string,
  *   setTimer?: (fn: Function, ms: number) => unknown,
  *   clearTimer?: (id: unknown) => void,
  * }} [options]
@@ -112,6 +163,9 @@ export function createLineForwarder(write, maxLength = MAX_LINE_LENGTH) {
  *   WORKER_SCRIPT_PATH; hanya kode (tes/E2E) yang boleh menggantinya, tidak pernah env atau request.
  *   readExternalHeartbeat: heartbeat worker dari database (repos.ingestion) untuk deteksi worker di luar website.
  *   output: tujuan baris stdout/stderr child (default stdout server).
+ *   restartCooldownMs: jeda start ulang (default RESTART_COOLDOWN_MS; 0 = tanpa jeda, hanya untuk tes/E2E).
+ *   isPidAlive / hostname: memeriksa `state.owner` heartbeat ({ pid, host } yang ditulis worker/index.js); heartbeat
+ *   segar dari pid yang sudah tidak hidup di host ini (worker mati tanpa heartbeat akhir) bukan worker luar.
  */
 export function createWorkerSupervisor({
   fork = nodeFork,
@@ -124,6 +178,9 @@ export function createWorkerSupervisor({
   readExternalHeartbeat = async () => null,
   output = (line) => process.stdout.write(`${line}\n`),
   maxLineLength = MAX_LINE_LENGTH,
+  restartCooldownMs = RESTART_COOLDOWN_MS,
+  isPidAlive = isProcessAlive,
+  hostname = osHostname(),
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 } = {}) {
@@ -132,6 +189,8 @@ export function createWorkerSupervisor({
   for (const [name, value] of [['stopTimeoutMs', stopTimeoutMs], ['startTimeoutMs', startTimeoutMs]]) {
     if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} harus bilangan bulat ≥ 1`);
   }
+  if (!Number.isSafeInteger(restartCooldownMs) || restartCooldownMs < 0) throw new RangeError('restartCooldownMs harus bilangan bulat ≥ 0');
+  if (typeof isPidAlive !== 'function') throw new TypeError('isPidAlive wajib berupa fungsi');
   // Snapshot env saat dibuat: perubahan process.env sesudahnya (atau dari request) tidak mencapai child.
   const childEnv = Object.freeze({ ...env });
 
@@ -145,6 +204,8 @@ export function createWorkerSupervisor({
   // Waktu child terakhir milik server ini keluar: heartbeat yang ditulis SEBELUM waktu ini berasal dari child
   // tersebut (mis. dibunuh sebelum heartbeat akhir), bukan dari worker lain.
   let lastExitAt = null;
+  // Awal jeda start ulang: waktu keluar child yang sempat berjalan (spawn gagal tidak menghubungi Binance).
+  let cooldownFrom = null;
   let startPromise = null;
   let stopPromise = null;
   let stopResolvers = [];
@@ -165,8 +226,18 @@ export function createWorkerSupervisor({
     }
     if (!isHeartbeatLive(beat, clock())) return null;
     if (lastExitAt !== null && beat.at <= lastExitAt) return null;
+    // Heartbeat segar dari worker yang sudah mati (SIGKILL, OOM, terminal ditutup) sebelum heartbeat akhir —
+    // misalnya child server sebelumnya, yang tidak dikenali lagi setelah server restart karena lastExitAt hanya
+    // di memori. Hanya pid di host yang sama yang dapat diperiksa; selain itu tetap dianggap worker luar (aman).
+    const owner = beat.state !== null && typeof beat.state === 'object' ? beat.state.owner : null;
+    if (owner && typeof owner === 'object' && owner.host === hostname && Number.isSafeInteger(owner.pid) && owner.pid > 0
+      && !isPidAlive(owner.pid)) {
+      return null;
+    }
     return beat;
   }
+
+  const cooldownRemaining = () => (cooldownFrom === null ? 0 : Math.max(0, cooldownFrom + restartCooldownMs - clock()));
 
   function pipe(stream) {
     if (!stream) return;
@@ -194,6 +265,7 @@ export function createWorkerSupervisor({
     const requested = state === 'stopping';
     stoppedAt = clock();
     lastExitAt = stoppedAt;
+    if (startedAt !== null) cooldownFrom = stoppedAt;
     exitCode = typeof code === 'number' ? code : null;
     exitSignal = typeof signal === 'string' ? signal : null;
     // Keluar sendiri dengan kode 0 (mis. Ctrl+C di terminal npm start juga mengirim SIGINT ke child) = berhenti normal.
@@ -309,6 +381,8 @@ export function createWorkerSupervisor({
       if (closed) return Promise.reject(new WorkerSupervisorError('WORKER_SHUTTING_DOWN'));
       if (state === 'starting' || state === 'running') return Promise.reject(new WorkerSupervisorError('WORKER_ALREADY_RUNNING'));
       if (state === 'stopping') return Promise.reject(new WorkerSupervisorError('WORKER_STOPPING'));
+      const wait = cooldownRemaining();
+      if (wait > 0) return Promise.reject(new WorkerSupervisorError('WORKER_COOLDOWN', { retryAfterMs: wait }));
       const previous = state;
       // Klaim sinkron sebelum await pertama: start() kedua yang datang bersamaan langsung ditolak (satu instance).
       state = 'starting';

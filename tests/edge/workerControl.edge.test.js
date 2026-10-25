@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { RESTART_COOLDOWN_MS } from '../../backend/system/workerSupervisor.js';
 import { HEARTBEAT_STALE_MS } from '../../backend/system/workerStatus.js';
 import { createFakeFork, flush } from '../helpers/fakeFork.js';
 import { login } from '../helpers/testApp.js';
@@ -26,6 +27,8 @@ describe('kontrol scanner dari website — kasus tepi', () => {
     ctx.fork.last().exit(1);
     await flush();
     expect((await getWorker(ctx.app, auth)).json()).toMatchObject({ state: 'crashed', exitCode: 1, signal: null });
+    // Start ulang menunggu jeda RESTART_COOLDOWN_MS (NEG-SUP-010); heartbeat child lama masih segar (< 90 detik).
+    ctx.clock.advance(RESTART_COOLDOWN_MS);
     const res = await postWorker(ctx.app, 'start', auth);
     expect(res.statusCode).toBe(200);
     expect(ctx.fork.calls).toHaveLength(2);

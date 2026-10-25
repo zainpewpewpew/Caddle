@@ -1,7 +1,7 @@
 // Server khusus E2E: database sementara + dua pengguna uji. Tidak pernah dipakai di produksi.
 // E2E_SEED_SIGNALS=1 mengisi sinyal dari pipeline asli atas candle SINTETIS (tests/fixtures/candles).
 // Tombol scanner aktif (WORKER_CONTROL) tetapi menjalankan worker TIRUAN (tests/fixtures/worker-stub.js):
-// E2E tidak pernah menghubungi Binance.
+// E2E tidak pernah menghubungi Binance. Env WORKER_STUB_* (mis. WORKER_STUB_EXIT_CODE) diwariskan ke worker tiruan.
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,7 +23,9 @@ const config = loadConfig({
 });
 const db = openDatabase(dbPath);
 const workerScriptPath = fileURLToPath(new URL('../fixtures/worker-stub.js', import.meta.url));
-const app = await buildApp({ config, db, workerScriptPath });
+// Jeda start ulang 0 khusus E2E: tes desktop & mobile berbagi satu server dan menjalankan/menghentikan scanner
+// berturut-turut. Jeda 10 detik produksi diuji di tests/unit (UNIT-SUP-027) dan tests/negative (NEG-SUP-010).
+const app = await buildApp({ config, db, workerScriptPath, workerRestartCooldownMs: 0 });
 const { repos, hasher } = app.services;
 for (const user of Object.values(E2E_USERS)) {
   await createUser({ users: repos.users, audit: repos.audit, hasher, maxUsers: config.maxUsers, clock: Date.now }, user);

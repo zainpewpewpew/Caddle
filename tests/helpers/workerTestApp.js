@@ -5,10 +5,11 @@ import { createFakeFork, createManualTimers } from './fakeFork.js';
 import { TEST_ORIGIN, createTestApp } from './testApp.js';
 
 /**
- * @param {{ env?: object, fork?: Function, clock?: Function }} [options]
+ * @param {{ env?: object, fork?: Function, clock?: Function, supervisorOptions?: object }} [options]
+ *   supervisorOptions: opsi tambahan createWorkerSupervisor (mis. readExternalHeartbeat yang gagal, isPidAlive tiruan).
  * @returns {Promise<{ app, db, config, clock, fork, timers, lines: string[] }>}
  */
-export async function createWorkerTestApp({ env = {}, fork = createFakeFork({ gracefulExit: true }), ...rest } = {}) {
+export async function createWorkerTestApp({ env = {}, fork = createFakeFork({ gracefulExit: true }), supervisorOptions = {}, ...rest } = {}) {
   const timers = createManualTimers();
   const lines = [];
   const ctx = await createTestApp({
@@ -31,6 +32,7 @@ export async function createWorkerTestApp({ env = {}, fork = createFakeFork({ gr
           readExternalHeartbeat: readHeartbeat,
           setTimer: timers.setTimer,
           clearTimer: timers.clearTimer,
+          ...supervisorOptions,
         }),
       };
     },

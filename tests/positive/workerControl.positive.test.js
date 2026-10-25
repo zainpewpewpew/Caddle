@@ -86,4 +86,30 @@ describe('kontrol scanner dari website — alur positif', () => {
     expect(child.signals).toEqual(['SIGTERM']);
     expect(exited).toBe(true);
   });
+
+  it('POS-SUP-007 server restart setelah worker miliknya mati tanpa heartbeat akhir (pid di heartbeat sudah tidak hidup) → state stopped, WORKER_AUTOSTART tetap menjalankan worker', async () => {
+    const DEAD = 4_242;
+    ctx = await createWorkerTestApp({
+      env: { WORKER_AUTOSTART: 'true' },
+      supervisorOptions: { hostname: 'host-a', isPidAlive: (pid) => pid !== DEAD },
+    });
+    // Heartbeat "degraded" 10 detik lalu dari worker yang mati karena SIGHUP/SIGKILL (tanpa heartbeat 'stopped').
+    await ctx.app.services.repos.ingestion.heartbeat({
+      at: ctx.clock() - 10_000, state: { state: 'degraded', owner: { pid: DEAD, host: 'host-a' } },
+    });
+    await ctx.app.ready();
+    expect(ctx.fork.calls).toHaveLength(1);
+    const auth = await login(ctx.app);
+    expect((await getWorker(ctx.app, auth)).json().state).toBe('running');
+    const [audit] = await workerAudit(ctx.app);
+    expect(audit).toMatchObject({ action: 'worker.start', outcome: 'success', detail: { via: 'autostart', state: 'running' } });
+  });
+
+  it('POS-SUP-008 heartbeat segar dari pid yang sudah mati → GET stopped dan admin dapat menjalankan scanner (bukan 409 WORKER_EXTERNAL)', async () => {
+    ctx = await createWorkerTestApp({ supervisorOptions: { hostname: 'host-a', isPidAlive: () => false } });
+    await ctx.app.services.repos.ingestion.heartbeat({ at: ctx.clock() - 5_000, state: { state: 'running', owner: { pid: 999_999, host: 'host-a' } } });
+    const auth = await login(ctx.app);
+    expect((await getWorker(ctx.app, auth)).json().state).toBe('stopped');
+    expect((await postWorker(ctx.app, 'start', auth)).statusCode).toBe(200);
+  });
 });

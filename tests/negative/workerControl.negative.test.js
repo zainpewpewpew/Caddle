@@ -107,4 +107,24 @@ describe('kontrol scanner dari website — alur negatif', () => {
     expect(audit).toMatchObject({ action: 'worker.start', outcome: 'failure', user_id: null, detail: { via: 'autostart', reason: 'WORKER_EXTERNAL' } });
     expect((await ctx.app.inject({ url: '/api/health' })).statusCode).toBe(200);
   });
+
+  it('NEG-SUP-010 start ulang segera setelah stop → 429 WORKER_COOLDOWN + Retry-After, tanpa fork, audit failure; setelah 10 detik → 200', async () => {
+    ctx = await createWorkerTestApp();
+    const auth = await login(ctx.app);
+    expect((await postWorker(ctx.app, 'start', auth)).statusCode).toBe(200);
+    expect((await postWorker(ctx.app, 'stop', auth)).statusCode).toBe(200);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect((await getWorker(ctx.app, auth)).json().state).toBe('stopped');
+    ctx.clock.advance(2_500);
+    const res = await postWorker(ctx.app, 'start', auth);
+    expect(res.statusCode).toBe(429);
+    expect(res.json()).toEqual({ error: 'WORKER_COOLDOWN', message: expect.stringMatching(/Tunggu/) });
+    expect(res.headers['retry-after']).toBe('8');
+    expect(ctx.fork.calls).toHaveLength(1);
+    const [audit] = await workerAudit(ctx.app);
+    expect(audit).toMatchObject({ action: 'worker.start', outcome: 'failure', detail: { reason: 'WORKER_COOLDOWN' } });
+    ctx.clock.advance(7_500);
+    expect((await postWorker(ctx.app, 'start', auth)).statusCode).toBe(200);
+    expect(ctx.fork.calls).toHaveLength(2);
+  });
 });

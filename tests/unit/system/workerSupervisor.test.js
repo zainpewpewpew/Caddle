@@ -2,14 +2,15 @@ import { isAbsolute } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HEARTBEAT_STALE_MS } from '../../../backend/system/workerStatus.js';
 import {
-  MAX_LINE_LENGTH, STOP_TIMEOUT_MS, WORKER_SCRIPT_PATH, WorkerSupervisorError, createLineForwarder, createWorkerSupervisor,
+  MAX_LINE_LENGTH, RESTART_COOLDOWN_MS, STOP_TIMEOUT_MS, WORKER_SCRIPT_PATH, WorkerSupervisorError, createLineForwarder,
+  createWorkerSupervisor, isProcessAlive,
 } from '../../../backend/system/workerSupervisor.js';
 import { createFakeFork, createManualTimers, flush } from '../../helpers/fakeFork.js';
 import { createClock } from '../../helpers/testApp.js';
 
 const SCRIPT = '/opt/alphalens/worker/index.js';
 
-function setup({ heartbeat = null, fork = createFakeFork(), stopTimeoutMs = 15_000, startTimeoutMs = 10_000, env = { DATABASE_PATH: '/tmp/x.db' }, maxLineLength } = {}) {
+function setup({ heartbeat = null, fork = createFakeFork(), stopTimeoutMs = 15_000, startTimeoutMs = 10_000, env = { DATABASE_PATH: '/tmp/x.db' }, maxLineLength, ...extra } = {}) {
   const clock = createClock();
   const timers = createManualTimers();
   const lines = [];
@@ -21,6 +22,7 @@ function setup({ heartbeat = null, fork = createFakeFork(), stopTimeoutMs = 15_0
     readExternalHeartbeat: async () => (typeof state.heartbeat === 'function' ? state.heartbeat() : state.heartbeat),
     output: (line) => lines.push(line),
     setTimer: timers.setTimer, clearTimer: timers.clearTimer,
+    ...extra,
   });
   return { supervisor, fork, clock, timers, lines, logs, state };
 }
@@ -122,13 +124,14 @@ describe('supervisor worker — transisi state', () => {
     ['kode keluar 1', 1, null, 'crashed'],
     ['sinyal SIGSEGV', null, 'SIGSEGV', 'crashed'],
     ['keluar sendiri kode 0 (mis. Ctrl+C di terminal npm start)', 0, null, 'stopped'],
-  ])('UNIT-SUP-008 child keluar tanpa diminta (%s) → %s; start ulang diizinkan', async (_label, code, signal, expected) => {
-    const { supervisor, fork, logs } = setup();
+  ])('UNIT-SUP-008 child keluar tanpa diminta (%s) → %s; start ulang diizinkan setelah jeda', async (_label, code, signal, expected) => {
+    const { supervisor, fork, logs, clock } = setup();
     await supervisor.start();
     fork.last().exit(code, signal);
     const status = await supervisor.status();
     expect(status).toMatchObject({ state: expected, exitCode: code, signal });
     if (expected === 'crashed') expect(logs.some((l) => l.level === 'error' && /tak terduga/.test(l.msg))).toBe(true);
+    clock.advance(RESTART_COOLDOWN_MS);
     expect((await supervisor.start()).state).toBe('running');
     expect(fork.calls).toHaveLength(2);
     expect((await supervisor.status()).exitCode).toBeNull();
@@ -167,6 +170,7 @@ describe('supervisor worker — worker di luar website', () => {
     ctx.clock.advance(1_000);
     ctx.fork.last().exit(null, 'SIGKILL');
     expect((await ctx.supervisor.status()).state).toBe('crashed');
+    ctx.clock.advance(RESTART_COOLDOWN_MS);
     expect((await ctx.supervisor.start()).state).toBe('running');
   });
 
@@ -174,7 +178,7 @@ describe('supervisor worker — worker di luar website', () => {
     const ctx = setup({ fork: createFakeFork({ gracefulExit: true }) });
     await ctx.supervisor.start();
     await ctx.supervisor.stop();
-    ctx.clock.advance(2_000);
+    ctx.clock.advance(RESTART_COOLDOWN_MS);
     ctx.state.heartbeat = { at: ctx.clock(), state: { state: 'starting' } };
     expect((await ctx.supervisor.status()).state).toBe('external');
     await expectCode(ctx.supervisor.start(), 'WORKER_EXTERNAL', 409);
@@ -355,5 +359,146 @@ describe('supervisor worker — log child', () => {
     expect(out[4]).toBe('sesudah');
     expect(out).toHaveLength(5);
     expect(() => createLineForwarder(() => {}, 0)).toThrow(RangeError);
+  });
+});
+
+describe('supervisor worker — jeda start ulang (temuan review)', () => {
+  it('UNIT-SUP-027 child yang sudah berjalan lalu keluar (stop maupun crash) → start ulang < 10 detik ditolak 429 WORKER_COOLDOWN; tepat 10 detik diizinkan', async () => {
+    expect(RESTART_COOLDOWN_MS).toBe(10_000);
+    const { supervisor, fork, clock } = setup({ fork: createFakeFork({ gracefulExit: true }) });
+    await supervisor.start();
+    await supervisor.stop();
+    clock.advance(RESTART_COOLDOWN_MS - 1);
+    const err = await supervisor.start().then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(WorkerSupervisorError);
+    expect(err).toMatchObject({ code: 'WORKER_COOLDOWN', statusCode: 429, retryAfterMs: 1 });
+    expect(err.message).toMatch(/Tunggu/);
+    // Penolakan tidak meninggalkan state 'starting'.
+    expect((await supervisor.status()).state).toBe('stopped');
+    expect(fork.calls).toHaveLength(1);
+    clock.advance(1);
+    expect((await supervisor.start()).state).toBe('running');
+
+    // Crash juga memicu jeda (restart loop lewat crash tetap dibatasi).
+    fork.last().exit(1, null);
+    await expectCode(supervisor.start(), 'WORKER_COOLDOWN', 429);
+    clock.advance(RESTART_COOLDOWN_MS);
+    expect((await supervisor.start()).state).toBe('running');
+    expect(fork.calls).toHaveLength(3);
+  });
+
+  it('UNIT-SUP-028 spawn gagal (child tidak pernah berjalan) tidak memicu jeda; restartCooldownMs: 0 menonaktifkan jeda; nilai tidak valid ditolak', async () => {
+    const fork = createFakeFork({ autoSpawn: false });
+    const { supervisor } = setup({ fork });
+    const started = supervisor.start();
+    await flush();
+    fork.last().exit(1, null);
+    await expectCode(started, 'WORKER_SPAWN_FAILED', 500);
+    const again = supervisor.start();
+    await flush();
+    fork.last().emit('spawn');
+    expect((await again).state).toBe('running');
+
+    const nocool = setup({ fork: createFakeFork({ gracefulExit: true }), restartCooldownMs: 0 });
+    await nocool.supervisor.start();
+    await nocool.supervisor.stop();
+    expect((await nocool.supervisor.start()).state).toBe('running');
+
+    for (const restartCooldownMs of [-1, 1.5, '10000', Number.NaN]) {
+      expect(() => createWorkerSupervisor({ scriptPath: SCRIPT, restartCooldownMs })).toThrow(RangeError);
+    }
+  });
+});
+
+describe('supervisor worker — heartbeat milik worker yang sudah mati (temuan review)', () => {
+  const HOST = 'host-alphalens';
+  const beat = (clock, owner) => ({ at: clock() - 10_000, state: { state: 'degraded', owner } });
+
+  it('UNIT-SUP-029 heartbeat segar dengan owner.pid yang tidak hidup lagi (host sama) → bukan external; start diizinkan', async () => {
+    const alive = new Set();
+    const checked = [];
+    const ctx = setup({ hostname: HOST, isPidAlive: (pid) => { checked.push(pid); return alive.has(pid); } });
+    ctx.state.heartbeat = beat(ctx.clock, { pid: 4242, host: HOST });
+    expect((await ctx.supervisor.status()).state).toBe('stopped');
+    expect(checked).toEqual([4242]);
+    // Proses dengan pid itu masih hidup → tetap dianggap worker di luar website.
+    alive.add(4242);
+    expect((await ctx.supervisor.status()).state).toBe('external');
+    await expectCode(ctx.supervisor.start(), 'WORKER_EXTERNAL', 409);
+    alive.delete(4242);
+    expect((await ctx.supervisor.start()).state).toBe('running');
+    expect(ctx.fork.calls).toHaveLength(1);
+  });
+
+  it.each([
+    ['host lain (pid tidak dapat diperiksa dari sini)', { pid: 4242, host: 'host-lain' }],
+    ['tanpa owner (worker versi lama / heartbeat manual)', undefined],
+    ['pid 0 (grup proses)', { pid: 0, host: HOST }],
+    ['pid negatif', { pid: -1, host: HOST }],
+    ['pid bukan bilangan bulat', { pid: 42.5, host: HOST }],
+    ['pid berupa string', { pid: '4242', host: HOST }],
+  ])('UNIT-SUP-030 %s → pid tidak diperiksa, tetap external (aman: tidak menjalankan worker kedua)', async (_label, owner) => {
+    const checked = [];
+    const ctx = setup({ hostname: HOST, isPidAlive: (pid) => { checked.push(pid); return false; } });
+    ctx.state.heartbeat = beat(ctx.clock, owner);
+    expect((await ctx.supervisor.status()).state).toBe('external');
+    expect(checked).toEqual([]);
+  });
+
+  it('UNIT-SUP-031 isProcessAlive: proses sendiri hidup; ESRCH → mati; EPERM (milik pengguna lain) → hidup; pid ≤ 0 tidak pernah dikirimi sinyal', () => {
+    expect(isProcessAlive(process.pid)).toBe(true);
+    const kill = process.kill;
+    const calls = [];
+    try {
+      process.kill = (pid, signal) => {
+        calls.push([pid, signal]);
+        throw Object.assign(new Error('x'), { code: pid === 7 ? 'ESRCH' : 'EPERM' });
+      };
+      expect(isProcessAlive(7)).toBe(false);
+      expect(isProcessAlive(8)).toBe(true);
+      expect(isProcessAlive(0)).toBe(false);
+      expect(isProcessAlive(-1)).toBe(false);
+    } finally {
+      process.kill = kill;
+    }
+    expect(calls).toEqual([[7, 0], [8, 0]]);
+  });
+
+  it.each([
+    ['zombie (Z: sudah keluar, belum di-reap — mis. induknya ikut dibunuh)', false, 'Z'],
+    ['dead (X)', false, 'X'],
+    ['sleeping (S)', true, 'S'],
+    ['running (R)', true, 'R'],
+    ['/proc tidak tersedia (bukan Linux)', true, null],
+  ])('UNIT-SUP-033 isProcessAlive: kill(pid, 0) berhasil + state /proc %s → hidup = %s', (_label, expected, st) => {
+    const kill = process.kill;
+    const read = [];
+    try {
+      process.kill = () => true;
+      expect(isProcessAlive(4242, { readState: (pid) => { read.push(pid); return st; } })).toBe(expected);
+    } finally {
+      process.kill = kill;
+    }
+    expect(read).toEqual([4242]);
+  });
+});
+
+describe('supervisor worker — sanitasi log child (temuan review)', () => {
+  it('UNIT-SUP-032 kontrol C1 (CSI U+009B, ST U+009C, OSC U+009D, …) dan kontrol bidi dibuang; tab, teks non-ASCII biasa, dan penanda potong tetap', () => {
+    const out = [];
+    const fwd = createLineForwarder((l) => out.push(l), 200);
+    fwd.push(`${JSON.stringify({ msg: 'sym\u009b2J\u009d0;pwned\u0007x‮' })}\n`);
+    fwd.push('a\u0080b\u0085c\u009fd؜e‎f‏g‪h⁦i⁩j\tk\n');
+    fwd.push('Rp 1.000 — «harga» é ✓\n');
+    fwd.push(`${'q'.repeat(250)}\n`);
+    const codePoints = (l) => [...l].map((c) => c.codePointAt(0));
+    for (const line of out) {
+      expect(codePoints(line).some((cp) => (cp >= 0x80 && cp <= 0x9f) || cp === 0x061c || cp === 0x200e || cp === 0x200f
+        || (cp >= 0x202a && cp <= 0x202e) || (cp >= 0x2066 && cp <= 0x2069))).toBe(false);
+    }
+    expect(out[0]).toBe('{"msg":"sym2J0;pwned\\u0007x"}');
+    expect(out[1]).toBe('abcdefghij\tk');
+    expect(out[2]).toBe('Rp 1.000 — «harga» é ✓');
+    expect(out[3]).toBe(`${'q'.repeat(200)} …[dipotong]`);
   });
 });

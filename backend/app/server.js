@@ -69,6 +69,8 @@ async function main() {
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+  // Menutup jendela terminal `npm start` mengirim SIGHUP: hentikan worker dengan graceful seperti Ctrl+C.
+  process.on('SIGHUP', shutdown);
 
   await app.listen({ host: config.host, port: config.port });
 }

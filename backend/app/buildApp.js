@@ -27,11 +27,15 @@ const SESSION_PURGE_INTERVAL_MS = 15 * 60_000;
  * Merakit aplikasi Fastify. Seluruh dependensi diinjeksi agar dapat diuji tanpa jaringan.
  * @param {{ config: ReturnType<import('./config.js').loadConfig>, db: import('better-sqlite3').Database,
  *           clock?: () => number, hasherOptions?: object, logger?: any,
- *           workerSupervisor?: ReturnType<typeof createWorkerSupervisor>, workerScriptPath?: string }} options
- *   workerSupervisor / workerScriptPath: KHUSUS tes & E2E (supervisor dengan fork tiruan, atau skrip worker
- *   tiruan). Tidak pernah dibaca dari env maupun request; server produksi selalu menjalankan worker/index.js.
+ *           workerSupervisor?: ReturnType<typeof createWorkerSupervisor>, workerScriptPath?: string,
+ *           workerRestartCooldownMs?: number }} options
+ *   workerSupervisor / workerScriptPath / workerRestartCooldownMs: KHUSUS tes & E2E (supervisor dengan fork tiruan,
+ *   skrip worker tiruan, jeda start ulang lebih pendek). Tidak pernah dibaca dari env maupun request; server produksi
+ *   selalu menjalankan worker/index.js dengan jeda RESTART_COOLDOWN_MS.
  */
-export async function buildApp({ config, db, clock = Date.now, hasherOptions, logger, workerSupervisor, workerScriptPath }) {
+export async function buildApp({
+  config, db, clock = Date.now, hasherOptions, logger, workerSupervisor, workerScriptPath, workerRestartCooldownMs,
+}) {
   const app = Fastify({
     logger: logger ?? {
       level: config.logLevel,
@@ -73,6 +77,7 @@ export async function buildApp({ config, db, clock = Date.now, hasherOptions, lo
     logger: app.log.child({ module: 'worker-supervisor' }),
     clock,
     readExternalHeartbeat: async () => (await repos.ingestion.getStatus()).heartbeat,
+    ...(workerRestartCooldownMs !== undefined ? { restartCooldownMs: workerRestartCooldownMs } : {}),
   });
 
   app.decorate('services', { hasher, sessionService, authService, repos, workerSupervisor: supervisor });

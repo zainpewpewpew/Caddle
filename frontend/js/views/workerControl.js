@@ -8,6 +8,12 @@ import { formatUtc } from '../lib/format.js';
 import { canStartWorker, isWorkerTransitional, workerControlLabel, workerControlPill } from './workerFormat.js';
 
 const POLL_MS = 2_000;
+/**
+ * Setelah start berhasil, state 'running' hanya berarti proses sudah di-spawn: worker masih dapat crash sesaat
+ * kemudian (mis. konfigurasi tidak valid). Selama jendela ini UI tetap memantau tiap POLL_MS agar crash tampil
+ * dalam beberapa detik, bukan menunggu auto-refresh halaman.
+ */
+const SETTLE_MS = 10_000;
 
 /** Pesan error yang dapat dipahami pengguna; pesan server (Bahasa Indonesia) dipakai bila ada. */
 export function workerErrorMessage(err) {
@@ -52,6 +58,7 @@ export function workerControlCard({ user, status: initial }) {
   let confirming = false;
   let pollTimer = null;
   let disposed = false;
+  let settleUntil = 0;
 
   const stateEl = h('div', { class: 'worker-control__state', 'aria-live': 'polite', 'data-testid': 'worker-control-state' });
   const descEl = h('p', { class: 'worker-control__desc' });
@@ -110,8 +117,10 @@ export function workerControlCard({ user, status: initial }) {
     if (restoreFocus && !stopBtn.disabled) stopBtn.focus();
   }
 
+  const settling = () => status?.state === 'running' && Date.now() < settleUntil;
+
   function schedulePoll() {
-    if (disposed || pollTimer !== null || !isWorkerTransitional(status)) return;
+    if (disposed || pollTimer !== null || !(isWorkerTransitional(status) || settling())) return;
     pollTimer = setTimeout(async () => {
       pollTimer = null;
       try {
@@ -136,6 +145,7 @@ export function workerControlCard({ user, status: initial }) {
         confirming = false;
         confirmEl.hidden = true;
       }
+      settleUntil = action === 'start' ? Date.now() + SETTLE_MS : 0;
       toast(action === 'start' ? 'Scanner dijalankan' : 'Scanner sedang dihentikan', 'bull');
     } catch (err) {
       if (disposed) return;
@@ -183,46 +193,116 @@ export function workerControlCard({ user, status: initial }) {
   };
 }
 
+/** Isi pesan callout Overview untuk state supervisor. */
+function calloutMessage(status, isAdmin) {
+  if (canStartWorker(status)) {
+    const crashed = status.state === 'crashed';
+    const parts = [
+      h('strong', null, crashed ? `Scanner berhenti tak terduga — ${workerControlLabel(status).text}.` : 'Scanner belum berjalan.'),
+      ' Data pasar dan sinyal tidak diperbarui.',
+    ];
+    // replaceChildren() mengubah null menjadi teks "null": bagian opsional ditambahkan hanya bila ada.
+    if (!isAdmin) parts.push(' Minta admin menjalankannya dari System Health.');
+    return parts;
+  }
+  switch (status?.state) {
+    case 'running':
+      return [h('strong', null, 'Scanner berjalan.'), ' Data mulai diperbarui setelah discovery & backfill selesai.'];
+    case 'starting':
+      return [h('strong', null, 'Scanner sedang dimulai…')];
+    case 'stopping':
+      return [h('strong', null, 'Scanner sedang dihentikan…'), ' Pantau di System Health.'];
+    case 'external':
+      return [h('strong', null, 'Scanner berjalan di luar website.')];
+    default:
+      return [h('strong', null, 'Status scanner tidak diketahui.'), ' Periksa System Health.'];
+  }
+}
+
 /**
  * Callout ringkas Overview: tampil bila kontrol aktif dan scanner tidak berjalan; tombol hanya untuk admin.
+ * Setelah start berhasil, callout memantau GET /api/system/worker (latar) selama SETTLE_MS: bila worker crash
+ * sesaat setelah dijalankan, pesan crash dan tombol "Jalankan scanner" ditampilkan lagi.
  * @param {{ user: { role: string }, status: object|null }} options
  * @returns {HTMLElement|null}
  */
-export function workerStartCallout({ user, status }) {
-  if (!canStartWorker(status)) return null;
+export function workerStartCallout({ user, status: initial }) {
+  if (!canStartWorker(initial)) return null;
   const isAdmin = user?.role === 'admin';
-  const crashed = status.state === 'crashed';
-  const message = h('p', null,
-    h('strong', null, crashed ? `Scanner berhenti tak terduga — ${workerControlLabel(status).text}.` : 'Scanner belum berjalan.'),
-    ' Data pasar dan sinyal tidak diperbarui.',
-    isAdmin ? null : ' Minta admin menjalankannya dari System Health.');
+  // tabindex -1: fokus keyboard dipindah ke pesan saat tombol yang ditekan hilang (tidak jatuh ke <body>).
+  const message = h('p', { 'aria-live': 'polite', tabindex: '-1', 'data-testid': 'worker-callout-message' });
   const errorEl = h('p', { class: 'field__error', role: 'alert', hidden: true });
   const content = h('div', { class: 'callout__content' }, message, errorEl);
   const el = callout([content], 'warn');
   el.classList.add('callout--action');
   el.dataset.testid = 'worker-callout';
-  if (!isAdmin) return el;
+  let pollTimer = null;
+  let settleUntil = 0;
 
-  const button = h('button', {
+  const button = isAdmin ? h('button', {
     class: 'btn btn--primary btn--sm',
     type: 'button',
-    on: {
-      click: async () => {
-        button.disabled = true;
-        errorEl.hidden = true;
-        try {
-          await api('/api/system/worker/start', { method: 'POST' });
-          message.replaceChildren(h('strong', null, 'Scanner berjalan.'), ' Data mulai diperbarui setelah discovery & backfill selesai.');
-          button.remove();
-          toast('Scanner dijalankan', 'bull');
-        } catch (err) {
-          errorEl.textContent = workerErrorMessage(err);
-          errorEl.hidden = false;
-          button.disabled = false;
-        }
-      },
-    },
-  }, 'Jalankan scanner');
-  el.append(button);
+    on: { click: () => start() },
+  }, 'Jalankan scanner') : null;
+
+  /** Fokus berada di callout (tombol) atau sudah hilang ke <body>. */
+  const focusInCallout = () => {
+    const active = document.activeElement;
+    return !active || active === document.body || el.contains(active);
+  };
+
+  function show(status) {
+    message.replaceChildren(...calloutMessage(status, isAdmin));
+    if (!button) return;
+    if (canStartWorker(status)) {
+      button.disabled = false;
+      if (!button.isConnected) el.append(button);
+    } else if (button.isConnected) {
+      const hadFocus = focusInCallout();
+      button.remove();
+      if (hadFocus) message.focus({ preventScroll: true });
+    }
+  }
+
+  function schedulePoll(status) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+    if (!status || Date.now() >= settleUntil || !(status.state === 'running' || isWorkerTransitional(status))) return;
+    pollTimer = setTimeout(async () => {
+      pollTimer = null;
+      // Overview tidak punya cleanup: berhenti sendiri bila callout sudah tidak ada di halaman.
+      if (!el.isConnected) return;
+      let next = status;
+      try {
+        // Polling otomatis bukan aktivitas pengguna: tidak memperpanjang idle timeout sesi.
+        next = await api('/api/system/worker', { background: true });
+        if (!el.isConnected) return;
+        show(next);
+      } catch {
+        // Coba lagi pada putaran berikutnya selama jendela pemantauan.
+      }
+      schedulePoll(next);
+    }, POLL_MS);
+  }
+
+  async function start() {
+    const hadFocus = focusInCallout();
+    button.disabled = true;
+    errorEl.hidden = true;
+    try {
+      const status = await api('/api/system/worker/start', { method: 'POST' });
+      toast('Scanner dijalankan', 'bull');
+      show(status);
+      settleUntil = Date.now() + SETTLE_MS;
+      schedulePoll(status);
+    } catch (err) {
+      errorEl.textContent = workerErrorMessage(err);
+      errorEl.hidden = false;
+      button.disabled = false;
+      if (hadFocus && !el.contains(document.activeElement)) button.focus({ preventScroll: true });
+    }
+  }
+
+  show(initial);
   return el;
 }

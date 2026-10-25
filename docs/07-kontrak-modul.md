@@ -109,7 +109,7 @@ upsertFromExchange(...) → Promise<{ inserted, updated, rejectedCount, rejected
 createIngestionStateRepository(db, { errorRetention }) → {
   recordRun({ startedAt, finishedAt, symbols, candles, errors }),
   recordError({ at, source, message }),           // pesan dipotong ≤ 500 karakter
-  heartbeat({ at, state }),                       // state = snapshot scanner.status() lengkap
+  heartbeat({ at, state }),                       // state = snapshot scanner.status() lengkap (+ owner bila diset)
   getStatus(): { lastRun, recentErrors, heartbeat: { at, state } | null },
 }
 ```
@@ -155,8 +155,11 @@ createServerClock({ getServerTime, clock = Date.now, logger, maxOffsetMs = 600_0
   // sampel), closureNow() = jam lokal + offset terakhir (awal 0).
 
 createScanner({ rest, streamFactory, repos, getSettings, onClosedCandles, onMonitoringStopped?, listOpenSeries?, discoverSymbols,
-  clock, localClock? = clock, closureClock? = clock, logger, setTimer, clearTimer, options /* SCANNER_DEFAULTS */, serverClock? })
+  clock, localClock? = clock, closureClock? = clock, logger, setTimer, clearTimer, options /* SCANNER_DEFAULTS */, serverClock?,
+  heartbeatOwner? = null /* { pid: int > 0, host: string } */ })
   → { start(), stop(), status(), liquidityOf(symbol) }
+  // heartbeatOwner: disimpan sebagai state.owner di SETIAP heartbeat (tidak di status()); dipakai supervisor worker
+  // (§11) untuk mengenali heartbeat segar dari proses yang sudah mati. Nilai lain → TypeError.
   // clock = waktu server (worker: serverClock.now) untuk staleStreams, candleLagMs, awal bootstrap stream (liveFrom),
   // serta stempel simbol & penutupan sinyal (`at`). closureClock (worker: serverClock.closureNow) − closeMarginMs = acuan
   // rencana REST (bootstrap/backfill, gap, repair) dan staleness sweep (closureClock() − max(grace, closeMarginMs)).
@@ -207,12 +210,12 @@ Perilaku scanner yang mengikat:
 - **Discovery 0 simbol:** bila discovery memilih 0 simbol padahal set pantauan sebelumnya (memori, atau daftar DB di siklus pertama) tidak kosong, hasilnya dianggap **anomali** bila data tidak menjelaskannya: exchangeInfo kosong; mode auto dengan ticker 24 jam / book ticker kosong; atau ada simbol lama yang masih `TRADING` tanpa alasan tolak atau hanya `NO_TICKER`. Anomali diperlakukan seperti discovery gagal (error sumber `'discovery'`, coba ulang setelah `min(rediscoveryMs, discoveryRetryMs × 2^(gagal−1))`, data likuiditas terakhir tetap, tanpa rekonsiliasi); set pantauan dipertahankan, kecuali simbol lama yang menurut exchangeInfo (tidak kosong) tidak lagi `TRADING` atau tidak tercantum — simbol itu tetap dilepas (`markDelisted`, `SYMBOL_DELISTED`). 0 simbol yang dijelaskan (simbol lama delisted, atau ditolak filter pengaturan yang sah, mis. `NOT_IN_MANUAL_LIST`, `LOW_VOLUME`, `WIDE_SPREAD`) diterapkan seperti discovery biasa.
 - **Throttle error:** setiap error dihitung (`errors`), tetapi ditulis ke `ingestion_errors` maksimal sekali per `source|pesan` per `errorThrottleMs` (60 detik); pesan memuat simbol & timeframe, sehingga error yang sama di seri lain tetap tercatat.
 
-Entry point `worker/index.js` (`npm run worker`) membuka SQLite + migrasi, lalu merakit dependensi lewat `worker/assemble.js`; heartbeat ditulis tiap 30 detik (memuat `clockOffsetMs` dan `clockFault`; `at` = jam lokal); `SIGINT`/`SIGTERM` → graceful shutdown.
+Entry point `worker/index.js` (`npm run worker`) membuka SQLite + migrasi, lalu merakit dependensi lewat `worker/assemble.js`; heartbeat ditulis tiap 30 detik (memuat `clockOffsetMs`, `clockFault`, dan `owner: { pid: process.pid, host: os.hostname() }`; `at` = jam lokal); `SIGINT`/`SIGTERM`/`SIGHUP` (jendela terminal ditutup) → graceful shutdown.
 
 ```text
 assembleWorker({ db, logger, clock = Date.now /* jam lokal */, fetch?, restSleep?, restRandom?, streamFactory?,
   setTimer?, clearTimer?, scannerOptions?, settleMs = WORKER_SETTLE_MS (3000), pipelineSleep?,
-  onAlert?, onAnalysed?, onMonitoringStopped? })
+  onAlert?, onAnalysed?, onMonitoringStopped?, heartbeatOwner? = null /* diteruskan ke createScanner */ })
   → { serverClock, repos, rest, pipeline, scanner, getSettings }
   // Tanpa efek samping (tidak membuka DB, tidak memasang handler sinyal, tidak memulai timer/jaringan).
   // Merakit jam server, klien REST, repositori, pipeline analisis, dan scanner (onMonitoringStopped →
@@ -466,25 +469,38 @@ Tujuan: cukup `npm start`, lalu admin menekan **Jalankan scanner** di System Hea
 
 ```
 WORKER_SCRIPT_PATH = <repo>/worker/index.js   // path absolut tetap di kode
-STOP_TIMEOUT_MS = 15_000   START_TIMEOUT_MS = 10_000   MAX_LINE_LENGTH = 16_384
+STOP_TIMEOUT_MS = 15_000   START_TIMEOUT_MS = 10_000   MAX_LINE_LENGTH = 16_384   RESTART_COOLDOWN_MS = 10_000
 WORKER_STATES = ['stopped', 'starting', 'running', 'stopping', 'crashed', 'external']
 
 createWorkerSupervisor({ fork = child_process.fork, scriptPath = WORKER_SCRIPT_PATH /* wajib absolut */,
   env = process.env /* disnapshot saat dibuat */, logger, clock = Date.now, stopTimeoutMs, startTimeoutMs,
   readExternalHeartbeat = async () => null /* { at, state } | null */, output = baris → stdout server,
-  maxLineLength, setTimer, clearTimer })
+  maxLineLength, restartCooldownMs = RESTART_COOLDOWN_MS /* int ≥ 0; 0 hanya tes/E2E */,
+  isPidAlive = isProcessAlive, hostname = os.hostname(), setTimer, clearTimer })
   → {
     status({ heartbeat? }) → Promise<{ state, startedAt, stoppedAt, exitCode, signal }>
       // Tanpa child (stopped/crashed) + heartbeat segar (isHeartbeatLive) yang BUKAN milik child server ini
-      // → state 'external'. Heartbeat dengan at ≤ waktu keluar child terakhir dianggap milik child tsb.
+      // → state 'external'. Bukan worker luar bila: at ≤ waktu keluar child terakhir (milik child tsb), ATAU
+      // state.owner.host === hostname dan owner.pid (int > 0) tidak hidup lagi (isPidAlive) — mis. child server
+      // sebelumnya yang dibunuh (SIGKILL/OOM/SIGHUP) sebelum heartbeat akhir; lastExitAt hanya di memori, jadi
+      // tanpa pid heartbeat itu memblokir start & autostart ≤ 90 detik setelah server restart. Owner tanpa host
+      // yang cocok / pid tidak valid → tidak diperiksa, tetap 'external' (aman). Pid yang dipakai ulang proses
+      // lain → tetap 'external' sampai heartbeat basi.
     start() → Promise<status>          // resolve setelah event 'spawn' (state 'running')
+      // Ditolak WORKER_COOLDOWN (429, err.retryAfterMs) bila child yang SEMPAT berjalan (event spawn) keluar —
+      // stop maupun crash — kurang dari restartCooldownMs lalu. Spawn gagal tidak memicu jeda.
     stop({ wait = true }) → Promise<status>   // SIGTERM; SIGKILL bila belum keluar setelah stopTimeoutMs
     shutdown() → Promise<void>         // tolak start baru, tunggu start berjalan, lalu stop(); idempoten
     killChild(signal = 'SIGKILL') → boolean   // sinkron, untuk handler process 'exit' / keluar paksa
   }
 createLineForwarder(write, maxLength) → { push(chunk), flush() }
-  // Baris > maxLength: dipotong + ' …[dipotong]', sisa dibuang sampai newline; CR & karakter kontrol dibuang.
-WorkerSupervisorError { code, statusCode, message /* Bahasa Indonesia */ }
+  // Baris > maxLength: dipotong + ' …[dipotong]', sisa dibuang sampai newline; CR akhir baris dibuang. Dibuang juga:
+  // kontrol C0 kecuali tab (U+0000–U+0008, U+000B–U+001F), DEL & C1 (U+007F–U+009F: CSI U+009B, ST U+009C, OSC U+009D
+  // dijalankan terminal UTF-8), serta kontrol bidi (U+061C, U+200E/F, U+202A–U+202E, U+2066–U+2069). Teks dari
+  // Binance (mis. `msg` error HTTP) tidak dapat membersihkan layar, mengubah judul, atau menulis clipboard (OSC 52).
+isProcessAlive(pid) → boolean   // process.kill(pid, 0): ESRCH → false; EPERM/lainnya → true; pid ≤ 0 → false tanpa sinyal;
+  // Linux: state /proc/<pid>/stat 'Z'/'X' (zombie: sudah keluar, belum di-reap — mis. induknya ikut dibunuh) → false
+WorkerSupervisorError { code, statusCode, message /* Bahasa Indonesia */, retryAfterMs? /* WORKER_COOLDOWN */ }
 ```
 
 Transisi: `stopped|crashed → starting` (klaim sinkron sebelum await pertama, sehingga start bersamaan ditolak) `→ running` (event `spawn`) `→ stopping` (stop) `→ stopped`. Child keluar tanpa diminta: kode 0 → `stopped` (mis. Ctrl+C di terminal `npm start` juga mengirim SIGINT ke child), selain itu → `crashed` dengan `exitCode`/`signal`. Tidak ada restart otomatis. Spawn gagal (fork melempar, `error` sebelum `spawn`, keluar sebelum `spawn`, atau tanpa `spawn` dalam `startTimeoutMs` → SIGKILL) → `crashed` + `WORKER_SPAWN_FAILED`.
@@ -498,6 +514,7 @@ Transisi: `stopped|crashed → starting` (klaim sinkron sebelum await pertama, s
 | `WORKER_STOPPING` | 409 | start saat stopping (stop kedua saat stopping = idempoten) |
 | `WORKER_EXTERNAL` | 409 | start/stop saat worker lain (heartbeat segar) berjalan di luar website |
 | `WORKER_NOT_RUNNING` | 409 | stop tanpa worker |
+| `WORKER_COOLDOWN` | 429 | start < `RESTART_COOLDOWN_MS` setelah child yang sempat berjalan keluar; route mengirim `Retry-After` (detik, dibulatkan ke atas) |
 | `WORKER_SHUTTING_DOWN` | 503 | start setelah `shutdown()` |
 | `WORKER_SPAWN_FAILED` | 500 | child gagal dijalankan |
 | `WORKER_CONTROL_DISABLED` | 503 | route start/stop saat `WORKER_CONTROL=false` |
@@ -507,19 +524,28 @@ API (gerbang autentikasi & CSRF standar, lihat `docs/01-arsitektur.md` §4):
 | Endpoint | Peran | Respons |
 |---|---|---|
 | `GET /api/system/worker` | semua pengguna terautentikasi | `{ enabled, state, startedAt, stoppedAt, exitCode, signal }` |
-| `POST /api/system/worker/start` | admin + `X-CSRF-Token` | 200 status (`running`) · 409/500/503 `{ error, message }` |
-| `POST /api/system/worker/stop` | admin + `X-CSRF-Token` | 200 status (`stopping`, tidak menunggu exit) · 409/503 |
+| `POST /api/system/worker/start` | admin + `X-CSRF-Token` | 200 status (`running`) · 409/429/500/503 `{ error, message }` |
+| `POST /api/system/worker/stop` | admin + `X-CSRF-Token` | 200 status (`stopping`, tidak menunggu exit) · 409/429/503 |
 | `GET /api/system/status` | semua | `+ workerControl` (bentuk sama dengan `GET /api/system/worker`, memakai heartbeat yang sudah dibaca) |
 
-Body/query start/stop diabaikan. Setiap POST yang sampai ke handler dicatat di audit: `worker.start` / `worker.stop`, `outcome` `success` (`detail.state`) atau `failure` (`detail.reason` = kode di atas); 401/403 ditolak di gerbang sebelum handler (sama dengan `PUT /api/settings/scanner`). Respons tidak memuat pid, path, env, atau log.
+Body/query start/stop diabaikan. Rate limit khusus route `WORKER_ACTION_RATE_LIMIT = { max: 10, timeWindow: 60_000 }` per IP untuk masing-masing POST (menggantikan batas global 300/menit; 429 `RATE_LIMITED`). Audit `worker.start` / `worker.stop` untuk setiap POST dari sesi yang dikenali:
 
-Perakitan (`buildApp`): supervisor dibuat dengan `scriptPath = WORKER_SCRIPT_PATH`, `env = { ...process.env, DATABASE_PATH: config.databasePath }`, `readExternalHeartbeat = repos.ingestion.getStatus().heartbeat`. Opsi `workerSupervisor` / `workerScriptPath` hanya untuk tes & E2E (kode), tidak pernah dari env atau request. `WORKER_AUTOSTART=true` + `WORKER_CONTROL` aktif → `start()` di hook `onReady` (audit `worker.start` tanpa user, `detail.via = 'autostart'`); autostart tanpa kontrol → diabaikan + peringatan log. Hook `onClose` → `shutdown()`.
+| Kasus | `outcome` | `detail` |
+|---|---|---|
+| berhasil | `success` | `{ state }` |
+| ditolak supervisor / kontrol nonaktif | `failure` | `{ reason: <kode tabel di atas> }` |
+| ditolak gerbang authPlugin (analyst 403, token CSRF hilang/salah 403) | `failure` | `{ reason: 'FORBIDDEN' \| 'CSRF_INVALID' }` — dicatat hook `onSend` tingkat route (tanpa mengubah authPlugin) |
+| error tak terduga (mis. `SQLITE_BUSY` saat membaca heartbeat) | `failure` | `{ reason: 'INTERNAL_ERROR' }`, lalu error dilempar ulang → 500 generik |
 
-Penutupan server (`backend/app/server.js`): SIGINT/SIGTERM → `supervisor.shutdown()` (SIGTERM → ≤ 15 detik → SIGKILL) → `app.close()`; keluar paksa setelah `STOP_TIMEOUT_MS + 5 detik` dengan `killChild('SIGKILL')` lebih dulu. Handler `process.on('exit')` mengirim SIGTERM ke child yang tersisa. Bila server mati tanpa sempat menjalankan handler (SIGKILL/OOM), `worker/index.js` mendeteksi kanal IPC terputus (`process.on('disconnect')`, hanya bila dijalankan dengan IPC) dan berhenti dengan graceful; error tulis stdout/stderr (EPIPE ke server yang sudah mati) diabaikan agar shutdown itu selesai.
+Tidak tercatat (tidak ada pengguna yang dikenali): tanpa sesi (401), Origin/`Sec-Fetch-Site` lintas situs (403 dari `registerRequestGuards`, sebelum sesi dibaca), dan rate limit (429). Respons tidak memuat pid, path, env, atau log.
+
+Perakitan (`buildApp`): supervisor dibuat dengan `scriptPath = WORKER_SCRIPT_PATH`, `env = { ...process.env, DATABASE_PATH: config.databasePath }`, `readExternalHeartbeat = repos.ingestion.getStatus().heartbeat`. Opsi `workerSupervisor` / `workerScriptPath` / `workerRestartCooldownMs` hanya untuk tes & E2E (kode), tidak pernah dari env atau request (server E2E memakai jeda 0 karena desktop & mobile berbagi satu server). `WORKER_AUTOSTART=true` + `WORKER_CONTROL` aktif → `start()` di hook `onReady` (audit `worker.start` tanpa user, `detail.via = 'autostart'`); autostart tanpa kontrol → diabaikan + peringatan log. Hook `onClose` → `shutdown()`.
+
+Penutupan server (`backend/app/server.js`): SIGINT/SIGTERM/SIGHUP (jendela terminal ditutup) → `supervisor.shutdown()` (SIGTERM → ≤ 15 detik → SIGKILL) → `app.close()`; keluar paksa setelah `STOP_TIMEOUT_MS + 5 detik` dengan `killChild('SIGKILL')` lebih dulu. Handler `process.on('exit')` mengirim SIGTERM ke child yang tersisa. Bila server mati tanpa sempat menjalankan handler (SIGKILL/OOM), `worker/index.js` mendeteksi kanal IPC terputus (`process.on('disconnect')`, hanya bila dijalankan dengan IPC) dan berhenti dengan graceful; error tulis stdout/stderr (EPIPE ke server yang sudah mati) diabaikan agar shutdown itu selesai.
 
 Konfigurasi (`loadConfig`): `WORKER_CONTROL` kosong → `nodeEnv === 'development'`; `WORKER_AUTOSTART` kosong → `false`; nilai selain `'true'`/`'false'` → `ConfigError` (`"<NAMA> harus 'true' atau 'false'"`).
 
-Frontend: `frontend/js/views/workerControl.js` — kartu **Kontrol scanner** (System Health; dibuat sekali, auto-refresh 10 detik hanya memanggil `update()`) dan callout ringkas Overview (`canStartWorker`: kontrol aktif & state `stopped`/`crashed`). Label di `workerFormat.js` (`workerControlLabel`): Berjalan / Berhenti / Memulai… / Menghentikan… / Gagal (kode keluar N | sinyal X) / Berjalan di luar website. Tombol hanya untuk admin, nonaktif selama request; stop butuh konfirmasi; state diumumkan lewat `aria-live="polite"`; saat starting/stopping UI memantau `GET /api/system/worker` tiap 2 detik dengan `X-LR-Background: 1`.
+Frontend: `frontend/js/views/workerControl.js` — kartu **Kontrol scanner** (System Health; dibuat sekali, auto-refresh 10 detik hanya memanggil `update()`) dan callout ringkas Overview (`canStartWorker`: kontrol aktif & state `stopped`/`crashed`). Label di `workerFormat.js` (`workerControlLabel`): Berjalan / Berhenti / Memulai… / Menghentikan… / Gagal (kode keluar N | sinyal X) / Berjalan di luar website. Tombol hanya untuk admin, nonaktif selama request; stop butuh konfirmasi; state diumumkan lewat `aria-live="polite"`; saat starting/stopping — dan selama `SETTLE_MS` (10 detik) setelah start berhasil, karena 'running' hanya berarti proses sudah di-spawn — UI memantau `GET /api/system/worker` tiap 2 detik dengan `X-LR-Background: 1`, sehingga worker yang crash sesaat setelah start tampil *Gagal* dalam beberapa detik. Callout Overview dirender dari status: setelah start berhasil pesan berganti "Scanner berjalan." (`aria-live`), tombol dilepas dan fokus keyboard dipindah ke pesan (`tabindex="-1"`, tidak jatuh ke `<body>`); callout memantau dengan cara yang sama dan menampilkan pesan crash + tombol lagi bila worker crash.
 
 ## 12. Penyimpangan dari draf awal
 

@@ -74,6 +74,7 @@ test('E2E-SUP-002 analyst melihat state scanner tanpa tombol kontrol (System Hea
   const callout = page.getByTestId('worker-callout');
   await expect(callout).toContainText('Scanner belum berjalan.');
   await expect(callout).toContainText('Minta admin');
+  await expect(callout.getByTestId('worker-callout-message')).toHaveText('Scanner belum berjalan. Data pasar dan sinyal tidak diperbarui. Minta admin menjalankannya dari System Health.');
   await expect(callout.getByRole('button')).toHaveCount(0);
 
   await page.goto('/#/health');
@@ -122,4 +123,76 @@ test('E2E-SUP-004 tombol nonaktif selama request; penolakan server (worker di lu
   // State nyata dibaca ulang dari server (tetap berhenti), tombol aktif kembali.
   await expect(stateOf(page)).toHaveText('Berhenti');
   await expect(start).toBeEnabled();
+});
+
+// ---- Temuan review: worker yang crash sesaat setelah spawn & fokus keyboard callout ----
+
+const RUNNING = { enabled: true, state: 'running', startedAt: Date.UTC(2026, 9, 25, 12), stoppedAt: null, exitCode: null, signal: null };
+const CRASHED = { ...RUNNING, state: 'crashed', stoppedAt: Date.UTC(2026, 9, 25, 12, 0, 1), exitCode: 1 };
+
+/** Server "menjalankan" worker yang langsung crash: POST start → running, GET status berikutnya → crashed. */
+async function mockCrashAfterSpawn(page) {
+  let started = false;
+  await page.route('**/api/system/worker/start', async (route) => {
+    started = true;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(RUNNING) });
+  });
+  await page.route('**/api/system/worker', async (route) => {
+    if (!started) return route.fallback();
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(CRASHED) });
+  });
+}
+
+test('E2E-SUP-005 worker crash sesaat setelah dijalankan → kartu System Health menampilkan "Gagal (kode keluar 1)" dalam beberapa detik (tidak tertahan "Berjalan")', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, E2E_USERS.admin);
+  await page.goto('/#/health');
+  await expect(stateOf(page)).toHaveText('Berhenti');
+  await mockCrashAfterSpawn(page);
+  const clickedAt = Date.now();
+  await card(page).getByRole('button', { name: 'Jalankan scanner' }).click();
+  await expect(stateOf(page)).toHaveText('Berjalan');
+  // Lebih cepat dari auto-refresh halaman (10 detik): UI terus memantau sesaat setelah start.
+  await expect(stateOf(page)).toHaveText('Gagal (kode keluar 1)', { timeout: 6_000 });
+  expect(Date.now() - clickedAt).toBeLessThan(8_000);
+  await expect(card(page).getByRole('button', { name: 'Jalankan scanner' })).toBeEnabled();
+  await expect(card(page).getByRole('button', { name: 'Hentikan scanner' })).toBeDisabled();
+  expect(errors).toEqual([]);
+});
+
+test('E2E-SUP-006 callout Overview: worker crash sesaat setelah dijalankan → pesan crash & tombol "Jalankan scanner" kembali', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, E2E_USERS.admin);
+  const callout = page.getByTestId('worker-callout');
+  await expect(callout).toContainText('Scanner belum berjalan.');
+  await mockCrashAfterSpawn(page);
+  await callout.getByRole('button', { name: 'Jalankan scanner' }).click();
+  await expect(callout).toContainText('Scanner berjalan.');
+  await expect(callout).toContainText('Gagal (kode keluar 1)', { timeout: 6_000 });
+  await expect(callout.getByTestId('worker-callout-message')).toHaveText('Scanner berhenti tak terduga — Gagal (kode keluar 1). Data pasar dan sinyal tidak diperbarui.');
+  await expect(callout.getByRole('button', { name: 'Jalankan scanner' })).toBeEnabled();
+  expect(errors).toEqual([]);
+});
+
+test('E2E-SUP-007 callout Overview dengan keyboard: setelah start berhasil fokus pindah ke pesan callout, tidak hilang ke <body>', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page, E2E_USERS.admin);
+  const callout = page.getByTestId('worker-callout');
+  const button = callout.getByRole('button', { name: 'Jalankan scanner' });
+  await button.focus();
+  await page.keyboard.press('Enter');
+  await expect(callout).toContainText('Scanner berjalan.');
+  await expect(callout.getByRole('button')).toHaveCount(0);
+  const focused = await page.evaluate(() => ({
+    tag: document.activeElement?.tagName,
+    inCallout: Boolean(document.activeElement?.closest('[data-testid="worker-callout"]')),
+  }));
+
+  // Scanner dihentikan lebih dulu agar tes berikutnya mulai dari "Berhenti" walau asersi fokus gagal.
+  await page.goto('/#/health');
+  await expect(stateOf(page)).toHaveText('Berjalan');
+  await stopViaUi(page);
+  expect(focused.tag).not.toBe('BODY');
+  expect(focused.inCallout).toBe(true);
+  expect(errors).toEqual([]);
 });
