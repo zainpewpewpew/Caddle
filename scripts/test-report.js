@@ -3,8 +3,8 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
-const VITEST = 'test-results/vitest-results.json';
-const E2E = 'test-results/e2e-results.json';
+const VITEST = 'reports/vitest-results.json';
+const E2E = 'reports/e2e-results.json';
 const OUT = 'docs/laporan/hasil-tes-otomatis.md';
 
 const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));

@@ -24,7 +24,7 @@ describe('header keamanan & permukaan serangan statis', () => {
   it('SEC-HDR-002 header pelindung standar', async () => {
     const res = await ctx.app.inject({ url: '/api/health' });
     expect(res.headers['x-content-type-options']).toBe('nosniff');
-    expect(res.headers['x-frame-options']).toBe('SAMEORIGIN');
+    expect(res.headers['x-frame-options']).toBe('DENY');
     expect(res.headers['referrer-policy']).toBe('no-referrer');
     expect(res.headers['cross-origin-opener-policy']).toBe('same-origin');
     expect(res.headers['permissions-policy']).toContain('camera=()');

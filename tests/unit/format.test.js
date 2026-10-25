@@ -20,7 +20,9 @@ describe('format data finansial', () => {
 
   it('UNIT-FMT-002 bytes, durasi, relatif', () => {
     expect(formatBytes(1536)).toBe('1.5 KB');
-    expect(formatDuration(3_725)).toBe('1j 2m');
+    expect(formatDuration(3_725)).toBe('1 jam 2 mnt');
+    expect(formatDuration(6)).toBe('6 dtk');
+    expect(formatDuration(90_061)).toBe('1 hari 1 jam');
     expect(formatRelative(0, 120_000)).toBe('2 menit lalu');
   });
 });

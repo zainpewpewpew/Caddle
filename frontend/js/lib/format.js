@@ -49,10 +49,11 @@ export function formatDuration(seconds) {
   const hrs = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
-  if (d) return `${d}h ${hrs}j`;
-  if (hrs) return `${hrs}j ${m}m`;
-  if (m) return `${m}m ${s}d`;
-  return `${s}d`;
+  // Satuan ditulis jelas agar tidak ambigu ("6d" bisa dibaca 6 hari).
+  if (d) return `${d} hari ${hrs} jam`;
+  if (hrs) return `${hrs} jam ${m} mnt`;
+  if (m) return `${m} mnt ${s} dtk`;
+  return `${s} dtk`;
 }
 
 const pad = (n) => String(n).padStart(2, '0');

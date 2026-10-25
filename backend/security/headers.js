@@ -26,6 +26,7 @@ export async function registerSecurityHeaders(app, config) {
     strictTransportSecurity: config.isProduction
       ? { maxAge: 31_536_000, includeSubDomains: true, preload: false }
       : false,
+    frameguard: { action: 'deny' },
     referrerPolicy: { policy: 'no-referrer' },
     crossOriginEmbedderPolicy: false,
     crossOriginOpenerPolicy: { policy: 'same-origin' },

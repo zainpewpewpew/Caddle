@@ -8,7 +8,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  reporter: [['list'], ['json', { outputFile: 'test-results/e2e-results.json' }]],
+  reporter: [['list'], ['json', { outputFile: 'reports/e2e-results.json' }]],
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: 'retain-on-failure',

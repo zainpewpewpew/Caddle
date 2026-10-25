@@ -16,10 +16,10 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:integration": "vitest run tests/integration tests/positive tests/negative tests/edge tests/security",
+    "test:integration": "vitest run tests/positive tests/negative tests/edge tests/security",
     "test:e2e": "playwright test",
     "audit": "npm audit --omit=dev",
-    "report:tests": "vitest run --reporter=default --reporter=json --outputFile.json=test-results/vitest-results.json && playwright test && node scripts/test-report.js"
+    "report:tests": "vitest run --reporter=default --reporter=json --outputFile.json=reports/vitest-results.json && playwright test && node scripts/test-report.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",
