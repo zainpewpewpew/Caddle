@@ -3,6 +3,7 @@
 export {
   DEFAULT_PVA_PARAMS,
   DEFAULT_SA_PARAMS,
+  MAX_WARMUP_CANDLES,
   PARAM_SPECS,
   PatternParamsError,
   requiredCandles,

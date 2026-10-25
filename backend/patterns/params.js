@@ -11,10 +11,22 @@ import { ATR_PERIOD, EMA_SLOW, SLOPE_LOOKBACK, VOLATILITY_BASELINE } from './con
 
 const spec = (type, min, max, description) => Object.freeze({ type, min, max, description });
 
-/** Rentang yang diizinkan untuk setiap parameter (inklusif). */
+/**
+ * Batas atas warm-up requiredCandles(pola, params). Pipeline analisis hanya memuat
+ * ANALYSIS_LOOKBACK = 300 candle per seri (backend/analysis/pipeline.js); parameter dengan warm-up
+ * lebih panjang membuat pola selamanya insufficientData tanpa error, sehingga ditolak di sini.
+ * Nilai ini WAJIB ≤ ANALYSIS_LOOKBACK (dijaga tes).
+ */
+export const MAX_WARMUP_CANDLES = 300;
+
+/**
+ * Rentang yang diizinkan untuk setiap parameter (inklusif). Selain rentang per parameter,
+ * validateParams menolak kombinasi dengan requiredCandles > MAX_WARMUP_CANDLES (mis. PVA
+ * rvolPeriod + subWindows × subWindowLength > 300).
+ */
 export const PARAM_SPECS = Object.freeze({
   SA: Object.freeze({
-    rvolPeriod: spec('integer', 10, 500, 'Panjang baseline RVOL: jumlah candle sebelumnya'),
+    rvolPeriod: spec('integer', 10, 250, 'Panjang baseline RVOL: jumlah candle sebelumnya'),
     rvolWindow: spec('integer', 1, 50, 'Jumlah candle terakhir yang RVOL-nya dirata-rata'),
     maxAvgRvol: spec('number', 0.1, 2, 'Batas atas rata-rata RVOL (volume senyap)'),
     priceLookback: spec('integer', 5, 200, 'Jendela struktur: perubahan harga & swing low terbaru'),
@@ -28,7 +40,7 @@ export const PARAM_SPECS = Object.freeze({
     minScore: spec('number', 0, 100, 'Skor pola minimum agar terdeteksi'),
   }),
   PVA: Object.freeze({
-    rvolPeriod: spec('integer', 10, 500, 'Panjang baseline RVOL: jumlah candle sebelumnya'),
+    rvolPeriod: spec('integer', 10, 250, 'Panjang baseline RVOL: jumlah candle sebelumnya'),
     maxPriorRvol: spec('number', 0.1, 3, 'Batas atas rata-rata RVOL sub-jendela pertama (awal sepi)'),
     subWindows: spec('integer', 2, 10, 'Jumlah sub-jendela volume'),
     subWindowLength: spec('integer', 2, 50, 'Panjang tiap sub-jendela (candle)'),
@@ -133,6 +145,13 @@ export function validateParams(params, pattern) {
       errors.push({ path, message: 'Harus bilangan bulat' });
     } else if (v < s.min || v > s.max) {
       errors.push({ path, message: `Harus antara ${s.min} dan ${s.max}` });
+    }
+  }
+  if (errors.length === 0) {
+    const warmup = requiredCandles(pattern, params);
+    if (warmup > MAX_WARMUP_CANDLES) {
+      const formula = pattern === 'SA' ? 'max(rvolPeriod + rvolWindow, priceLookback + 1)' : 'rvolPeriod + subWindows × subWindowLength';
+      errors.push({ path: '', message: `Warm-up ${formula} = ${warmup} candle melebihi batas ${MAX_WARMUP_CANDLES} (lookback pipeline analisis)` });
     }
   }
   if (errors.length === 0 && pattern === 'PVA') {

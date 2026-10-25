@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { ANALYSIS_LOOKBACK } from '../../../backend/analysis/pipeline.js';
 import {
   DEFAULT_PVA_PARAMS,
   DEFAULT_SA_PARAMS,
+  MAX_WARMUP_CANDLES,
   PARAM_SPECS,
   PatternParamsError,
   requiredCandles,
@@ -114,5 +116,38 @@ describe('parameter pola', () => {
     expect(requiredCandles('PVA', DEFAULT_PVA_PARAMS)).toBe(70);
     expect(requiredCandles('SA', resolveParams('SA', { rvolPeriod: 100 }))).toBe(105);
     expect(requiredCandles('PVA', resolveParams('PVA', { subWindows: 5, subWindowLength: 10 }))).toBe(100);
+  });
+
+  it('EDGE-PPRM-001 batas warm-up PVA: rvolPeriod + subWindows×subWindowLength = 300 diterima, 301 ditolak dengan pesan jelas', () => {
+    const atLimit = { ...DEFAULT_PVA_PARAMS, rvolPeriod: 200, subWindows: 10, subWindowLength: 10 };
+    expect(validateParams(atLimit, 'PVA')).toEqual([]);
+    expect(requiredCandles('PVA', atLimit)).toBe(300);
+    const over = validateParams({ ...atLimit, rvolPeriod: 201 }, 'PVA');
+    expect(over).toHaveLength(1);
+    expect(over[0].message).toMatch(/301 candle melebihi batas 300/);
+    expect(() => resolveParams('PVA', { subWindows: 10, subWindowLength: 30, maxSpikeDominance: 0.05 })).toThrow(/melebihi batas 300/);
+  });
+
+  it('EDGE-PPRM-002 batas warm-up SA: rvolPeriod 250 + rvolWindow 50 = 300 diterima; rvolPeriod 251 (atau 300) ditolak', () => {
+    const atLimit = { ...DEFAULT_SA_PARAMS, rvolPeriod: 250, rvolWindow: 50, priceLookback: 200 };
+    expect(validateParams(atLimit, 'SA')).toEqual([]);
+    expect(requiredCandles('SA', atLimit)).toBe(300);
+    expect(paths(validateParams({ ...atLimit, rvolPeriod: 251 }, 'SA'))).toEqual(['/rvolPeriod']);
+    expect(() => resolveParams('SA', { rvolPeriod: 300 })).toThrow(PatternParamsError);
+  });
+
+  it('EDGE-PPRM-003 setiap parameter yang lolos validasi punya warm-up ≤ ANALYSIS_LOOKBACK pipeline', () => {
+    expect(MAX_WARMUP_CANDLES).toBeLessThanOrEqual(ANALYSIS_LOOKBACK);
+    // Sudut-sudut ruang parameter yang memengaruhi warm-up (nilai lain = default).
+    const corners = (pattern, keys) => keys.reduce((acc, k) => acc.flatMap((o) => [PARAM_SPECS[pattern][k].min, PARAM_SPECS[pattern][k].max].map((v) => ({ ...o, [k]: v }))), [{}]);
+    for (const [pattern, defaults, keys] of [['SA', DEFAULT_SA_PARAMS, ['rvolPeriod', 'rvolWindow', 'priceLookback']], ['PVA', DEFAULT_PVA_PARAMS, ['rvolPeriod', 'subWindows', 'subWindowLength']]]) {
+      for (const corner of corners(pattern, keys)) {
+        const params = { ...defaults, ...corner, maxSpikeDominance: 0.5, maxSpikeGrowthShare: 0.9 };
+        if (pattern === 'SA') { delete params.maxSpikeDominance; delete params.maxSpikeGrowthShare; }
+        const errors = validateParams(params, pattern);
+        if (errors.length === 0) expect(requiredCandles(pattern, params), JSON.stringify(corner)).toBeLessThanOrEqual(ANALYSIS_LOOKBACK);
+        else expect(requiredCandles(pattern, params), JSON.stringify(corner)).toBeGreaterThan(MAX_WARMUP_CANDLES);
+      }
+    }
   });
 });
