@@ -1,7 +1,9 @@
-// Status sistem nyata. Komponen yang belum dibangun dilaporkan sebagai 'not_implemented',
-// bukan sebagai data palsu.
+// Status sistem nyata. Status worker berasal dari heartbeat di database; bila worker belum
+// pernah berjalan dilaporkan 'not_running', bukan data palsu.
+import { buildMarketContext } from '../system/marketContext.js';
+import { summarizeWorker } from '../system/workerStatus.js';
 
-export async function systemRoutes(app, { db, overview, schemaVersion, clock, startedAt }) {
+export async function systemRoutes(app, { db, overview, ingestion, candles, schemaVersion, clock, startedAt }) {
   app.get('/api/system/status', async () => {
     let database;
     try {
@@ -12,23 +14,21 @@ export async function systemRoutes(app, { db, overview, schemaVersion, clock, st
       database = { status: 'error', schemaVersion: null, latencyMs: null };
     }
     const mem = process.memoryUsage();
+    const worker = summarizeWorker(await ingestion.getStatus(), clock());
     return {
       serverTime: clock(),
       uptimeSec: Math.round((clock() - startedAt) / 1000),
       nodeVersion: process.version,
       memory: { rssBytes: mem.rss, heapUsedBytes: mem.heapUsed, heapTotalBytes: mem.heapTotal },
       database,
-      binance: { status: 'not_implemented', milestone: 2 },
-      scanner: { status: 'not_implemented', milestone: 2 },
+      ...worker,
     };
   });
 
   app.get('/api/overview', async () => {
     const summary = await overview.summary();
-    return {
-      ...summary,
-      scanner: { status: 'not_implemented', milestone: 2 },
-      marketContext: { status: 'not_implemented', milestone: 2 },
-    };
+    const { scanner, binance } = summarizeWorker(await ingestion.getStatus(), clock());
+    // Waktu ingesti terakhir dari heartbeat worker (tanpa scan MAX() atas seluruh tabel candle).
+    return { ...summary, lastIngestionAt: scanner.lastIngestionAt ?? null, scanner, binance, marketContext: await buildMarketContext(candles) };
   });
 }

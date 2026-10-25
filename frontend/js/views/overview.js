@@ -1,18 +1,20 @@
 import { api } from '../lib/api.js';
-import { badge, dataTable, emptyState, page, panel, stage, stat, statusPill } from '../lib/components.js';
+import { badge, dataTable, emptyState, page, panel, stage, stat } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { formatInteger, formatRelative, formatUtc } from '../lib/format.js';
-import { MILESTONES, milestoneLabel } from './roadmap.js';
+import { formatInteger, formatPercent, formatPrice, formatRelative, formatUtc } from '../lib/format.js';
+import { MILESTONES } from './roadmap.js';
+import { binancePill, scannerPill } from './workerFormat.js';
+
+const TREND_TONE = { BULLISH: 'bull', NEUTRAL: undefined, BEARISH: 'bear' };
 
 export async function overviewView() {
   const data = await api('/api/overview');
-  const noScanner = data.scanner.status === 'not_implemented';
 
   const kpis = h('div', { class: 'grid grid--kpi' },
     stat({ label: 'Simbol dipantau', value: formatInteger(data.monitoredSymbols), hint: 'USDT-M perpetual', testId: 'kpi-monitored' }),
     stat({ label: 'Kandidat LONG aktif', value: formatInteger(data.activeSignals), hint: 'QUIET → BREAKOUT', testId: 'kpi-active' }),
     stat({ label: 'Sinyal tahap awal', value: formatInteger(data.earlySignals), hint: 'EARLY_BULLISH' }),
-    stat({ label: 'Konfirmasi multi-TF', value: '—', muted: true, hint: `Tersedia di ${milestoneLabel(3)}` }),
+    stat({ label: 'Konfirmasi multi-TF', value: formatInteger(data.alignedSignals), hint: 'Sinyal aktif ALIGNED' }),
     stat({
       label: 'Ingesti terakhir',
       value: data.lastIngestionAt ? formatRelative(data.lastIngestionAt) : '—',
@@ -21,12 +23,24 @@ export async function overviewView() {
     }),
   );
 
-  const market = panel({ title: 'Konteks pasar · BTC & ETH', actions: badge('Belum aktif') },
-    emptyState({
-      iconName: 'symbol',
-      title: 'Konteks BTC/ETH belum tersedia',
-      text: `Data ini akan diambil dari Binance USDT-M Futures setelah ${milestoneLabel(2)}. Tidak ada data contoh yang ditampilkan.`,
-    }));
+  const hasContext = data.marketContext.some((m) => m.status === 'ok');
+  const market = panel({ title: 'Konteks pasar · BTC & ETH', actions: badge('1h · candle tertutup') },
+    hasContext
+      ? h('dl', { class: 'kv' }, data.marketContext.flatMap((m) => [
+        h('dt', { class: 'mono' }, m.symbol),
+        h('dd', null, m.status === 'ok'
+          ? h('span', { class: 'cluster' },
+            badge(m.trend, TREND_TONE[m.trend]),
+            h('span', { class: 'num' }, formatPrice(m.lastPrice)),
+            h('span', { class: 'num' }, `24j ${formatPercent(m.change24h)}`),
+            h('span', { class: 'muted' }, formatUtc(m.asOf)))
+          : 'Belum ada data'),
+      ]))
+      : emptyState({
+        iconName: 'symbol',
+        title: 'Konteks BTC/ETH belum tersedia',
+        text: 'Muncul setelah worker mengingesti candle 1h BTCUSDT/ETHUSDT dari Binance USDT-M Futures. Tidak ada data contoh yang ditampilkan.',
+      }));
 
   const detections = panel({ title: 'Deteksi pola terbaru', flush: true },
     dataTable({
@@ -40,13 +54,13 @@ export async function overviewView() {
         { key: 'first_detected_at', label: 'Deteksi pertama', render: (r) => formatUtc(r.first_detected_at) },
       ],
       rows: data.recentDetections,
-      empty: emptyState({ iconName: 'radar', title: 'Belum ada deteksi', text: 'Detektor SA/PVA berjalan setelah data pasar dan mesin pola tersedia.' }),
+      empty: emptyState({ iconName: 'radar', title: 'Belum ada deteksi', text: 'Deteksi SA/PVA muncul di sini setelah worker berjalan dan menemukan pola pada candle tertutup.' }),
     }));
 
   const status = panel({ title: 'Status pemindaian' },
     h('dl', { class: 'kv' },
-      h('dt', null, 'Scanner'), h('dd', null, noScanner ? statusPill('idle', 'Belum diimplementasi') : statusPill('ok', 'Berjalan', { live: true })),
-      h('dt', null, 'Koneksi Binance'), h('dd', null, statusPill('idle', 'Belum diimplementasi')),
+      h('dt', null, 'Scanner'), h('dd', null, scannerPill(data.scanner)),
+      h('dt', null, 'Koneksi Binance'), h('dd', null, binancePill(data.binance)),
       h('dt', null, 'Kesegaran data'), h('dd', null, data.lastIngestionAt ? formatRelative(data.lastIngestionAt) : '—'),
       h('dt', null, 'Timeframe'), h('dd', { class: 'mono' }, '5m · 15m · 1h')));
 

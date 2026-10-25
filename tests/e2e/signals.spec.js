@@ -48,3 +48,14 @@ test('E2E-SIG-002 Signal History menampilkan sinyal dengan tahap & harga deteksi
   await expect(row.locator('.stage')).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test('E2E-SIG-003 System Health menampilkan heartbeat worker & error ingesti dari database', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page);
+  await page.goto('/#/health');
+  await expect(page.getByTestId('health-scanner')).toHaveText('Berhenti');
+  await expect(page.getByRole('cell', { name: 'contoh error uji E2E (sintetis)' })).toBeVisible();
+  await expect(page.getByTestId('kpi-scan').locator('.stat__value')).toHaveText('0 dtk');
+  expect(errors).toEqual([]);
+});
+

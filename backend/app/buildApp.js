@@ -112,7 +112,7 @@ export async function buildApp({ config, db, clock = Date.now, hasherOptions, lo
   await app.register(healthRoutes, deps);
   await app.register(authRoutes, { ...deps, authService, sessionService });
   await app.register(settingsRoutes, deps);
-  await app.register(systemRoutes, { ...deps, schemaVersion, startedAt: clock() });
+  await app.register(systemRoutes, { ...deps, ingestion: repos.ingestion, candles: repos.candles, schemaVersion, startedAt: clock() });
   await app.register(signalRoutes, { signals: repos.signals, candles: repos.candles });
 
   // Frontend statis. index.html hanya disajikan lewat route '/' yang memeriksa sesi.

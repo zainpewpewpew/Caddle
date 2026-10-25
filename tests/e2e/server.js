@@ -7,7 +7,7 @@ import { buildApp } from '../../backend/app/buildApp.js';
 import { loadConfig } from '../../backend/app/config.js';
 import { openDatabase } from '../../backend/database/connection.js';
 import { createUser } from '../../backend/users/userAdmin.js';
-import { seedSignals } from '../helpers/signalSeed.js';
+import { seedSignals, seedWorkerHistory } from '../helpers/signalSeed.js';
 import { E2E_PORT, E2E_USERS } from './fixtures.js';
 
 const port = Number(process.env.E2E_SERVER_PORT ?? E2E_PORT);
@@ -22,5 +22,8 @@ const { repos, hasher } = app.services;
 for (const user of Object.values(E2E_USERS)) {
   await createUser({ users: repos.users, audit: repos.audit, hasher, maxUsers: config.maxUsers, clock: Date.now }, user);
 }
-if (process.env.E2E_SEED_SIGNALS === '1') await seedSignals(repos);
+if (process.env.E2E_SEED_SIGNALS === '1') {
+  await seedSignals(repos);
+  await seedWorkerHistory(repos);
+}
 await app.listen({ host: config.host, port: config.port });

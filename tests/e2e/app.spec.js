@@ -64,7 +64,7 @@ test('E2E-UI-001 overview menampilkan angka nyata dari database (nol) dan status
   await signIn(page);
   await expect(page.getByTestId('kpi-monitored').locator('.stat__value')).toHaveText('0');
   await expect(page.getByTestId('kpi-active').locator('.stat__value')).toHaveText('0');
-  await expect(page.getByText('Belum diimplementasi').first()).toBeVisible();
+  await expect(page.getByText('Belum berjalan').first()).toBeVisible();
 });
 
 test('E2E-UI-002 tidak ada horizontal overflow halaman di setiap layar', async ({ page }) => {

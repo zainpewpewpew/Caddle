@@ -215,10 +215,10 @@ describe('repositori candle', () => {
       expect(await repo.findGaps({ symbol: 'BTCUSDT', timeframe: '15m', from: T0 - 500 * 15 * 60_000, to: T0 - 15 * 60_000 })).toEqual([]);
     });
 
-    it('EDGE-CDL-007 overview memakai ingested_at dari jam repositori', async () => {
+    it('EDGE-CDL-007 ingested_at memakai jam repositori yang diteruskan createRepositories', async () => {
       const repos = createRepositories(db, { clock });
       await repos.candles.upsertClosed(series(1));
-      expect((await repos.overview.summary()).lastIngestionAt).toBe(T0 + DAY);
+      expect(db.prepare('SELECT MAX(ingested_at) AS t FROM candles').get().t).toBe(T0 + DAY);
     });
   });
 
