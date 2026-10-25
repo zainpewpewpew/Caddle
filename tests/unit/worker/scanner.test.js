@@ -1002,6 +1002,62 @@ describe('rediscovery & delisting', () => {
     await scanner.stop();
   });
 
+  it('NEG-SCN-009 discovery memilih 0 simbol padahal 2 simbol dipantau → anomali: set pantauan, stream, likuiditas dipertahankan, tidak ada markDelisted/setMonitored/pelepasan/rekonsiliasi; error "discovery" + peringatan; percobaan ulang normal → pulih tanpa error baru', async () => {
+    const stops = [];
+    const warns = [];
+    const logger = { ...silentLogger, warn: (fields, msg) => warns.push(msg) };
+    const { scanner, repos, streams, timers } = setup({
+      logger,
+      onMonitoringStopped: async (e) => { stops.push(e); },
+      listOpenSeries: async () => [{ symbol: 'BTCUSDT', timeframe: '5m' }, { symbol: 'ETHUSDT', timeframe: '5m' }],
+    });
+    await scanner.start();
+    const first = streams.current();
+    expect(repos.symbols.setMonitored).toHaveBeenCalledTimes(1);
+
+    fakeDiscover.mockImplementationOnce(() => ({ selected: [], rejected: [] }));
+    await timers.advance(3_600_000);
+    expect(streams.current()).toBe(first);
+    expect(first.stopped).toBe(false);
+    expect(scanner.status()).toMatchObject({ symbols: 2, streams: 6, state: 'running' });
+    expect(scanner.liquidityOf('BTCUSDT')).not.toBeNull();
+    expect(repos.symbols.setMonitored).toHaveBeenCalledTimes(1);
+    expect(repos.symbols.markDelisted).not.toHaveBeenCalled();
+    expect(stops).toEqual([]);
+    expect(recordedErrors(repos)).toEqual([{
+      at: START + 3_600_000, source: 'discovery',
+      message: 'discovery anomali: 0 simbol terpilih (mode auto) padahal 2 simbol sedang dipantau; set pantauan & stream dipertahankan, tidak ada sinyal yang ditutup',
+    }]);
+    expect(warns).toContain('discovery memilih 0 simbol padahal set pantauan tidak kosong; set pantauan dipertahankan');
+
+    await timers.advance(60_000); // percobaan ulang (jeda discoveryRetryMs) dengan discovery normal
+    expect(repos.symbols.setMonitored).toHaveBeenCalledTimes(2);
+    expect(streams.current()).toBe(first);
+    expect(stops).toEqual([]);
+    expect(recordedErrors(repos)).toHaveLength(1);
+    await scanner.stop();
+  });
+
+  it('EDGE-SCN-008 siklus pertama: discovery 0 simbol dan DB memantau BTCUSDT → anomali, stream dari daftar DB tanpa pelepasan; DB kosong → 0 simbol bukan anomali (tanpa error)', async () => {
+    const stops = [];
+    const ctx = setup({ symbols: ['BTCUSDT'], monitoredInDb: ['BTCUSDT'], onMonitoringStopped: async (e) => { stops.push(e); } });
+    fakeDiscover.mockImplementationOnce(() => ({ selected: [], rejected: [] }));
+    await ctx.scanner.start();
+    expect(ctx.streams.current().keys()).toEqual(['BTCUSDT:5m', 'BTCUSDT:15m', 'BTCUSDT:1h']);
+    expect(ctx.repos.symbols.setMonitored).not.toHaveBeenCalled();
+    expect(stops).toEqual([]);
+    expect(recordedErrors(ctx.repos)).toEqual([expect.objectContaining({ source: 'discovery', message: expect.stringContaining('padahal 1 simbol sedang dipantau') })]);
+    await ctx.scanner.stop();
+
+    const empty = setup({ symbols: ['BTCUSDT'] });
+    fakeDiscover.mockImplementationOnce(() => ({ selected: [], rejected: [] }));
+    await empty.scanner.start();
+    expect(recordedErrors(empty.repos)).toEqual([]);
+    expect(empty.repos.symbols.setMonitored).toHaveBeenCalledWith([], START);
+    expect(empty.scanner.status()).toMatchObject({ symbols: 0, streams: 0 });
+    await empty.scanner.stop();
+  });
+
   it('EDGE-SCN-004 rediscovery tanpa perubahan tidak membuat ulang stream', async () => {
     const { scanner, streams, timers, repos } = setup();
     await scanner.start();

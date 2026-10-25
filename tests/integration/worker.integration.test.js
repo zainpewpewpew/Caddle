@@ -1013,6 +1013,47 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(problems(logs)).toEqual(['simbol delisted, stream dihentikan']);
   });
 
+  it('INT-WRK-026 rediscovery menerima exchangeInfo tanpa simbol (respons anomali) saat SA punya sinyal terbuka → 0 simbol terpilih dianggap anomali: tidak ada delisting/penutupan sinyal, stream tetap, error "discovery"; percobaan ulang normal → hasil akhir = replay murni seolah tidak terjadi apa-apa', async () => {
+    const REDISCOVERY = 20 * 60_000;
+    let emptyInfo = false;
+    const { scanner, repos, driver, alerts, stopped, logs, hub } = await setup({
+      scannerOptions: { rediscoveryMs: REDISCOVERY },
+      configure: (b) => {
+        const fetch = b.fetch;
+        b.fetch = async (href, init) => {
+          const res = await fetch(href, init);
+          if (!emptyInfo || new URL(href).pathname !== '/fapi/v1/exchangeInfo') return res;
+          return new Response(JSON.stringify({ ...(await res.json()), symbols: [] }), { status: 200 });
+        };
+      },
+    });
+    await scanner.start();
+    const anomalyAt = START + 4 * REDISCOVERY; // candle 64 + 7 dtk; sinyal SA sudah terbuka
+    await driver.runUntil(anomalyAt - 1_000);
+    expect((await repos.signals.listActive()).map((s) => s.symbol)).toEqual([SA]);
+    const sockets = hub.sockets.length;
+
+    emptyInfo = true;
+    await driver.runUntil(anomalyAt + 1_000);
+    emptyInfo = false;
+    expect(stopped).toEqual([]);
+    expect((await repos.signals.listActive()).map((s) => s.symbol)).toEqual([SA]);
+    expect((await repos.symbols.listMonitored()).sort()).toEqual([DOWN, SA]);
+    expect(hub.sockets).toHaveLength(sockets); // stream tidak diganti
+    expect(scanner.status()).toMatchObject({ symbols: 2, streams: 6, state: 'running' });
+    expect((await repos.ingestion.getStatus()).recentErrors).toEqual([expect.objectContaining({
+      at: anomalyAt, source: 'discovery', message: expect.stringContaining('discovery anomali: 0 simbol terpilih (mode auto) padahal 2 simbol'),
+    })]);
+
+    await driver.runUntil(END); // percobaan ulang discovery 60 dtk kemudian berhasil
+    const reference = referenceReplay(SA, LIQ_SA);
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
+    expect(stopped).toEqual([]);
+    expect((await repos.ingestion.getStatus()).recentErrors).toHaveLength(1);
+    expect(problems(logs)).toEqual(['discovery memilih 0 simbol padahal set pantauan tidak kosong; set pantauan dipertahankan', 'galat scanner']);
+  });
+
   it('INT-WRK-021 penutupan sinyal simbol delisted gagal sekali (SQLITE_BUSY) → error "monitoring" tercatat, sinyal masih terbuka; rediscovery berikutnya mencoba lagi (level-triggered) → EXPIRED reason SYMBOL_DELISTED', async () => {
     const REDISCOVERY = 20 * 60_000;
     const { scanner, repos, binance, driver, stopped, alerts } = await setup({ scannerOptions: { rediscoveryMs: REDISCOVERY } });

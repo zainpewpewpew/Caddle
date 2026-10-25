@@ -7,6 +7,7 @@
 //   ikut diingesti sebagai seri konteks saja (disimpan, tidak pernah memicu analisis) walau tidak dipilih;
 // - duplikat/out-of-order tetap disimpan (idempoten) tetapi tidak memicu analisis ulang;
 // - sweep berkala menambal stream yang tertinggal (fallback bila WS diam);
+// - discovery yang memilih 0 simbol padahal set pantauan tidak kosong dianggap anomali (seperti discovery gagal);
 // - rediscovery periodik menangani simbol baru & delisting; simbol/timeframe yang berhenti dipantau
 //   dilaporkan lewat onMonitoringStopped (worker menutup sinyal terbukanya) SETELAH stream-nya dilepas;
 //   dengan `listOpenSeries`, setiap discovery yang berhasil juga merekonsiliasi seri bersinyal terbuka yang
@@ -53,6 +54,15 @@ class ScannerStopped extends Error {
   constructor() {
     super('scanner dihentikan');
     this.name = 'ScannerStopped';
+  }
+}
+
+/** Discovery memilih 0 simbol padahal set pantauan sebelumnya tidak kosong — diperlakukan sebagai discovery gagal. */
+class AnomalousDiscovery extends Error {
+  constructor(mode, previousCount) {
+    super(`discovery anomali: 0 simbol terpilih (mode ${mode}) padahal ${previousCount} simbol sedang dipantau; `
+      + 'set pantauan & stream dipertahankan, tidak ada sinyal yang ditutup');
+    this.name = 'AnomalousDiscovery';
   }
 }
 
@@ -598,6 +608,18 @@ export function createScanner({
     ]);
     const result = await discoverSymbols({ symbols, tickers, bookTickers, settings: settings.raw });
     const chosen = (result?.selected ?? []).filter((s) => typeof s?.symbol === 'string');
+    // Penjaga anomali: 0 simbol terpilih (mode auto atau manual) padahal set pantauan sebelumnya (memori, atau
+    // daftar DB di siklus pertama) tidak kosong → hampir pasti data discovery rusak/kosong sementara. Ditolak
+    // SEBELUM likuiditas/simbol/stream disentuh; runCycle menanganinya seperti discovery gagal (error
+    // 'discovery', coba ulang dengan jeda, fallback daftar DB, tanpa pelepasan/penutupan sinyal).
+    if (chosen.length === 0) {
+      const previous = monitored.length > 0 ? monitored : (dbMonitoredChecked ? [] : await repos.symbols.listMonitored());
+      if (previous.length > 0) {
+        const mode = settings.raw?.symbols?.mode ?? 'tidak diketahui';
+        logger.warn({ mode, previous: previous.length }, 'discovery memilih 0 simbol padahal set pantauan tidak kosong; set pantauan dipertahankan');
+        throw new AnomalousDiscovery(mode, previous.length);
+      }
+    }
     // Likuiditas terakhir per simbol (quote volume 24 jam, spread) untuk risk flag di pipeline analisis,
     // beserta ambang pengaturan yang dipakai discovery ini — sehingga risk flag dinilai dengan batas
     // pengguna, termasuk mode manual yang tidak memfilter likuiditas. Ambang tidak valid → null
