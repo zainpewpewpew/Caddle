@@ -424,6 +424,35 @@ describe('repositori sinyal', () => {
     await expect(reopened.markEvaluated({ symbol: 'BTCUSDT', timeframe: '5m', openTime: 1.5 })).rejects.toThrow(TypeError);
   });
 
+  it('UNIT-SREP-009 history (dengan & tanpa simbol) memakai indeks terurut: tanpa SCAN penuh + TEMP B-TREE; hasil terbaru dulu, simbol tak dikenal → []', async () => {
+    const { db } = setup();
+    // Tangkap SQL yang disiapkan repositori untuk query riwayat (ORDER BY first_detected_at DESC … LIMIT @limit).
+    const prepared = [];
+    const spy = new Proxy(db, { get: (target, key) => (key === 'prepare'
+      ? (sql) => { prepared.push(sql); return target.prepare(sql); }
+      : (typeof target[key] === 'function' ? target[key].bind(target) : target[key])) });
+    const repo = createSignalRepository(spy, { clock: () => T0 });
+    const historySql = prepared.filter((sql) => /ORDER BY s\.first_detected_at DESC, s\.id DESC\s+LIMIT @limit/.test(sql));
+    expect(historySql.length).toBeGreaterThan(0);
+    for (const sql of historySql) {
+      const params = sql.includes('@symbol') ? { symbol: 'BTCUSDT', limit: 10 } : { limit: 10 };
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(params).map((r) => r.detail);
+      expect(plan.join(' | ')).not.toMatch(/TEMP B-TREE/);
+      // Filter simbol = seek indeks per simbol, bukan memindai seluruh sinyal lalu menyaring.
+      if (sql.includes('@symbol')) expect(plan.join(' | ')).toMatch(/SEARCH s USING INDEX idx_signals_symbol_first_detected/);
+      else expect(plan.join(' | ')).toMatch(/SCAN s USING INDEX idx_signals_first_detected/);
+    }
+
+    await repo.ensurePatternDefinition(SA_V1);
+    await drive(repo, [input(0, 100)], { symbol: 'ETHUSDT' });
+    await drive(repo, [input(2, 100, { timeframe: '1h' })], { timeframe: '1h' });
+    await drive(repo, [input(1, 100)]);
+    const all = await repo.history({ limit: 10 });
+    expect(all.map((h) => [h.symbol, h.timeframe])).toEqual([['BTCUSDT', '1h'], ['BTCUSDT', '5m'], ['ETHUSDT', '5m']]);
+    expect((await repo.history({ symbol: 'BTCUSDT', limit: 1 })).map((h) => h.timeframe)).toEqual(['1h']);
+    expect(await repo.history({ symbol: 'XRPUSDT' })).toEqual([]);
+  });
+
   it('EDGE-SREP-002 simpan ulang snapshot yang sama idempoten; penjelasan dipertahankan bila tidak dikirim', async () => {
     const { db, repo } = setup();
     await repo.ensurePatternDefinition(SA_V1);

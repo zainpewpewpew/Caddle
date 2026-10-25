@@ -187,11 +187,19 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
         AND (@minScore IS NULL OR s.pattern_score >= @minScore)
       ORDER BY s.pattern_score DESC, s.updated_at DESC, s.id DESC
       LIMIT @limit`),
-    history: db.prepare(`SELECT s.*, sym.symbol, pd.pattern_key, pd.version AS pattern_version
+    // Dua statement (tanpa / dengan simbol) agar masing-masing memakai indeks migrasi 004:
+    // bentuk `(@symbol IS NULL OR …)` memaksa SCAN seluruh tabel (+ sort sementara) pada setiap request.
+    historyAll: db.prepare(`SELECT s.*, sym.symbol, pd.pattern_key, pd.version AS pattern_version
       FROM signals s
       JOIN symbols sym ON sym.id = s.symbol_id
       JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
-      WHERE (@symbol IS NULL OR sym.symbol = @symbol)
+      ORDER BY s.first_detected_at DESC, s.id DESC
+      LIMIT @limit`),
+    historyBySymbol: db.prepare(`SELECT s.*, sym.symbol, pd.pattern_key, pd.version AS pattern_version
+      FROM signals s
+      JOIN symbols sym ON sym.id = s.symbol_id
+      JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
+      WHERE s.symbol_id = (SELECT id FROM symbols WHERE symbol = @symbol)
       ORDER BY s.first_detected_at DESC, s.id DESC
       LIMIT @limit`),
     events: db.prepare(`SELECT id, occurred_at, candle_time, from_state, to_state, price, detail_json
@@ -486,7 +494,8 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
     async history({ symbol = null, limit = 50 } = {}) {
       if (symbol !== null) assertSymbol(symbol);
       assertLimit(limit, HISTORY_MAX);
-      return stmt.history.all({ symbol, limit }).map((row) => ({
+      const rows = symbol === null ? stmt.historyAll.all({ limit }) : stmt.historyBySymbol.all({ symbol, limit });
+      return rows.map((row) => ({
         ...toView(row),
         events: stmt.events.all(row.id).map((e) => ({
           id: e.id,
