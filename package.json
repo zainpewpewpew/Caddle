@@ -17,7 +17,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:integration": "vitest run tests/positive tests/negative tests/edge tests/security",
+    "test:integration": "vitest run tests/integration tests/positive tests/negative tests/edge tests/security",
     "test:e2e": "playwright test",
     "test:live": "LIVE_BINANCE=1 vitest run --config vitest.live.config.js",
     "audit": "npm audit --omit=dev",
