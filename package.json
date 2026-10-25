@@ -2,7 +2,7 @@
   "name": "long-radar",
   "version": "0.1.0",
   "private": true,
-  "description": "Long Radar \u2014 terminal intelijen kripto privat (riset & decision-support).",
+  "description": "Long Radar — terminal intelijen kripto privat (riset & decision-support).",
   "type": "module",
   "license": "UNLICENSED",
   "engines": {
@@ -19,6 +19,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/positive tests/negative tests/edge tests/security",
     "test:e2e": "playwright test",
+    "test:live": "LIVE_BINANCE=1 vitest run --config vitest.live.config.js",
     "audit": "npm audit --omit=dev",
     "report:tests": "vitest run --reporter=default --reporter=json --outputFile.json=reports/vitest-results.json && playwright test && node scripts/test-report.js"
   },
