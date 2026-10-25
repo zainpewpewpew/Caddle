@@ -48,7 +48,7 @@ export async function buildApp({ config, db, clock = Date.now, hasherOptions, lo
   const { current: currentSchemaVersion } = migrate(db);
   const schemaVersion = () => currentSchemaVersion;
 
-  const repos = createRepositories(db);
+  const repos = createRepositories(db, { clock });
   const hasher = createPasswordHasher(hasherOptions);
   const sessionService = createSessionService({
     sessions: repos.sessions, users: repos.users, config: config.session, clock,

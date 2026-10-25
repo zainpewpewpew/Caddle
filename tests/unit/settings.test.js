@@ -23,6 +23,16 @@ describe('pengaturan scanner', () => {
     expect(normalizeScannerSettings(s).timeframes).toEqual(['5m', '1h']);
   });
 
+  it('EDGE-SET-003 simbol manual dengan base 1 karakter (mis. WUSDT) diterima; "USDT" saja ditolak', () => {
+    const ok = clone();
+    ok.symbols = { mode: 'manual', maxAuto: 40, manual: ['WUSDT', '1000PEPEUSDT'] };
+    expect(validateScannerSettingsRules(ok)).toEqual([]);
+    expect(validateSettings(ok)).toEqual({});
+    const bad = clone();
+    bad.symbols = { mode: 'manual', maxAuto: 40, manual: ['USDT'] };
+    expect(validateSettings(bad).manual).toBeDefined();
+  });
+
   it.each([
     ['timeframes kosong', (s) => { s.timeframes = []; }, 'timeframes'],
     ['simbol berformat salah', (s) => { s.symbols.manual = ['<script>']; }, 'manual'],

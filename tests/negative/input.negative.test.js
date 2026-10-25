@@ -61,6 +61,7 @@ describe('validasi input', () => {
   it.each([
     ['XSS pada simbol manual', (s) => { s.symbols.manual = ['<img src=x onerror=alert(1)>']; }],
     ['simbol non-USDT', (s) => { s.symbols.manual = ['BTCBUSD']; }],
+    ['simbol tanpa base asset', (s) => { s.symbols.manual = ['USDT']; }],
     ['timeframe tidak didukung', (s) => { s.timeframes = ['4h']; }],
     ['timeframe duplikat', (s) => { s.timeframes = ['5m', '5m']; }],
     ['timeframe kosong', (s) => { s.timeframes = []; }],

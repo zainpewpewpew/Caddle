@@ -1,6 +1,6 @@
 // Validasi pengaturan scanner di sisi klien (umpan balik cepat). Server tetap memvalidasi ulang.
 
-const SYMBOL_PATTERN = /^[A-Z0-9]{2,20}USDT$/;
+const SYMBOL_PATTERN = /^[A-Z0-9]{1,20}USDT$/;
 
 /** Mengembalikan objek { namaField: pesan }; kosong bila valid. */
 export function validateSettings(s) {

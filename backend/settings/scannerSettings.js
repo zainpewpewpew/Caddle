@@ -29,7 +29,7 @@ export const scannerSettingsSchema = {
           type: 'array',
           maxItems: 100,
           uniqueItems: true,
-          items: { type: 'string', pattern: '^[A-Z0-9]{2,20}USDT$' },
+          items: { type: 'string', pattern: '^[A-Z0-9]{1,20}USDT$' },
         },
       },
     },
