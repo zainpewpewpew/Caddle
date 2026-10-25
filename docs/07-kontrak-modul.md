@@ -42,7 +42,7 @@ createBinanceRestClient({ fetch = globalThis.fetch, baseUrl = 'https://fapi.bina
   getServerTime(): Promise<number>,
   getExchangeInfo(): Promise<SymbolInfo[]>,
   getKlines({ symbol, timeframe, startTime?, endTime?, limit? = 500 (maks 1500) }): Promise<Candle[]>,
-      // isClosed = closeTime < clock(); source 'rest'
+      // isClosed = closeTime < clock(); source 'rest'; worker memberi clock = serverClock.now (§4)
   get24hTickers(): Promise<Ticker24h[]>,
   getBookTickers(): Promise<BookTicker[]>,   // spreadBps dihitung
   usedWeight(): number,                      // estimasi lokal ∨ header X-MBX-USED-WEIGHT-1M
@@ -111,17 +111,26 @@ lastClosedOpenTime(now, timeframe) → number
 planBackfill({ lastOpenTime, now, timeframe, maxCandles, chunkSize = 1500 }) → Array<{ startTime, endTime, limit }>
 planGapFill({ gaps, timeframe, now, mergeWithin = 0, chunkSize = 1500 }) → Array<{ startTime, endTime, limit }>
 
+createServerClock({ getServerTime, clock = Date.now, logger, maxOffsetMs = 600_000, maxRoundTripMs = 5_000 })
+  → { now(), offsetMs(), lastSync(), sync(): Promise<{ ok, offsetMs, measuredOffsetMs, roundTripMs, reason?, message? }> }
+  // backend/ingestion/serverClock.js. offset = serverTime − titik tengah round-trip. sync() tidak pernah reject:
+  // gagal (REQUEST_FAILED/BAD_RESPONSE) → offset terakhir (awal 0) tetap; RTT > maxRoundTripMs → sampel dibuang;
+  // |offset| > maxOffsetMs → TIDAK diterapkan (OFFSET_OUT_OF_RANGE, kemungkinan jam host/NTP rusak) dan dilaporkan.
+  // getServerTime dipanggil malas (`() => rest.getServerTime()`), sehingga klien REST boleh memakai serverClock.now.
+
 createScanner({ rest, streamFactory, repos, getSettings, onClosedCandles, discoverSymbols,
-  clock, logger, setTimer, clearTimer, options /* SCANNER_DEFAULTS */ })
+  clock, logger, setTimer, clearTimer, options /* SCANNER_DEFAULTS */, serverClock? })
   → { start(), stop(), status(), liquidityOf(symbol) }
+  // serverClock: sync() di awal setiap siklus (start, rediscovery, percobaan ulang discovery) sebelum discovery;
+  // hasil ok:false dicatat sebagai error ingesti sumber 'clock' (tidak menghentikan worker).
 status() = { state, lastIngestionAt, candleLagMs, reconnects, errors, scanDurationMs, queue,
-             symbols, streams, staleStreams, ws, gaps, duplicates }
+             symbols, streams, staleStreams, ws, gaps, duplicates, clockOffsetMs /* null tanpa serverClock */ }
 onClosedCandles({ symbol, timeframe, candles, reason })   // reason: 'stream' | 'sweep' | 'gap' | …
 liquidityOf(symbol) → { quoteVolume24h, spreadBps, thresholds: { minQuoteVolume24h, maxSpreadBps } | null } | null
     // dari discovery terakhir; thresholds = settings.liquidity yang dipakai discovery tersebut
 ```
 
-Entry point `worker/index.js` (`npm run worker`) merakit klien REST, stream, scanner, dan pipeline analisis; heartbeat ditulis tiap 30 detik; `SIGINT`/`SIGTERM` → graceful shutdown.
+Entry point `worker/index.js` (`npm run worker`) merakit jam server, klien REST, stream, scanner, dan pipeline analisis; `serverClock.now` menjadi `clock` klien REST, repositori (`createRepositories(db, { clock })` — validasi "tertutup" candle), dan scanner. Heartbeat ditulis tiap 30 detik (memuat `clockOffsetMs`); `SIGINT`/`SIGTERM` → graceful shutdown.
 
 ## 5. Indikator — `backend/indicators/`
 
@@ -235,6 +244,7 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 |---|---|---|
 | `heartbeat({ at, state })` dengan metrik terpisah | `state` = snapshot `status()` lengkap | Metrik sempat hilang karena kontrak tidak cocok; satu objek menghindari drift |
 | Scanner tanpa info likuiditas | `liquidityOf(symbol)` | Risk flag `POOR_LIQUIDITY`/`WIDE_SPREAD` butuh data discovery |
+| Worker memakai jam lokal (`Date.now`) | `createServerClock` + sinkronisasi `/fapi/v1/time` tiap siklus scanner | Jam lokal yang lebih cepat membuat kline final WS ditolak ("belum tertutup"); yang lebih lambat dapat menganggap candle berjalan tertutup |
 | Risk flag likuiditas selalu dinilai dengan `DEFAULT_VIEW_PARAMS` | `liquidityOf` menyertakan `thresholds` dari `settings.liquidity`; `analyzeAt` menerima `params.view` | Batas pengguna (terutama mode manual) harus sama dengan batas yang ditampilkan di penjelasan; backtest tetap dapat memberi ambangnya sendiri |
 | `createSignalRepository(db)` | `+ { clock }`, `lastEventCandleTime` | Tes deterministik; titik awal replay yang persisten |
 | Kolom tracking (`barsInState`, `peakPrice`, `lastCandleTime`) di tabel `signals` | Disimpan di `explanation_json.tracking` | Menghindari migrasi skema saat M3; kandidat migrasi `004` (lihat `docs/05-database.md`) |

@@ -10,6 +10,7 @@ import { migrate } from '../backend/database/migrate.js';
 import { createRepositories } from '../backend/database/repositories/index.js';
 import { createBinanceRestClient } from '../backend/ingestion/binance/restClient.js';
 import { createKlineStream } from '../backend/ingestion/binance/wsClient.js';
+import { createServerClock } from '../backend/ingestion/serverClock.js';
 import { discoverSymbols } from '../backend/ingestion/symbolDiscovery.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY } from '../backend/settings/scannerSettings.js';
 import { createScanner } from './scanner.js';
@@ -70,9 +71,15 @@ async function main() {
   const db = openDatabase(config.databasePath);
   const { applied, current } = migrate(db);
   logger.info({ applied, schemaVersion: current }, 'migrasi database selesai');
-  const repos = createRepositories(db);
+
+  // Jam tersinkron waktu server Binance untuk REST, repositori (validasi "tertutup"), dan scanner.
+  // Klien REST butuh jam saat dibuat, jam server butuh klien REST untuk sinkronisasi: keduanya saling
+  // merujuk lewat fungsi yang baru dipanggil kemudian, jadi tidak ada dependensi melingkar saat konstruksi.
+  const serverClock = createServerClock({ getServerTime: () => rest.getServerTime(), clock: Date.now, logger });
+  const repos = createRepositories(db, { clock: serverClock.now });
 
   const rest = createBinanceRestClient({
+    clock: serverClock.now,
     logger,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   });
@@ -103,7 +110,8 @@ async function main() {
       const result = await pipeline.onClosedCandles({ symbol, timeframe, candles, reason });
       logger.debug({ symbol, timeframe, reason, count: candles.length, ...result }, 'candle tertutup dianalisis');
     },
-    clock: Date.now,
+    clock: serverClock.now,
+    serverClock,
     logger,
   });
 

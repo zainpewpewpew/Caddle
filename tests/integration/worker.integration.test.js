@@ -21,6 +21,7 @@ import { migrate } from '../../backend/database/migrate.js';
 import { createRepositories } from '../../backend/database/repositories/index.js';
 import { createBinanceRestClient } from '../../backend/ingestion/binance/restClient.js';
 import { createKlineStream } from '../../backend/ingestion/binance/wsClient.js';
+import { createServerClock } from '../../backend/ingestion/serverClock.js';
 import { discoverSymbols } from '../../backend/ingestion/symbolDiscovery.js';
 import { HIGHER_TIMEFRAMES, TIMEFRAME_MS } from '../../backend/market/contracts.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY, normalizeScannerSettings } from '../../backend/settings/scannerSettings.js';
@@ -442,7 +443,11 @@ const problems = (entries) => entries.filter((e) => e.level === 'warn' || e.leve
 const unexpectedSleep = async (ms) => { throw new Error(`klien REST menunggu ${ms} ms (tidak diharapkan)`); };
 
 async function createWorker({ timers, db, binance, settings, settleMs = 0, restSleep = unexpectedSleep }) {
-  const repos = createRepositories(db, { clock: timers.clock });
+  const { logger, entries: logs } = createLogger();
+  // Sama dengan worker/index.js: jam tersinkron server (offset terukur dari /fapi/v1/time) dipakai
+  // repositori, klien REST, dan scanner; jam lokal = jam palsu.
+  const serverClock = createServerClock({ getServerTime: () => rest.getServerTime(), clock: timers.clock, logger });
+  const repos = createRepositories(db, { clock: serverClock.now });
   if (settings && !(await repos.settings.get(SCANNER_SETTINGS_KEY))) {
     const saved = await repos.settings.save(SCANNER_SETTINGS_KEY, normalizeScannerSettings(settings), {
       expectedVersion: 0, userId: null, now: timers.clock(),
@@ -451,11 +456,10 @@ async function createWorker({ timers, db, binance, settings, settleMs = 0, restS
   }
   // Sama dengan worker/index.js: pengaturan dibaca dari repositori settings, default bila belum ada.
   const getSettings = async () => (await repos.settings.get(SCANNER_SETTINGS_KEY))?.value ?? DEFAULT_SCANNER_SETTINGS;
-  const { logger, entries: logs } = createLogger();
   const hub = createFakeWebSocketHub();
   const rest = createBinanceRestClient({
     fetch: binance.fetch,
-    clock: timers.clock,
+    clock: serverClock.now,
     sleep: restSleep,
     logger,
     random: () => 0.5,
@@ -498,21 +502,23 @@ async function createWorker({ timers, db, binance, settings, settleMs = 0, restS
       const result = await pipeline.onClosedCandles(series);
       analysed.push({ ...series, result });
     },
-    clock: timers.clock,
+    clock: serverClock.now,
+    serverClock,
     logger,
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
   });
   cleanups.push(() => scanner.stop());
-  return { repos, rest, hub, scanner, pipeline, alerts, analysed, saves, settles, logs };
+  return { repos, rest, hub, scanner, pipeline, alerts, analysed, saves, settles, logs, serverClock };
 }
 
-async function setup({ settings, configure, skip, delayOf, market = MARKET, settleMs, restSleep } = {}) {
+/** `serverSkewMs`: jam server Binance palsu berada sekian ms di depan jam lokal worker (negatif = di belakang). */
+async function setup({ settings, configure, skip, delayOf, market = MARKET, settleMs, restSleep, serverSkewMs = 0 } = {}) {
   const timers = createFakeTimers(START);
   const db = openDatabase(':memory:');
   cleanups.push(() => db.close());
   migrate(db);
-  const binance = createFakeBinance({ clock: timers.clock, market });
+  const binance = createFakeBinance({ clock: () => timers.clock() + serverSkewMs, market });
   configure?.(binance);
   const worker = await createWorker({
     timers, db, binance, settings, settleMs, restSleep: restSleep?.(timers),
@@ -628,9 +634,11 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const { scanner, repos, binance, hub, db, rest, analysed, logs } = await setup();
     await scanner.start();
 
-    // Discovery: tiga endpoint publik masing-masing sekali; bootstrap tepat satu request per simbol×timeframe.
+    // Sinkronisasi jam server lalu discovery: empat endpoint publik masing-masing sekali (waktu server lebih dulu);
+    // bootstrap tepat satu request per simbol×timeframe.
+    expect(binance.calls[0].path).toBe('/fapi/v1/time');
     expect(binance.calls.filter((c) => c.path !== '/fapi/v1/klines').map((c) => c.path).sort())
-      .toEqual(['/fapi/v1/exchangeInfo', '/fapi/v1/ticker/24hr', '/fapi/v1/ticker/bookTicker']);
+      .toEqual(['/fapi/v1/exchangeInfo', '/fapi/v1/ticker/24hr', '/fapi/v1/ticker/bookTicker', '/fapi/v1/time']);
     const lastClosed = { '5m': at5m(BOOT - 1), '15m': T0 + 15 * M15, '1h': T0 + 3 * H1 };
     const expectedBootstrap = [SA, DOWN].flatMap((symbol) => ['5m', '15m', '1h']
       .map((tf) => klineParams(symbol, tf, lastClosed[tf] - 499 * TIMEFRAME_MS[tf], 500)));
@@ -666,7 +674,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       at: START,
       state: {
         state: 'running', lastIngestionAt: START, candleLagMs: 7_001, reconnects: 0, errors: 0, scanDurationMs: 0, queue: 0,
-        symbols: 2, streams: 6, staleStreams: 0, ws: 'open', gaps: 0, duplicates: 0,
+        symbols: 2, streams: 6, staleStreams: 0, ws: 'open', gaps: 0, duplicates: 0, clockOffsetMs: 0,
       },
     });
 
@@ -1036,6 +1044,65 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
     expect(scanner.status()).toMatchObject({ gaps: 1, errors: 1 });
     expect(problems(logs)).toEqual(['galat scanner']);
+  });
+
+  it('INT-WRK-014 jam server 1 detik di depan jam lokal: sync /fapi/v1/time → offset +1000; kline final yang tiba 500 ms sebelum closeTime menurut jam lokal langsung diterima (tanpa error validasi & tanpa backfill gap)', async () => {
+    const SKEW = 1_000;
+    // Binance mengirim kline final 0,5 detik setelah candle tutup menurut jam SERVER = 0,5 detik sebelum jam lokal.
+    const { scanner, repos, binance, driver, analysed, alerts, logs, serverClock } = await setup({
+      serverSkewMs: SKEW, delayOf: () => CLOSE_DELAY_MS - SKEW,
+    });
+    await scanner.start();
+    expect(serverClock.offsetMs()).toBe(SKEW);
+    expect(scanner.status()).toMatchObject({ clockOffsetMs: SKEW, errors: 0 });
+    expect((await repos.ingestion.getStatus()).lastRun).toMatchObject({ startedAt: START + SKEW, errors: 0 });
+
+    await driver.runUntil(END);
+
+    expect((await repos.ingestion.getStatus()).recentErrors).toEqual([]);
+    expect(binance.klineCalls()).toHaveLength(6); // hanya bootstrap: tidak ada backfill gap
+    // /fapi/v1/time dipanggil di start dan tiap rediscovery (2 jam → 2 kali), selalu sebelum exchangeInfo.
+    const paths = binance.calls.map((c) => c.path).filter((p) => p === '/fapi/v1/time' || p === '/fapi/v1/exchangeInfo');
+    expect(paths).toEqual(['/fapi/v1/time', '/fapi/v1/exchangeInfo', '/fapi/v1/time', '/fapi/v1/exchangeInfo', '/fapi/v1/time', '/fapi/v1/exchangeInfo']);
+    const series = analysed.filter((a) => a.symbol === SA && a.timeframe === '5m');
+    expect(series.map((a) => [a.reason, a.candles.map((c) => c.openTime)])).toEqual(range(BOOT, LAST).map((i) => ['live', [at5m(i)]]));
+    for (const symbol of [SA, DOWN]) {
+      expect(await storedSeries(repos, symbol, '5m')).toEqual(expectedSeries(symbol, '5m', [[0, BOOT - 1, 'rest'], [BOOT, LAST, 'ws']]));
+      expect(await storedSeries(repos, symbol, '1h')).toEqual(expectedSeries(symbol, '1h', [[0, 3, 'rest'], [4, 5, 'ws']]));
+    }
+
+    const reference = referenceReplay(SA, LIQ_SA);
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
+    expect(scanner.status()).toMatchObject({ gaps: 0, errors: 0, clockOffsetMs: SKEW, state: 'running' });
+    expect((await repos.ingestion.getStatus()).heartbeat.state.clockOffsetMs).toBe(SKEW);
+    expect(problems(logs)).toEqual([]);
+  });
+
+  it('INT-WRK-015 /fapi/v1/time gagal (HTTP 400) saat start → worker tetap bootstrap dengan offset 0, error ingesti "clock" tercatat; rediscovery berikutnya menyinkronkan ulang', async () => {
+    let failTime = true;
+    const { scanner, repos, binance, driver, serverClock, logs } = await setup({
+      serverSkewMs: 300,
+      configure: (b) => {
+        const fetch = b.fetch;
+        b.fetch = async (href, init) => (failTime && new URL(href).pathname === '/fapi/v1/time'
+          ? new Response(JSON.stringify({ code: -1100, msg: 'Illegal characters found in a parameter.' }), { status: 400 })
+          : fetch(href, init));
+      },
+    });
+    await scanner.start();
+    expect(serverClock.offsetMs()).toBe(0);
+    expect(scanner.status()).toMatchObject({ state: 'running', symbols: 2, streams: 6, clockOffsetMs: 0, errors: 1 });
+    expect((await repos.ingestion.getStatus()).recentErrors).toEqual([expect.objectContaining({
+      source: 'clock', message: 'sinkronisasi jam server gagal: Binance /fapi/v1/time gagal: HTTP 400 — Illegal characters found in a parameter.',
+    })]);
+    expect(binance.klineCalls()).toHaveLength(6);
+
+    failTime = false;
+    await driver.runUntil(START + H1 + 1_000);
+    expect(serverClock.offsetMs()).toBe(300);
+    expect(scanner.status().clockOffsetMs).toBe(300);
+    expect(problems(logs)).toEqual(['sinkronisasi jam server gagal, offset terakhir dipakai', 'galat scanner']);
   });
 
   it('INT-WRK-009 histori panjang: bootstrap 500 candle penuh, konteks HTF bertrend nyata; candle 15m/1h yang tiba SETELAH candle 5m ditunggu (settleMs seperti worker/index.js) → snapshot per candle = replay murni', async () => {

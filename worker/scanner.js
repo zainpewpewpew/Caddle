@@ -6,7 +6,9 @@
 // - duplikat/out-of-order tetap disimpan (idempoten) tetapi tidak memicu analisis ulang;
 // - sweep berkala menambal stream yang tertinggal (fallback bila WS diam);
 // - rediscovery periodik menangani simbol baru & delisting;
-// - semua error dicatat (dengan throttle) dan tidak menghentikan proses.
+// - semua error dicatat (dengan throttle) dan tidak menghentikan proses;
+// - bila `serverClock` diberikan, jam disinkronkan dengan waktu server Binance di awal setiap siklus
+//   (start, rediscovery, dan percobaan ulang discovery); `clock` sebaiknya = serverClock.now.
 // Semua waktu lewat `clock` dan semua timer lewat setTimer/clearTimer injeksi.
 
 import { TIMEFRAMES, TIMEFRAME_MS, expectedCloseTime } from '../backend/market/contracts.js';
@@ -77,7 +79,7 @@ function createLimiter(max) {
   };
 }
 
-function assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles }) {
+function assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, serverClock }) {
   for (const m of ['getExchangeInfo', 'get24hTickers', 'getBookTickers', 'getKlines']) {
     if (typeof rest?.[m] !== 'function') throw new TypeError(`rest.${m} wajib ada`);
   }
@@ -95,6 +97,10 @@ function assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, 
   if (typeof getSettings !== 'function') throw new TypeError('getSettings wajib berupa fungsi');
   if (typeof discoverSymbols !== 'function') throw new TypeError('discoverSymbols wajib berupa fungsi');
   if (typeof onClosedCandles !== 'function') throw new TypeError('onClosedCandles wajib berupa fungsi');
+  if (serverClock !== undefined && serverClock !== null
+    && (typeof serverClock.sync !== 'function' || typeof serverClock.offsetMs !== 'function')) {
+    throw new TypeError('serverClock harus { sync(), offsetMs() }');
+  }
 }
 
 /** Normalisasi pengaturan scanner (lihat backend/settings/scannerSettings.js). */
@@ -130,7 +136,10 @@ function liquidityThresholds(raw) {
  *   discoverSymbols: (args: { symbols: object[], tickers: object[], bookTickers: object[], settings: object })
  *     => { selected: Array<{ symbol: string }>, rejected: object[] } | Promise<object>,
  *   clock?: () => number, logger?: object, setTimer?: Function, clearTimer?: Function, options?: object,
+ *   serverClock?: { sync(): Promise<{ ok: boolean, message?: string }>, offsetMs(): number },
  * }} deps
+ *   serverClock: jam tersinkron server (backend/ingestion/serverClock.js); sync() dipanggil tiap siklus,
+ *   kegagalan dicatat sebagai error ingesti sumber 'clock' (offset terakhir tetap dipakai).
  * @returns {{ start(): Promise<void>, stop(): Promise<void>, status(): object, liquidityOf(symbol: string): object|null }}
  */
 export function createScanner({
@@ -145,8 +154,9 @@ export function createScanner({
   setTimer = globalThis.setTimeout,
   clearTimer = globalThis.clearTimeout,
   options = {},
+  serverClock = null,
 }) {
-  assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles });
+  assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, serverClock });
   const cfg = { ...SCANNER_DEFAULTS, ...options };
   const limiter = createLimiter(cfg.restConcurrency);
 
@@ -565,10 +575,23 @@ export function createScanner({
     return counts.reduce((a, b) => a + b, 0);
   }
 
+  /** Sinkronisasi jam server; tidak pernah melempar — kegagalan dicatat, offset terakhir tetap dipakai. */
+  async function syncClock() {
+    if (!serverClock) return;
+    try {
+      const result = await limiter.run(() => serverClock.sync());
+      if (result?.ok === false) await report('clock', result.message ?? 'sinkronisasi jam server gagal');
+    } catch (err) {
+      await report('clock', err);
+    }
+  }
+
   async function runCycle(kind) {
-    const startedAt = clock();
     const stats = { candles: 0, errors: 0 };
     cycleStats = stats;
+    // Jam disinkronkan dulu agar waktu siklus, validasi "tertutup", dan rencana backfill memakai waktu server.
+    await syncClock();
+    const startedAt = clock();
     let nextDelay = cfg.rediscoveryMs;
     try {
       await loadSettings();
@@ -637,6 +660,7 @@ export function createScanner({
       ws: ws?.state ?? null,
       gaps: counters.gaps,
       duplicates: counters.duplicates,
+      clockOffsetMs: serverClock ? serverClock.offsetMs() : null,
     };
   }
 

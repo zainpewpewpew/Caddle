@@ -233,6 +233,7 @@ function setup({
   streamFactory,
   onClosedCandles,
   liquidity = DEFAULT_SCANNER_SETTINGS.liquidity,
+  serverClock,
 } = {}) {
   const log = [];
   const timers = createFakeTimers();
@@ -261,6 +262,7 @@ function setup({
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
     options,
+    serverClock,
   });
   return { scanner, rest, repos, streams, timers, analysed, log, settings };
 }
@@ -701,6 +703,48 @@ describe('heartbeat, status, stop', () => {
     expect(rest.klineCalls()).toHaveLength(3);
     expect(scanner.status().state).toBe('stopped');
     expect(timers.pending.size).toBe(0);
+  });
+
+  it('UNIT-SCN-013 serverClock: sync di awal setiap siklus (start & rediscovery) sebelum discovery; gagal → error ingesti "clock", scanner tetap jalan; offset di status/heartbeat', async () => {
+    const order = [];
+    const results = [{ ok: true, offsetMs: 250 }, { ok: false, offsetMs: 250, message: 'sinkronisasi jam server gagal: HTTP 503' }];
+    let offset = 0;
+    const serverClock = {
+      sync: vi.fn(async () => {
+        order.push('sync');
+        const r = results.shift();
+        offset = r.offsetMs;
+        return r;
+      }),
+      offsetMs: () => offset,
+    };
+    const { scanner, rest, repos, timers } = setup({ serverClock });
+    const getExchangeInfo = rest.getExchangeInfo;
+    rest.getExchangeInfo = async () => { order.push('exchangeInfo'); return getExchangeInfo(); };
+    await scanner.start();
+    expect(order).toEqual(['sync', 'exchangeInfo']);
+    expect(scanner.status()).toMatchObject({ state: 'running', clockOffsetMs: 250, errors: 0 });
+    expect(repos.ingestion.heartbeat.mock.calls.at(-1)[0].state.clockOffsetMs).toBe(250);
+
+    await timers.advance(3_600_000);
+    expect(order).toEqual(['sync', 'exchangeInfo', 'sync', 'exchangeInfo']);
+    expect(recordedErrors(repos)).toEqual([{ at: START + 3_600_000, source: 'clock', message: 'sinkronisasi jam server gagal: HTTP 503' }]);
+    expect(scanner.status()).toMatchObject({ state: 'running', clockOffsetMs: 250, errors: 1, symbols: 2 });
+    // sync yang melempar (kontrak dilanggar) juga hanya dicatat
+    serverClock.sync.mockImplementationOnce(async () => { throw new Error('rusak'); });
+    await timers.advance(3_600_000);
+    expect(recordedErrors(repos).at(-1)).toMatchObject({ source: 'clock', message: 'rusak' });
+    expect(scanner.status().state).toBe('running');
+    await scanner.stop();
+  });
+
+  it('EDGE-SCN-007 tanpa serverClock → clockOffsetMs null; serverClock tanpa sync()/offsetMs() ditolak', async () => {
+    const { scanner, rest, repos, streams } = setup();
+    await scanner.start();
+    expect(scanner.status().clockOffsetMs).toBeNull();
+    await scanner.stop();
+    const base = { rest, repos, streamFactory: streams.factory, getSettings: async () => ({}), discoverSymbols: fakeDiscover };
+    expect(() => createScanner({ ...base, serverClock: { sync: async () => ({ ok: true }) } })).toThrow(TypeError);
   });
 
   it('NEG-SCN-006 dependensi wajib tidak lengkap ditolak', () => {
