@@ -35,7 +35,6 @@ export const SCANNER_DEFAULTS = Object.freeze({
   closeMarginMs: CLOSE_MARGIN_MS,
   // Candle dianggap "terlewat" bila sudah tertutup lebih lama dari grace ini tanpa diterima.
   sweepGraceMs: 30_000,
-  reconnectSweepGraceMs: 5_000,
   // Gap yang lebih panjang dipotong ke candle paling baru (sisanya ditutup repair findGaps).
   maxGapCandles: 10_000,
   gapMergeWithin: 50,
@@ -489,7 +488,7 @@ export function createScanner({
     } else if (s.event === 'state') {
       logger.info({ state: s.state, reconnects: s.reconnects }, 'state WebSocket');
       if (s.state === 'open') {
-        if (meta.down) track(sweep('reconnect', cfg.reconnectSweepGraceMs));
+        if (meta.down) reconnectSweep();
         meta.opened = true;
         meta.down = false;
       } else if (meta.opened) {
@@ -548,6 +547,16 @@ export function createScanner({
       }));
     }
     return Promise.all(tasks);
+  }
+
+  /**
+   * Catch-up setelah (re)connect: Binance tidak mengulang kline final yang terkirim saat socket putus. Semua
+   * candle yang tutup sebelum socket dibuka harus diambil REST — tanpa grace selain margin penutupan. Yang tutup
+   * kurang dari margin sebelum open belum boleh diambil REST, jadi sweep diulang sekali setelah margin berlalu.
+   */
+  function reconnectSweep() {
+    track(sweep('reconnect', cfg.closeMarginMs));
+    schedule('reconnect-sweep', cfg.closeMarginMs, () => sweep('reconnect', cfg.closeMarginMs));
   }
 
   function scheduleSweep() {

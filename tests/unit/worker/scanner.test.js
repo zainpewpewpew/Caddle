@@ -614,6 +614,25 @@ describe('event WebSocket', () => {
     expect(analysed).toHaveLength(1);
     await scanner.stop();
   });
+
+  it('UNIT-SCN-024 socket putus 1 d sebelum close dan terbuka lagi 1,5 d sesudahnya (kline final terlewat) → candle itu diambil REST begitu margin penutupan berlalu (≈ 2 d setelah open), tidak menunggu candle berikutnya/sweep berkala; tanpa duplikat', async () => {
+    const { scanner, streams, analysed, timers, rest } = await running();
+    const s = streams.current();
+    const closeAt = LAST_CLOSED + 2 * M5; // candle LAST_CLOSED+1 tutup di sini
+    timers.setNow(closeAt - 1_000);
+    s.opts.onState({ event: 'state', state: 'reconnecting' });
+    timers.setNow(closeAt + 1_500);
+    s.opts.onState({ event: 'state', state: 'open' });
+    await flush();
+    expect(analysed).toEqual([]); // baru 1,5 d sejak close (< margin 2 d): belum boleh diambil REST
+    await timers.advance(2_000);
+    expect(analysed.map((a) => [a.reason, ot(a.candles)])).toEqual([['reconnect', [LAST_CLOSED + M5]]]);
+    expect(klinesOf(rest).at(-1)).toMatchObject({ startTime: LAST_CLOSED + M5, limit: 1 });
+    await timers.advance(60_000);
+    expect(analysed).toHaveLength(1);
+    await scanner.stop();
+    expect(timers.pending.size).toBe(0);
+  });
 });
 
 describe('margin penutupan candle REST (jam worker sedikit di depan Binance)', () => {
@@ -1200,7 +1219,9 @@ describe('integrasi dengan klien WebSocket nyata (WebSocket palsu)', () => {
 
     const kinds = log.map((e) => e[0]);
     expect(kinds.indexOf('klines')).toBeLessThan(kinds.indexOf('analysis'));
-    expect(rest.klineCalls().at(-1)).toMatchObject({ startTime: LAST_CLOSED + 2 * M5, limit: 2 });
+    // (Candle konteks 15m yang tutup 2 d sebelum open juga disusul REST — tidak dianalisis.)
+    expect(klinesOf(rest).at(-1)).toMatchObject({ startTime: LAST_CLOSED + 2 * M5, limit: 2 });
+    expect(klinesOf(rest, '15m').at(-1)).toMatchObject({ startTime: LAST_CLOSED + M5, limit: 1 }); // candle 15m T0+60 menit
     const all = analysed.flatMap((a) => ot(a.candles));
     expect(all).toEqual([LAST_CLOSED + M5, LAST_CLOSED + 2 * M5, LAST_CLOSED + 3 * M5]);
     expect(scanner.status()).toMatchObject({ reconnects: 1, state: 'running' });
