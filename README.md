@@ -9,7 +9,7 @@ Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — men
 | Milestone | Cakupan | Status |
 |---|---|---|
 | 1 — Fondasi | Audit, arsitektur, autentikasi, shell frontend, API, migrasi | **Selesai (di `main`)** |
-| 2 — Data pasar | Binance REST/WS, candle historis, validasi, worker | **Selesai (di `main`; REST live terverifikasi, WebSocket live menunggu uji ulang, lihat laporan)** |
+| 2 — Data pasar | Binance REST/WS, candle historis, validasi, worker | **Selesai (di `main`; REST + WebSocket live terverifikasi di Mac pemilik, lihat laporan)** |
 | 3 — Mesin pola | SA, PVA, hybrid timeframe, skor, state machine | **Selesai (di `main`)** |
 | 4 — Dashboard premium | Screener, grafik, real-time | Belum dimulai |
 | 5 — Pattern Discovery Lab | Upload, anotasi, definisi pola berversi | Belum dimulai |
