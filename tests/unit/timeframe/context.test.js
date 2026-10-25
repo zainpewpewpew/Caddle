@@ -187,6 +187,39 @@ describe('buildTimeframeContext — tanpa lookahead', () => {
     expect(lag1.trends['1h'].trend).toBe('BULLISH');
   });
 
+  it('EDGE-HTF-007 candle HTF hilang di luar jendela settle → STALE_DATA (1h tertinggal 1 bar pada 10:54:59.999, 15m pada 10:09:59.999); tepat di batas bersama tetap diterima', () => {
+    const m5 = (endMs) => series('5m', 60, flat, { end: endMs });
+    // 1h 09:00 sudah tutup 55 menit lalu tetapi belum tersimpan; candle 1h terakhir tutup 08:59:59.999.
+    const late1h = buildTimeframeContext({
+      baseTimeframe: '5m', evaluationTime: at(10, 54, 59, 999),
+      candlesByTimeframe: { '5m': m5(at(10, 55)), '15m': series('15m', 60, up, { end: at(10, 45) }), '1h': series('1h', 60, up, { end: at(9, 0) }) },
+    });
+    expect(late1h.trends['1h']).toMatchObject({ trend: null, reasons: ['STALE_DATA'], asOf: at(8, 59, 59, 999) });
+    expect(late1h.trends['15m'].trend).toBe('BULLISH');
+    expect(late1h.alignment).toBe('PARTIALLY_CONFIRMED');
+    // 15m 09:45 tutup 10 menit lalu tetapi belum tersimpan (pertengahan bar 15m).
+    const late15 = buildTimeframeContext({
+      baseTimeframe: '5m', evaluationTime: at(10, 9, 59, 999),
+      candlesByTimeframe: { '5m': m5(at(10, 10)), '15m': series('15m', 60, up, { end: at(9, 45) }), '1h': series('1h', 60, up, { end: at(10, 0) }) },
+    });
+    expect(late15.trends['15m']).toMatchObject({ trend: null, reasons: ['STALE_DATA'], asOf: at(9, 44, 59, 999) });
+    // Tepat di batas bersama (candle 1h 10:00 tutup bersamaan dengan candle 5m) → race ingesti, diterima.
+    const boundary = buildTimeframeContext({
+      baseTimeframe: '5m', evaluationTime: at(10, 59, 59, 999),
+      candlesByTimeframe: { '5m': m5(at(11, 0)), '15m': series('15m', 60, up, { end: at(10, 45) }), '1h': series('1h', 60, up, { end: at(10, 0) }) },
+    });
+    expect(boundary.trends['1h']).toMatchObject({ trend: 'BULLISH', asOf: at(9, 59, 59, 999) });
+    expect(boundary.trends['15m']).toMatchObject({ trend: 'BULLISH', asOf: at(10, 44, 59, 999) });
+    // Jendela settle dapat diperlebar (10 menit) → 1h yang tutup 5 menit lalu masih ditoleransi.
+    const wide = buildTimeframeContext({
+      baseTimeframe: '5m', evaluationTime: at(10, 4, 59, 999), params: { settleWindowMs: 600_000 },
+      candlesByTimeframe: { '5m': m5(at(10, 5)), '15m': series('15m', 60, up, { end: at(10, 0) }), '1h': series('1h', 60, up, { end: at(9, 0) }) },
+    });
+    expect(wide.trends['1h'].trend).toBe('BULLISH');
+    expect(() => buildTimeframeContext({ baseTimeframe: '5m', evaluationTime: at(10, 4, 59, 999), candlesByTimeframe: {}, params: { settleWindowMs: -1 } }))
+      .toThrow(RangeError);
+  });
+
   it('UNIT-HTF-005 trend dasar BEARISH menurunkan ALIGNED menjadi PARTIALLY_CONFIRMED', () => {
     const ctx = buildTimeframeContext({
       baseTimeframe: '15m', evaluationTime: at(9, 59, 59, 999),

@@ -11,10 +11,18 @@ import { classifyTrend } from './trend.js';
 
 export const DEFAULT_CONTEXT_PARAMS = Object.freeze({
   /**
-   * Toleransi keterlambatan data HTF (dalam bar HTF). 1 = candle HTF yang tutup bersamaan
-   * dengan candle dasar boleh belum masuk (race ingesti); lebih dari itu → 'STALE_DATA'.
+   * Toleransi keterlambatan data HTF (dalam bar HTF) SELAMA jendela settle: 1 = candle HTF yang tutup
+   * bersamaan dengan candle dasar boleh belum masuk (race ingesti antar-stream). Di luar jendela settle
+   * toleransinya maxStaleBars − 1 (default 0): candle HTF yang sudah lama tutup tetapi tidak tersimpan
+   * → 'STALE_DATA', bukan trend dari data yang lebih tua.
    */
   maxStaleBars: 1,
+  /**
+   * Jendela settle (ms) setelah closeTime candle HTF terakhir yang seharusnya sudah tutup. evaluationTime
+   * = closeTime candle dasar yang selaras batas timeframe, sehingga nilai apa pun < durasi timeframe dasar
+   * berarti "hanya tepat di batas bersama" (selisih 0); bukan batas → selisih ≥ 1 bar dasar.
+   */
+  settleWindowMs: 60_000,
 });
 
 /**
@@ -35,7 +43,7 @@ export function lastClosedCloseTime(t, timeframe) {
   return Math.floor((t + 1) / ms) * ms - 1;
 }
 
-function trendFor(timeframe, candles, t, { maxStaleBars, trendParams }) {
+function trendFor(timeframe, candles, t, { maxStaleBars, settleWindowMs, trendParams }) {
   if (candles !== undefined && !Array.isArray(candles)) throw new TypeError(`Candle ${timeframe} harus array`);
   for (const c of candles ?? []) {
     if (c.timeframe !== undefined && c.timeframe !== timeframe) {
@@ -45,8 +53,12 @@ function trendFor(timeframe, candles, t, { maxStaleBars, trendParams }) {
   const closed = closedAsOf(candles ?? [], t);
   if (closed.length === 0) return { trend: null, reasons: ['NO_DATA'], asOf: null, candleCount: 0 };
   const asOf = closed[closed.length - 1].closeTime;
-  const lagBars = Math.round((lastClosedCloseTime(t, timeframe) - asOf) / TIMEFRAME_MS[timeframe]);
-  if (lagBars > maxStaleBars) return { trend: null, reasons: ['STALE_DATA'], asOf, candleCount: closed.length };
+  const expectedClose = lastClosedCloseTime(t, timeframe);
+  const lagBars = Math.round((expectedClose - asOf) / TIMEFRAME_MS[timeframe]);
+  // Candle yang hilang hanya ditoleransi sesaat setelah ia tutup (race ingesti), bukan kapan saja.
+  const settling = t - expectedClose <= settleWindowMs;
+  const allowedLag = settling ? maxStaleBars : Math.max(0, maxStaleBars - 1);
+  if (lagBars > allowedLag) return { trend: null, reasons: ['STALE_DATA'], asOf, candleCount: closed.length };
   const { trend, reasons, score } = classifyTrend(closed, trendParams);
   return { trend, reasons, score, asOf, candleCount: closed.length };
 }
@@ -55,7 +67,7 @@ function trendFor(timeframe, candles, t, { maxStaleBars, trendParams }) {
  * Membangun konteks multi-timeframe.
  * @param {{ baseTimeframe: '5m'|'15m'|'1h', evaluationTime: number,
  *   candlesByTimeframe: Record<string, import('../market/contracts.js').Candle[]>,
- *   params?: { maxStaleBars?: number, trend?: object } }} input
+ *   params?: { maxStaleBars?: number, settleWindowMs?: number, trend?: object } }} input
  * @returns {{ alignment: string, trends: Record<string, { trend: string|null, reasons: string[],
  *   score?: number, asOf: number|null, candleCount: number }> }}
  *   `trends` memuat timeframe dasar (kunci pertama) lalu setiap HTF.
@@ -70,7 +82,9 @@ export function buildTimeframeContext({ baseTimeframe, evaluationTime, candlesBy
   }
   const maxStaleBars = params.maxStaleBars ?? DEFAULT_CONTEXT_PARAMS.maxStaleBars;
   if (!Number.isInteger(maxStaleBars) || maxStaleBars < 0) throw new RangeError('maxStaleBars harus bilangan bulat ≥ 0');
-  const opts = { maxStaleBars, trendParams: params.trend ?? {} };
+  const settleWindowMs = params.settleWindowMs ?? DEFAULT_CONTEXT_PARAMS.settleWindowMs;
+  if (!Number.isInteger(settleWindowMs) || settleWindowMs < 0) throw new RangeError('settleWindowMs harus bilangan bulat ≥ 0');
+  const opts = { maxStaleBars, settleWindowMs, trendParams: params.trend ?? {} };
 
   const trends = {};
   trends[baseTimeframe] = trendFor(baseTimeframe, candlesByTimeframe[baseTimeframe], evaluationTime, opts);
