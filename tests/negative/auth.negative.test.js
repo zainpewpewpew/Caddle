@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ADMIN, TEST_ORIGIN, createTestApp, login } from '../helpers/testApp.js';
+import { createPasswordHasher } from '../../backend/auth/password.js';
+import { changePassword } from '../../backend/users/userAdmin.js';
+import { gateHasher } from '../helpers/gatedHasher.js';
+import { ADMIN, TEST_HASHER_OPTIONS, TEST_ORIGIN, createTestApp, login } from '../helpers/testApp.js';
 
 const PROTECTED = [
   ['GET', '/api/auth/session'], ['GET', '/api/auth/sessions'], ['POST', '/api/auth/logout'],
@@ -133,5 +136,87 @@ describe('CSRF & origin', () => {
   ])('NEG-CSRF-005 content-type "simple request" %s ditolak (415)', async (type, payload) => {
     const res = await ctx.app.inject({ method: 'POST', url: '/api/auth/login', headers: { 'content-type': type, origin: TEST_ORIGIN }, payload });
     expect(res.statusCode).toBe(415);
+  });
+});
+
+describe('login yang sedang berjalan vs ganti kata sandi dari proses lain', () => {
+  const NEW_PASSWORD = 'kata-sandi-baru-yang-kuat';
+  // `npm run user:password` berjalan di proses lain dengan hasher sendiri (tidak ikut ditahan gerbang).
+  const cliHasher = createPasswordHasher(TEST_HASHER_OPTIONS);
+  let ctx;
+  let gate;
+
+  const changeViaCli = () => {
+    const { repos } = ctx.app.services;
+    return changePassword({ users: repos.users, sessions: repos.sessions, audit: repos.audit, hasher: cliHasher, clock: ctx.clock },
+      { username: 'mary', password: NEW_PASSWORD });
+  };
+  const hashOfMary = () => ctx.db.prepare("SELECT password_hash FROM users WHERE username = 'mary'").get().password_hash;
+  const activeSessionsOfMary = () => ctx.db.prepare(`SELECT COUNT(*) n FROM sessions s JOIN users u ON u.id = s.user_id
+                                                     WHERE u.username = 'mary' AND s.revoked_at IS NULL`).get().n;
+
+  beforeEach(async () => {
+    ctx = await createTestApp({ env: { LOGIN_RATE_LIMIT_MAX: '50' } });
+    gate = gateHasher(ctx.app.services.hasher);
+  });
+  afterEach(async () => { await ctx.app.close(); });
+
+  it('NEG-AUTH-010 kata sandi diganti selama verifikasi Argon2 login → login gagal generik, tanpa cookie & tanpa sesi', async () => {
+    const verifying = gate.hold('verify');
+    const pending = login(ctx.app); // kata sandi lama yang (masih) benar
+    await verifying.arrived(); // hash lama sudah dibaca & cocok; sesi belum dibuat
+    // Belum ada sesi yang dapat dicabut — inilah jendela yang dulu meloloskan sesi baru.
+    expect((await changeViaCli()).revokedSessions).toBe(0);
+    verifying.release();
+
+    const { res, cookie } = await pending;
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ error: 'LOGIN_FAILED', message: 'Username atau kata sandi salah' });
+    expect(cookie).toBeUndefined();
+    expect(activeSessionsOfMary()).toBe(0);
+
+    const audit = await ctx.app.services.repos.audit.recent(10);
+    expect(audit.find((e) => e.action === 'auth.login')).toMatchObject({ outcome: 'failure', detail: { reason: 'bad_password', passwordChanged: true } });
+    expect(audit.some((e) => e.action === 'auth.login' && e.outcome === 'success')).toBe(false);
+    // Dihitung sebagai percobaan gagal (penguncian tetap berlaku), bukan login sukses.
+    expect(ctx.db.prepare("SELECT failed_login_count, last_login_at FROM users WHERE username = 'mary'").get())
+      .toEqual({ failed_login_count: 1, last_login_at: null });
+  });
+
+  it('NEG-AUTH-011 sesudah balapan: kata sandi lama ditolak, kata sandi baru diterima', async () => {
+    const verifying = gate.hold('verify');
+    const pending = login(ctx.app);
+    await verifying.arrived();
+    await changeViaCli();
+    verifying.release();
+    expect((await pending).res.statusCode).toBe(401);
+
+    expect((await login(ctx.app)).res.statusCode).toBe(401);
+    const fresh = await login(ctx.app, { username: 'mary', password: NEW_PASSWORD });
+    expect(fresh.res.statusCode).toBe(200);
+    expect((await ctx.app.inject({ url: '/api/auth/session', headers: { cookie: fresh.cookie } })).statusCode).toBe(200);
+  });
+
+  it('NEG-AUTH-012 rehash saat login tidak menimpa hash baru dari ganti kata sandi (compare-and-swap)', async () => {
+    // Hash mary dibuat dengan parameter lama → login sukses berikutnya me-rehash kata sandi yang dikirim.
+    const legacy = createPasswordHasher({ ...TEST_HASHER_OPTIONS, timeCost: TEST_HASHER_OPTIONS.timeCost + 1 });
+    ctx.db.prepare("UPDATE users SET password_hash = ? WHERE username = 'mary'").run(await legacy.hash(ADMIN.password));
+    expect(ctx.app.services.hasher.needsRehash(hashOfMary())).toBe(true);
+
+    const rehashing = gate.hold('hash');
+    const pending = login(ctx.app);
+    await rehashing.arrived(); // verify lolos; rehash kata sandi LAMA dengan parameter sekarang sedang dibuat
+    await changeViaCli();
+    const changed = hashOfMary();
+    rehashing.release();
+
+    const { res } = await pending;
+    // Hash baru tetap utuh: rehash kata sandi lama tidak boleh menimpanya.
+    expect(hashOfMary()).toBe(changed);
+    expect(await cliHasher.verify(hashOfMary(), NEW_PASSWORD)).toBe(true);
+    expect(await cliHasher.verify(hashOfMary(), ADMIN.password)).toBe(false);
+    expect(res.statusCode).toBe(401);
+    expect(activeSessionsOfMary()).toBe(0);
+    expect((await login(ctx.app, { username: 'mary', password: NEW_PASSWORD })).res.statusCode).toBe(200);
   });
 });

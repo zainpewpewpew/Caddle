@@ -18,12 +18,30 @@ export function createSessionRepository(db) {
                             WHERE user_id = @userId AND revoked_at IS NULL AND expires_at > @now AND idle_expires_at > @now
                             ORDER BY last_seen_at DESC`),
     purge: db.prepare('DELETE FROM sessions WHERE expires_at <= @before OR (revoked_at IS NOT NULL AND revoked_at <= @before)'),
+    passwordHashOf: db.prepare('SELECT password_hash FROM users WHERE id = ?'),
   };
+
+  // Pemeriksaan hash + insert sesi dalam SATU transaksi IMMEDIATE (kunci tulis sebelum SELECT).
+  const insertIfPasswordUnchanged = db.transaction((row, passwordHash) => {
+    const user = stmt.passwordHashOf.get(row.userId);
+    if (!user || user.password_hash !== passwordHash) return null;
+    return Number(stmt.insert.run(row).lastInsertRowid);
+  });
 
   return {
     async create(row) {
       const info = stmt.insert.run(row);
       return Number(info.lastInsertRowid);
+    },
+    /**
+     * Seperti create, tetapi hanya bila password_hash pengguna masih `passwordHash` (hash yang diverifikasi
+     * login). Ganti kata sandi menulis hash baru LALU mencabut semua sesi, sehingga sesi yang lolos
+     * pemeriksaan ini sudah ada saat pencabutan, dan login yang tiba sesudah hash baru tertulis ditolak.
+     * PostgreSQL: SELECT ... FOR UPDATE pada baris users di transaksi yang sama.
+     * @returns {Promise<number | null>} id sesi; null bila kata sandi sudah diganti atau pengguna tidak ada
+     */
+    async createIfPasswordUnchanged(row, { passwordHash }) {
+      return insertIfPasswordUnchanged.immediate(row, passwordHash);
     },
     async findByTokenHash(tokenHash) {
       return stmt.byHash.get(tokenHash) ?? null;

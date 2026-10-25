@@ -18,7 +18,7 @@ describe('akun default lewat API login asli', () => {
 
   const seed = () => ensureDefaultUser({
     users: deps.repos.users, audit: deps.repos.audit, hasher: deps.hasher, maxUsers: ctx.config.maxUsers,
-    clock: ctx.clock, config: loadConfig({}), log: { warn: vi.fn() },
+    clock: ctx.clock, config: loadConfig({}), log: { info: vi.fn(), warn: vi.fn() },
   });
 
   it('SEC-DEF-004 buildApp sendiri (harness tes/E2E) tidak pernah membuat akun default', async () => {

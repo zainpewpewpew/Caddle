@@ -110,6 +110,20 @@ describe('kasus tepi', () => {
     }
   });
 
+  it('EDGE-AUTH-008 hash berparameter lama di-rehash saat login sukses (tanpa balapan), sesi tetap dibuat', async () => {
+    const legacy = createPasswordHasher({ ...TEST_HASHER_OPTIONS, timeCost: TEST_HASHER_OPTIONS.timeCost + 1 });
+    const hashOfMary = () => ctx.db.prepare("SELECT password_hash FROM users WHERE username = 'mary'").get().password_hash;
+    ctx.db.prepare("UPDATE users SET password_hash = ? WHERE username = 'mary'").run(await legacy.hash(ADMIN.password));
+    const { hasher } = ctx.app.services;
+    expect(hasher.needsRehash(hashOfMary())).toBe(true);
+
+    const auth = await login(ctx.app);
+    expect(auth.res.statusCode).toBe(200);
+    expect(hasher.needsRehash(hashOfMary())).toBe(false);
+    expect(await hasher.verify(hashOfMary(), ADMIN.password)).toBe(true);
+    expect((await ctx.app.inject({ url: '/api/auth/session', headers: { cookie: auth.cookie } })).statusCode).toBe(200);
+  });
+
   it('EDGE-AUTH-005 sesi kedaluwarsa absolut meskipun terus aktif', async () => {
     const { cookie } = await login(ctx.app);
     const step = 20 * 60_000;

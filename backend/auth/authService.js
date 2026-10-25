@@ -8,8 +8,8 @@ export const LOGIN_FAILED = 'LOGIN_FAILED';
  *           config: { lockThreshold: number, lockMs: number }, clock: () => number }} deps
  */
 export function createAuthService({ users, audit, hasher, sessionService, config, clock }) {
-  const fail = async (reason, { userId = null, ip }) => {
-    await audit.record({ occurredAt: clock(), userId, action: 'auth.login', outcome: 'failure', ip, detail: { reason } });
+  const fail = async (reason, { userId = null, ip, detail = {} }) => {
+    await audit.record({ occurredAt: clock(), userId, action: 'auth.login', outcome: 'failure', ip, detail: { reason, ...detail } });
     return { ok: false, error: LOGIN_FAILED };
   };
 
@@ -36,20 +36,34 @@ export function createAuthService({ users, audit, hasher, sessionService, config
         return fail('locked', { userId: user.id, ip });
       }
 
-      const valid = await hasher.verify(user.password_hash, password);
-      if (!valid) {
+      const badPassword = async (detail) => {
         const { locked } = await users.recordFailedLogin(user.id, { ...lockOptions, count: attempt.count });
         if (locked) {
           await audit.record({ occurredAt: now, userId: user.id, action: 'auth.account_locked', outcome: 'success', ip });
         }
-        return fail('bad_password', { userId: user.id, ip });
-      }
+        return fail('bad_password', { userId: user.id, ip, detail });
+      };
 
-      if (hasher.needsRehash(user.password_hash)) {
-        await users.updatePassword(user.id, { passwordHash: await hasher.hash(password), now });
+      const valid = await hasher.verify(user.password_hash, password);
+      if (!valid) return badPassword();
+
+      // Selama Argon2 berjalan, `npm run user:password` (proses lain) dapat mengganti hash lalu mencabut
+      // semua sesi. Karena itu sesi hanya dibuat bila hash tersimpan masih hash yang diverifikasi di atas
+      // (atomik dengan insert); bila sudah berganti, kata sandi yang dikirim adalah kata sandi lama.
+      let verifiedHash = user.password_hash;
+      if (hasher.needsRehash(verifiedHash)) {
+        const rehashed = await hasher.hash(password);
+        // Compare-and-swap: rehash kata sandi lama tidak boleh menimpa hash baru yang ditulis sementara itu.
+        // CAS gagal → verifiedHash tetap hash lama → pemeriksaan sesi di bawah menolak login. (Efek samping
+        // yang diterima: dua login bersamaan yang sama-sama me-rehash — satu dapat ditolak dan cukup diulang.)
+        if (await users.updatePasswordIfUnchanged(user.id, { expectedHash: verifiedHash, passwordHash: rehashed, now })) {
+          verifiedHash = rehashed;
+        }
       }
+      const session = await sessionService.create(user.id, { ip, userAgent, passwordHash: verifiedHash });
+      if (!session) return badPassword({ passwordChanged: true });
+
       await users.recordSuccessfulLogin(user.id, { now });
-      const session = await sessionService.create(user.id, { ip, userAgent });
       await audit.record({ occurredAt: now, userId: user.id, action: 'auth.login', outcome: 'success', ip });
 
       return {

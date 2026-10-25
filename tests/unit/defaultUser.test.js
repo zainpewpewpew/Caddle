@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../backend/app/config.js';
 import { checkPasswordPolicy, createPasswordHasher } from '../../backend/auth/password.js';
@@ -7,10 +10,13 @@ import { createRepositories } from '../../backend/database/repositories/index.js
 import {
   DEFAULT_CREDENTIALS, DefaultUserError, ensureDefaultUser, exposureOf, isLoopbackHost,
 } from '../../backend/users/defaultUser.js';
-import { changePassword, createUser } from '../../backend/users/userAdmin.js';
-import { ADMIN, TEST_HASHER_OPTIONS, createClock } from '../helpers/testApp.js';
+import { UserAdminError, changePassword, createUser } from '../../backend/users/userAdmin.js';
+import { gateHasher } from '../helpers/gatedHasher.js';
+import { ADMIN, ANALYST, TEST_HASHER_OPTIONS, createClock } from '../helpers/testApp.js';
 
 const PROD = { NODE_ENV: 'production', APP_ORIGIN: 'https://radar.local', DATABASE_PATH: '/data/lr.db' };
+const USERS_EXIST_INFO = (n) => `Akun default tidak dibuat: sudah ada ${n} pengguna. Login dengan akun yang ada, `
+  + 'atau ganti kata sandinya: npm run user:password -- --username <nama>';
 
 describe('akun default prototipe lokal', () => {
   let db;
@@ -31,7 +37,7 @@ describe('akun default prototipe lokal', () => {
     repos = createRepositories(db);
     hasher = createPasswordHasher(TEST_HASHER_OPTIONS);
     clock = createClock();
-    log = { warn: vi.fn() };
+    log = { info: vi.fn(), warn: vi.fn() };
   });
 
   it('UNIT-DEF-001 kredensial default pilihan pemilik (admin / admin123@) — pengecualian kebijakan HANYA untuk akun default', () => {
@@ -68,6 +74,7 @@ describe('akun default prototipe lokal', () => {
     expect(message).toContain('kata sandi: admin123@');
     expect(message).toContain('HANYA untuk prototipe lokal');
     expect(message).toContain('npm run user:password -- --username admin');
+    expect(log.info).not.toHaveBeenCalled();
   });
 
   it.each(['127.0.0.1', '::1', 'localhost'])('UNIT-DEF-003 HOST loopback %s → akun dibuat', async (host) => {
@@ -75,7 +82,7 @@ describe('akun default prototipe lokal', () => {
     expect(userCount()).toBe(1);
   });
 
-  it('UNIT-DEF-004 idempoten: start kedua tidak membuat ulang, tidak me-reset hash, tidak menulis audit/log lagi', async () => {
+  it('UNIT-DEF-004 idempoten: start kedua tidak membuat ulang, tidak me-reset hash, tidak menulis audit/peringatan lagi', async () => {
     await run();
     const hash = hashOf('admin');
     clock.advance(60_000);
@@ -84,6 +91,8 @@ describe('akun default prototipe lokal', () => {
     expect(hashOf('admin')).toBe(hash);
     expect((await repos.audit.recent(10)).filter((e) => e.action === 'user.create')).toHaveLength(1);
     expect(log.warn).toHaveBeenCalledTimes(1);
+    // Restart setelah seed juga menjelaskan mengapa akun default tidak dibuat (kalimat netral).
+    expect(log.info.mock.calls).toEqual([[USERS_EXIST_INFO(1)]]);
   });
 
   it('NEG-DEF-001 sudah ada pengguna → tidak ada yang dibuat; hash pengguna lama tidak tersentuh', async () => {
@@ -94,6 +103,7 @@ describe('akun default prototipe lokal', () => {
     expect(hashOf('mary')).toBe(hash);
     expect(await repos.users.findByUsernameForAuth('admin')).toBeNull();
     expect(log.warn).not.toHaveBeenCalled();
+    expect(log.info.mock.calls).toEqual([[USERS_EXIST_INFO(1)]]);
   });
 
   it('NEG-DEF-002 akun "admin" yang sudah ada dengan kata sandi lain tidak ditimpa atau di-reset', async () => {
@@ -112,6 +122,7 @@ describe('akun default prototipe lokal', () => {
     expect(log.warn).toHaveBeenCalledTimes(1);
     expect(log.warn.mock.calls[0][0]).toMatch(new RegExp(`Akun default TIDAK dibuat: HOST=${host.replace(/[.]/g, '\\.')} bukan loopback`));
     expect(log.warn.mock.calls[0][0]).not.toContain('admin123@');
+    expect(log.info).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -133,6 +144,7 @@ describe('akun default prototipe lokal', () => {
     expect(await run({ DEFAULT_USER: 'false' })).toEqual({ created: false, reason: 'disabled' });
     expect(userCount()).toBe(0);
     expect(log.warn).not.toHaveBeenCalled();
+    expect(log.info).not.toHaveBeenCalled();
   });
 
   it('NEG-DEF-005 NODE_ENV test/produksi → tidak dibuat (juga bila flag dipaksa aktif)', async () => {
@@ -146,6 +158,19 @@ describe('akun default prototipe lokal', () => {
     expect(userCount()).toBe(0);
     expect(log.warn).toHaveBeenCalledTimes(2);
     expect(log.warn.mock.calls[0][0]).toContain('hanya dibuat saat NODE_ENV=development');
+    expect(log.info).not.toHaveBeenCalled();
+  });
+
+  it('UNIT-DEF-008 sudah ada pengguna → satu log info netral berisi jumlahnya, tanpa username (anti enumerasi di log)', async () => {
+    const deps = { users: repos.users, audit: repos.audit, hasher, maxUsers: 2, clock };
+    await createUser(deps, ADMIN);
+    await createUser(deps, ANALYST);
+    expect(await run()).toEqual({ created: false, reason: 'users_exist' });
+    expect(log.info).toHaveBeenCalledTimes(1);
+    const [message] = log.info.mock.calls[0];
+    expect(message).toBe(USERS_EXIST_INFO(2));
+    for (const word of ['mary', 'rekan', 'admin', 'admin123@', 'alphalens-demo']) expect(message).not.toContain(word);
+    expect(log.warn).not.toHaveBeenCalled();
   });
 
   it('UNIT-DEF-005 isLoopbackHost hanya menerima 127.0.0.1, ::1, localhost', () => {
@@ -195,5 +220,89 @@ describe('akun default prototipe lokal', () => {
   it('SEC-DEF-003 kata sandi default tidak pernah masuk audit', async () => {
     await run();
     expect(JSON.stringify(db.prepare('SELECT * FROM audit_logs').all())).not.toContain('admin123@');
+  });
+});
+
+describe('akun default vs pembuatan pengguna bersamaan', () => {
+  // development + HOST/APP_ORIGIN loopback + tanpa proxy → seed diizinkan bila tabel kosong.
+  const config = loadConfig({});
+  let db;
+  let repos;
+  let hasher;
+  let clock;
+  const usernames = (conn = db) => conn.prepare('SELECT username FROM users ORDER BY id').all().map((r) => r.username);
+  const defaultAudits = (conn = db) => conn.prepare(
+    "SELECT COUNT(*) n FROM audit_logs WHERE action = 'user.create' AND json_extract(detail_json, '$.via') = 'default'",
+  ).get().n;
+  const newLog = () => ({ info: vi.fn(), warn: vi.fn() });
+  const seed = ({ users, audit }, seedHasher, maxUsers, log) => ensureDefaultUser({ users, audit, hasher: seedHasher, maxUsers, clock, config, log });
+
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+    migrate(db);
+    repos = createRepositories(db);
+    hasher = createPasswordHasher(TEST_HASHER_OPTIONS);
+    clock = createClock();
+  });
+
+  it.each([1, 2])('EDGE-DEF-001 MAX_USERS=%i: mary dibuat (user:create) saat seed menunggu Argon2 → admin tidak dibuat, users_exist', async (maxUsers) => {
+    const seedHasher = createPasswordHasher(TEST_HASHER_OPTIONS);
+    const hashing = gateHasher(seedHasher).hold('hash');
+    const log = newLog();
+    const seeding = seed(repos, seedHasher, maxUsers, log);
+    await hashing.arrived(); // seed sudah melihat tabel kosong dan sedang meng-hash kata sandi default
+    await createUser({ users: repos.users, audit: repos.audit, hasher, maxUsers, clock }, ADMIN);
+    hashing.release();
+
+    expect(await seeding).toEqual({ created: false, reason: 'users_exist' });
+    expect(usernames()).toEqual(['mary']);
+    expect(defaultAudits()).toBe(0);
+    expect(log.warn).not.toHaveBeenCalled(); // tidak ada "akun default dibuat" beserta kredensialnya
+    expect(log.info.mock.calls).toEqual([[USERS_EXIST_INFO(1)]]);
+  });
+
+  it('EDGE-DEF-002 MAX_USERS=1: seed selesai saat user:create menunggu Argon2 → mary ditolak batas, hanya admin', async () => {
+    const cliHasher = createPasswordHasher(TEST_HASHER_OPTIONS);
+    const hashing = gateHasher(cliHasher).hold('hash');
+    const creating = createUser({ users: repos.users, audit: repos.audit, hasher: cliHasher, maxUsers: 1, clock }, ADMIN)
+      .catch((error) => error);
+    await hashing.arrived(); // user:create sudah lolos cek awal (0 < 1) dan sedang meng-hash
+    expect((await seed(repos, hasher, 1, newLog())).created).toBe(true);
+    hashing.release();
+
+    const error = await creating;
+    expect(error).toBeInstanceOf(UserAdminError);
+    expect(error.message).toBe('Batas 1 pengguna sudah tercapai');
+    expect(usernames()).toEqual(['admin']);
+  });
+
+  it('EDGE-DEF-003 dua instance server seed database yang sama bersamaan → tepat satu admin; yang kalah users_exist, bukan SqliteError', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lr-seed-'));
+    const dbPath = join(dir, 'seed.db');
+    const instances = [0, 1].map(() => {
+      const conn = openDatabase(dbPath);
+      migrate(conn);
+      const instanceHasher = createPasswordHasher(TEST_HASHER_OPTIONS);
+      const hashing = gateHasher(instanceHasher).hold('hash');
+      return { conn, repos: createRepositories(conn), hasher: instanceHasher, hashing, log: newLog() };
+    });
+    try {
+      const seeding = instances.map((i) => seed(i.repos, i.hasher, 2, i.log).catch((error) => error));
+      await Promise.all(instances.map((i) => i.hashing.arrived())); // keduanya melihat tabel kosong
+      for (const i of instances) i.hashing.release();
+      const results = await Promise.all(seeding);
+
+      expect(results.filter((r) => r instanceof Error)).toEqual([]);
+      expect(results).toContainEqual({ created: true, id: expect.any(Number) });
+      expect(results).toContainEqual({ created: false, reason: 'users_exist' });
+      expect(usernames(instances[0].conn)).toEqual(['admin']);
+      expect(defaultAudits(instances[1].conn)).toBe(1);
+      // Hanya pemenang yang mencatat "akun default dibuat"; yang kalah mencatat info users_exist.
+      expect(instances.map((i) => i.log.warn.mock.calls.length).sort()).toEqual([0, 1]);
+      expect(instances.flatMap((i) => i.log.info.mock.calls)).toEqual([[USERS_EXIST_INFO(1)]]);
+    } finally {
+      for (const i of instances) i.conn.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

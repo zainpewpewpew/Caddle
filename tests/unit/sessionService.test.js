@@ -84,6 +84,19 @@ describe('layanan sesi', () => {
     expect(db.prepare('SELECT length(user_agent) n FROM sessions').get().n).toBe(256);
   });
 
+  it('UNIT-SES-004 create dengan passwordHash yang masih tersimpan → sesi dibuat dan valid', async () => {
+    const s = await svc.create(userId, { passwordHash: HASH });
+    expect(s).toMatchObject({ id: expect.any(Number), token: expect.any(String) });
+    expect((await svc.resolve(s.token)).user.id).toBe(userId);
+  });
+
+  it('NEG-SES-004 create dengan passwordHash usang (kata sandi sudah diganti) → null, tidak ada baris sesi', async () => {
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(`${HASH}x`, userId);
+    expect(await svc.create(userId, { passwordHash: HASH })).toBeNull();
+    expect(await svc.create(userId + 1, { passwordHash: HASH })).toBeNull();
+    expect(db.prepare('SELECT COUNT(*) n FROM sessions').get().n).toBe(0);
+  });
+
   it('UNIT-SES-003 purge menghapus sesi kedaluwarsa', async () => {
     await svc.create(userId, {});
     clock.advance(ABSOLUTE + 1);
