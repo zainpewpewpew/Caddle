@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../../../backend/database/connection.js';
 import { migrate } from '../../../backend/database/migrate.js';
+import { createCandleRepository } from '../../../backend/database/repositories/candleRepository.js';
 import { SignalRepositoryError, createSignalRepository, transition } from '../../../backend/signals/index.js';
 
 // Data uji deterministik — sintetis, bukan data pasar nyata.
@@ -276,6 +277,93 @@ describe('repositori sinyal', () => {
     await expect(repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: r.next, event: badEvent })).rejects.toThrow(TypeError);
     expect(db.prepare('SELECT COUNT(*) n FROM signals').get().n).toBe(0);
     expect(db.prepare('SELECT COUNT(*) n FROM signal_events').get().n).toBe(0);
+  });
+
+  it('POS-SREP-003 closeOpenForSymbol SYMBOL_DELISTED: semua sinyal terbuka BTCUSDT (5m, 1h) → EXPIRED + event dalam satu transaksi; price = close tersimpan terakhir (null tanpa candle); ETHUSDT tidak tersentuh', async () => {
+    const { db, repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    const m5 = await drive(repo, LIFECYCLE.slice(0, 4)); // QUIET → EARLY → (tetap) → MOMENTUM (terbuka)
+    await drive(repo, [input(0, 100, { timeframe: '1h' })], { timeframe: '1h' });
+    await drive(repo, [input(0, 100)], { symbol: 'ETHUSDT' });
+    // Candle tersimpan BTCUSDT 5m sampai indeks 5 (lebih baru dari candle terakhir yang dievaluasi, 3).
+    const candles = createCandleRepository(db, { clock: () => T0 + 1_000 * TF_MS['5m'] });
+    await candles.upsertClosed([candle(4, 104.8), candle(5, 105.1)]);
+    const lastEvent = await repo.lastEventCandleTime({ symbol: 'BTCUSDT', timeframe: '5m' });
+    const AT = T0 + 9 * TF_MS['5m'] + 7_000;
+
+    const { closed } = await repo.closeOpenForSymbol({ symbol: 'BTCUSDT', reason: 'SYMBOL_DELISTED', at: AT });
+    expect(closed).toEqual([
+      { id: expect.any(Number), timeframe: '1h', fromState: 'QUIET', price: null },
+      { id: m5.results[0].saved.id, timeframe: '5m', fromState: 'MOMENTUM_BUILDING', price: 105.1 },
+    ]);
+    expect(await repo.getOpen({ symbol: 'BTCUSDT', timeframe: '5m' })).toBeNull();
+    expect(await repo.getOpen({ symbol: 'BTCUSDT', timeframe: '1h' })).toBeNull();
+    expect(await repo.getOpen({ symbol: 'ETHUSDT', timeframe: '5m' })).not.toBeNull();
+    expect((await repo.listActive()).map((a) => a.symbol)).toEqual(['ETHUSDT']);
+
+    const rows = db.prepare(`SELECT s.timeframe, s.state, s.final_outcome, s.closed_at, s.updated_at FROM signals s
+      JOIN symbols sym ON sym.id = s.symbol_id WHERE sym.symbol = 'BTCUSDT' ORDER BY s.timeframe`).all();
+    expect(rows).toEqual([
+      { timeframe: '1h', state: 'EXPIRED', final_outcome: 'EXPIRED:QUIET', closed_at: AT, updated_at: AT },
+      { timeframe: '5m', state: 'EXPIRED', final_outcome: 'EXPIRED:MOMENTUM_BUILDING', closed_at: AT, updated_at: AT },
+    ]);
+    const [h] = (await repo.history({ symbol: 'BTCUSDT', limit: 10 })).filter((x) => x.timeframe === '5m');
+    expect(h.events.at(-1)).toEqual({
+      id: expect.any(Number), occurredAt: AT, candleTime: T0 + 3 * TF_MS['5m'], fromState: 'MOMENTUM_BUILDING', toState: 'EXPIRED', price: 105.1,
+      detail: { reason: 'SYMBOL_DELISTED', barsInPrevState: 0, firstDetectedPrice: 100, invalidationPrice: 95, priceCandleTime: T0 + 5 * TF_MS['5m'] },
+    });
+    expect(h).toMatchObject({ state: 'EXPIRED', finalOutcome: 'EXPIRED:MOMENTUM_BUILDING', closedAt: AT });
+    // Titik awal replay pipeline tidak bergeser (candle_time = candle terakhir yang dievaluasi).
+    expect(await repo.lastEventCandleTime({ symbol: 'BTCUSDT', timeframe: '5m' })).toBe(lastEvent);
+
+    // Idempoten: tidak ada lagi yang terbuka. Setelah listing ulang, deteksi berikutnya membuka sinyal BARU.
+    expect(await repo.closeOpenForSymbol({ symbol: 'BTCUSDT', reason: 'SYMBOL_DELISTED', at: AT + 1 })).toEqual({ closed: [] });
+    const reopened = await drive(repo, [input(12, 103)]);
+    expect(reopened.results[0].saved).toMatchObject({ opened: true });
+    expect(reopened.results[0].saved.id).not.toBe(m5.results[0].saved.id);
+    expect(db.prepare("SELECT COUNT(*) n FROM signal_events WHERE to_state = 'EXPIRED'").get().n).toBe(2);
+  });
+
+  it('UNIT-SREP-006 closeOpenForSymbol MONITORING_STOPPED dengan timeframes [1h] → hanya sinyal 1h ditutup; simbol tak dikenal → { closed: [] }', async () => {
+    const { db, repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    await drive(repo, [input(0, 100)]);
+    await drive(repo, [input(0, 100, { timeframe: '1h' })], { timeframe: '1h' });
+    const { closed } = await repo.closeOpenForSymbol({ symbol: 'BTCUSDT', timeframes: ['1h', '1h'], reason: 'MONITORING_STOPPED', at: T0 + 5 * TF_MS['1h'] });
+    expect(closed).toEqual([{ id: expect.any(Number), timeframe: '1h', fromState: 'QUIET', price: null }]);
+    expect(await repo.getOpen({ symbol: 'BTCUSDT', timeframe: '5m' })).not.toBeNull();
+    const event = db.prepare("SELECT detail_json FROM signal_events WHERE to_state = 'EXPIRED'").get();
+    expect(JSON.parse(event.detail_json)).toMatchObject({ reason: 'MONITORING_STOPPED', priceCandleTime: null });
+    expect(await repo.closeOpenForSymbol({ symbol: 'SOLUSDT', reason: 'MONITORING_STOPPED', at: T0 })).toEqual({ closed: [] });
+  });
+
+  it('NEG-SREP-004 closeOpenForSymbol menolak reason di luar MONITORING_STOP_REASONS, waktu/timeframe/simbol tidak valid — tanpa perubahan', async () => {
+    const { db, repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    await drive(repo, [input(0, 100)]);
+    const ok = { symbol: 'BTCUSDT', reason: 'SYMBOL_DELISTED', at: T0 };
+    await expect(repo.closeOpenForSymbol({ ...ok, reason: 'NO_PROGRESS' })).rejects.toThrow(RangeError);
+    await expect(repo.closeOpenForSymbol({ ...ok, at: 1.5 })).rejects.toThrow(TypeError);
+    await expect(repo.closeOpenForSymbol({ ...ok, at: undefined })).rejects.toThrow(TypeError);
+    await expect(repo.closeOpenForSymbol({ ...ok, timeframes: ['4h'] })).rejects.toThrow(RangeError);
+    await expect(repo.closeOpenForSymbol({ ...ok, timeframes: '5m' })).rejects.toThrow(TypeError);
+    await expect(repo.closeOpenForSymbol({ ...ok, symbol: "BTC'; DROP TABLE signals;--" })).rejects.toThrow(RangeError);
+    expect(await repo.getOpen({ symbol: 'BTCUSDT', timeframe: '5m' })).not.toBeNull();
+    expect(db.prepare('SELECT COUNT(*) n FROM signal_events').get().n).toBe(1);
+  });
+
+  it('EDGE-SREP-003 closeOpenForSymbol gagal di tengah (INSERT event sinyal kedua ditolak) → di-rollback seluruhnya', async () => {
+    const { db, repo } = setup();
+    await repo.ensurePatternDefinition(SA_V1);
+    await drive(repo, [input(0, 100)]);
+    await drive(repo, [input(0, 100, { timeframe: '1h' })], { timeframe: '1h' });
+    db.exec(`CREATE TEMP TRIGGER fail_second_expire BEFORE INSERT ON signal_events
+      WHEN NEW.to_state = 'EXPIRED' AND (SELECT COUNT(*) FROM signal_events WHERE to_state = 'EXPIRED') >= 1
+      BEGIN SELECT RAISE(ABORT, 'gagal sintetis'); END`);
+    await expect(repo.closeOpenForSymbol({ symbol: 'BTCUSDT', reason: 'SYMBOL_DELISTED', at: T0 })).rejects.toThrow(/gagal sintetis/);
+    expect(db.prepare("SELECT COUNT(*) n FROM signals WHERE state = 'EXPIRED'").get().n).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) n FROM signal_events WHERE to_state = 'EXPIRED'").get().n).toBe(0);
+    expect((await repo.listActive()).map((a) => a.timeframe).sort()).toEqual(['1h', '5m']);
   });
 
   it('EDGE-SREP-002 simpan ulang snapshot yang sama idempoten; penjelasan dipertahankan bila tidak dikirim', async () => {

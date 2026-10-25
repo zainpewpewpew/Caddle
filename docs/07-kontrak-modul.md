@@ -118,7 +118,7 @@ createServerClock({ getServerTime, clock = Date.now, logger, maxOffsetMs = 600_0
   // |offset| > maxOffsetMs → TIDAK diterapkan (OFFSET_OUT_OF_RANGE, kemungkinan jam host/NTP rusak) dan dilaporkan.
   // getServerTime dipanggil malas (`() => rest.getServerTime()`), sehingga klien REST boleh memakai serverClock.now.
 
-createScanner({ rest, streamFactory, repos, getSettings, onClosedCandles, discoverSymbols,
+createScanner({ rest, streamFactory, repos, getSettings, onClosedCandles, onMonitoringStopped?, discoverSymbols,
   clock, logger, setTimer, clearTimer, options /* SCANNER_DEFAULTS */, serverClock? })
   → { start(), stop(), status(), liquidityOf(symbol) }
   // serverClock: sync() di awal setiap siklus (start, rediscovery, percobaan ulang discovery) sebelum discovery;
@@ -126,11 +126,15 @@ createScanner({ rest, streamFactory, repos, getSettings, onClosedCandles, discov
 status() = { state, lastIngestionAt, candleLagMs, reconnects, errors, scanDurationMs, queue,
              symbols, streams, staleStreams, ws, gaps, duplicates, clockOffsetMs /* null tanpa serverClock */ }
 onClosedCandles({ symbol, timeframe, candles, reason })   // reason: 'stream' | 'sweep' | 'gap' | …
+onMonitoringStopped({ symbol, timeframes: string[] | null, reason: 'SYMBOL_DELISTED' | 'MONITORING_STOPPED', at })
+  // setelah discovery berhasil & stream lama dilepas: simbol yang sebelumnya dipantau (termasuk daftar DB di siklus
+  // pertama) dan tidak terpilih lagi → timeframes null (semua); timeframe yang dilepas dari pengaturan untuk simbol
+  // yang tetap dipantau → MONITORING_STOPPED dengan timeframes itu. Error dicatat (sumber 'monitoring').
 liquidityOf(symbol) → { quoteVolume24h, spreadBps, thresholds: { minQuoteVolume24h, maxSpreadBps } | null } | null
     // dari discovery terakhir; thresholds = settings.liquidity yang dipakai discovery tersebut
 ```
 
-Entry point `worker/index.js` (`npm run worker`) merakit jam server, klien REST, stream, scanner, dan pipeline analisis; `serverClock.now` menjadi `clock` klien REST, repositori (`createRepositories(db, { clock })` — validasi "tertutup" candle), dan scanner. Heartbeat ditulis tiap 30 detik (memuat `clockOffsetMs`); `SIGINT`/`SIGTERM` → graceful shutdown.
+Entry point `worker/index.js` (`npm run worker`) merakit jam server, klien REST, stream, scanner, dan pipeline analisis (`onMonitoringStopped` → `pipeline.closeSymbol`); `serverClock.now` menjadi `clock` klien REST, repositori (`createRepositories(db, { clock })` — validasi "tertutup" candle), dan scanner. Heartbeat ditulis tiap 30 detik (memuat `clockOffsetMs`); `SIGINT`/`SIGTERM` → graceful shutdown.
 
 ## 5. Indikator — `backend/indicators/`
 
@@ -192,12 +196,18 @@ createSignalRepository(db, { clock }) → {
   getOpen({ symbol, timeframe }): Promise<SignalSnapshot|null>,
   save({ symbol, timeframe, snapshot, event, explanation, now }),   // satu transaksi: sinyal + event
   lastEventCandleTime({ symbol, timeframe }): Promise<number|null>,
+  closeOpenForSymbol({ symbol, timeframes? = null /* semua */, reason, at })
+    : Promise<{ closed: [{ id, timeframe, fromState, price }] }>,
+      // reason ∈ MONITORING_STOP_REASONS = ['SYMBOL_DELISTED', 'MONITORING_STOPPED'] (signals/params.js).
+      // Satu transaksi: state → EXPIRED, closed_at = updated_at = at, final_outcome 'EXPIRED:<peakState>',
+      // event { occurredAt: at, candleTime: candle terakhir yang dievaluasi, price: close candle tersimpan
+      // terakhir | null, detail: { reason, barsInPrevState, firstDetectedPrice, invalidationPrice, priceCandleTime } }.
   listActive({ timeframe?, classification?, state?, minScore?, limit = 200 (maks 500) }),
   history({ symbol?, limit = 50 }),                                   // termasuk events[]
 }
 ```
 
-Tabel transisi lengkap (kondisi, reason, kapan alert) didokumentasikan di kepala `backend/signals/stateMachine.js` dan diuji di `tests/unit/signals/`. Ringkasnya: transisi maju hanya ke peringkat lebih tinggi (tanpa downgrade, sehingga alert untuk state yang sama tidak berulang), satu transisi per candle baru, candle duplikat/lama idempoten, `INVALIDATED` bila close < harga invalidasi, `EXPIRED` bila tidak ada kemajuan selama `expiryBars[state]` bar.
+Tabel transisi lengkap (kondisi, reason, kapan alert) didokumentasikan di kepala `backend/signals/stateMachine.js` dan diuji di `tests/unit/signals/`. Satu-satunya transisi di luar `transition()` adalah penutupan sinyal simbol yang berhenti dipantau (`EXPIRED` dengan reason `SYMBOL_DELISTED`/`MONITORING_STOPPED`, tanpa alert) lewat `closeOpenForSymbol`, karena simbol tersebut tidak lagi menerima candle sehingga `NO_PROGRESS` tidak akan pernah tercapai. Ringkasnya: transisi maju hanya ke peringkat lebih tinggi (tanpa downgrade, sehingga alert untuk state yang sama tidak berulang), satu transisi per candle baru, candle duplikat/lama idempoten, `INVALIDATED` bila close < harga invalidasi, `EXPIRED` bila tidak ada kemajuan selama `expiryBars[state]` bar.
 
 Skor **bukan probabilitas**. `patternScore` = jumlah bobot kondisi yang lulus; `earlyScore` = seberapa dini posisi harga (jarak dari awal struktur dalam ATR dan umur struktur). HTF, likuiditas, dan kualitas data hanya menambah risk flag dan baris penjelasan — tidak mengubah skor.
 
@@ -213,7 +223,9 @@ analyzeAt({ symbol, timeframe, candlesByTimeframe, prev, liquidity, dataQuality,
 patternDefinitions(params) → [{ key: 'SA'|'PVA', version, name, definition: { params, conditions, requiredCandles } }]
 createAnalysisPipeline({ repos, signals, getLiquidity, logger, params, lookback = 300,
   maxReplay = 288, settleMs = 0, sleep, onAlert })
-  → { ensureDefinitions(), onClosedCandles({ symbol, timeframe, candles, reason }) }
+  → { ensureDefinitions(), onClosedCandles({ symbol, timeframe, candles, reason }),
+      closeSymbol({ symbol, timeframes? = null, reason, at }) → signals.closeOpenForSymbol(...) }
+  // closeSymbol diserialkan dengan evaluasi yang masih berjalan untuk seri yang sama; tanpa alert.
 ```
 
 `analyzeAt` dipakai bersama oleh worker live dan (nanti) backtest M6, sehingga hasil keduanya identik untuk data yang sama. `onClosedCandles`:
@@ -244,6 +256,7 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 |---|---|---|
 | `heartbeat({ at, state })` dengan metrik terpisah | `state` = snapshot `status()` lengkap | Metrik sempat hilang karena kontrak tidak cocok; satu objek menghindari drift |
 | Scanner tanpa info likuiditas | `liquidityOf(symbol)` | Risk flag `POOR_LIQUIDITY`/`WIDE_SPREAD` butuh data discovery |
+| Sinyal simbol yang delisted/berhenti dipantau tetap terbuka selamanya | `closeOpenForSymbol` + `pipeline.closeSymbol` + `onMonitoringStopped` scanner | Expiry hanya maju saat ada candle baru; tanpa penutupan eksplisit screener terus menampilkan sinyal basi |
 | Worker memakai jam lokal (`Date.now`) | `createServerClock` + sinkronisasi `/fapi/v1/time` tiap siklus scanner | Jam lokal yang lebih cepat membuat kline final WS ditolak ("belum tertutup"); yang lebih lambat dapat menganggap candle berjalan tertutup |
 | Risk flag likuiditas selalu dinilai dengan `DEFAULT_VIEW_PARAMS` | `liquidityOf` menyertakan `thresholds` dari `settings.liquidity`; `analyzeAt` menerima `params.view` | Batas pengguna (terutama mode manual) harus sama dengan batas yang ditampilkan di penjelasan; backtest tetap dapat memberi ambangnya sendiri |
 | `createSignalRepository(db)` | `+ { clock }`, `lastEventCandleTime` | Tes deterministik; titik awal replay yang persisten |

@@ -6,6 +6,15 @@ export const PATTERN_STATES = Object.freeze(['QUIET', 'EARLY_BULLISH', 'MOMENTUM
 /** State yang memicu alert saat dimasuki (selaras dengan ALERT_STAGES pengaturan scanner). */
 export const ALERT_STATES = Object.freeze(['EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT']);
 
+/**
+ * Reason event EXPIRED di luar candle: simbol berhenti dipantau scanner sehingga sinyal terbuka tidak akan
+ * pernah menerima candle baru (dan tidak akan kedaluwarsa lewat NO_PROGRESS). Ditutup oleh
+ * signalRepository.closeOpenForSymbol, tanpa alert.
+ * - SYMBOL_DELISTED: simbol hilang dari exchangeInfo atau status bukan TRADING;
+ * - MONITORING_STOPPED: simbol/timeframe keluar dari set pantauan (rediscovery, pengaturan).
+ */
+export const MONITORING_STOP_REASONS = Object.freeze(['SYMBOL_DELISTED', 'MONITORING_STOPPED']);
+
 /** Peringkat kemajuan; transisi maju hanya ke peringkat lebih tinggi (tidak ada downgrade). */
 export const STATE_RANK = Object.freeze({ NO_PATTERN: 0, QUIET: 1, EARLY_BULLISH: 2, MOMENTUM_BUILDING: 3, BREAKOUT: 4 });
 

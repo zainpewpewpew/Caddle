@@ -292,6 +292,46 @@ describe('createAnalysisPipeline (SQLite)', () => {
     expect(r.view.riskFlags).toEqual(expect.arrayContaining(['POOR_LIQUIDITY', 'WIDE_SPREAD']));
   });
 
+  it('POS-PIPE-005 closeSymbol (SYMBOL_DELISTED) → sinyal terbuka EXPIRED tanpa alert, diserialkan setelah evaluasi yang sedang berjalan; candle berikutnya membuka sinyal BARU', async () => {
+    const ctx = await setup();
+    const alerts = [];
+    const logs = [];
+    const logger = { info: (fields, msg) => logs.push({ fields, msg }), warn() {} };
+    const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, logger, onAlert: (a) => alerts.push(a) });
+    const all = silentAccumulationCandles(1);
+    for (let k = 1; k <= 64; k += 1) await feed({ ...ctx, pipeline }, all, k);
+    const open = await ctx.signals.getOpen({ symbol: SYMBOL, timeframe: '5m' });
+    expect(open).not.toBeNull();
+    const alertsBefore = alerts.length;
+
+    // Evaluasi candle 65 dan penutupan dipicu bersamaan: penutupan menunggu evaluasi selesai.
+    await ctx.repos.candles.upsertClosed([all[64]], { now: NOW });
+    const evaluating = pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
+    const closing = pipeline.closeSymbol({ symbol: SYMBOL, reason: 'SYMBOL_DELISTED', at: NOW });
+    const [evaluated, result] = await Promise.all([evaluating, closing]);
+    expect(evaluated.evaluated).toBe(1);
+    expect(result.closed).toEqual([{ id: open.id, timeframe: '5m', fromState: expect.any(String), price: all[64].close }]);
+    expect(await ctx.signals.getOpen({ symbol: SYMBOL, timeframe: '5m' })).toBeNull();
+    expect(alerts.length).toBe(alertsBefore);
+    expect(logs.at(-1)).toMatchObject({ msg: 'sinyal ditutup: simbol berhenti dipantau', fields: { symbol: SYMBOL, reason: 'SYMBOL_DELISTED' } });
+
+    const [closed] = await ctx.signals.history({ symbol: SYMBOL, limit: 10 });
+    expect(closed).toMatchObject({ state: 'EXPIRED', closedAt: NOW, finalOutcome: expect.stringMatching(/^EXPIRED:/) });
+    expect(closed.events.at(-1)).toMatchObject({ toState: 'EXPIRED', occurredAt: NOW, candleTime: all[64].openTime, detail: { reason: 'SYMBOL_DELISTED' } });
+
+    // Dipantau lagi: candle 66 tanpa pola (NONE) tidak membuka apa pun; candle 67 dengan pola SA lagi
+    // membuka sinyal BARU (event pembuka dari NO_PATTERN).
+    await feed({ ...ctx, pipeline }, all, 66);
+    expect(await ctx.signals.history({ symbol: SYMBOL, limit: 10 })).toHaveLength(1);
+    await feed({ ...ctx, pipeline }, all, 67);
+    const history = await ctx.signals.history({ symbol: SYMBOL, limit: 10 });
+    expect(history).toHaveLength(2);
+    expect(history[0].id).not.toBe(open.id);
+    expect(history[0]).toMatchObject({ state: expect.not.stringMatching(/EXPIRED|INVALIDATED/), closedAt: null });
+    expect(history[0].events[0]).toMatchObject({ fromState: 'NO_PATTERN', candleTime: all[66].openTime });
+    expect(await pipeline.closeSymbol({ symbol: SYMBOL, timeframes: ['1h'], reason: 'MONITORING_STOPPED', at: NOW })).toEqual({ closed: [] });
+  });
+
   it('UNIT-PIPE-006 analyzeAt params.view (ambang pengguna 2 jt / 50 bps) → quote volume 2,5 jt & spread 40 bps tidak ditandai; penjelasan memuat batas yang dipakai', () => {
     const all = silentAccumulationCandles(1);
     const input = { symbol: SYMBOL, timeframe: '5m', candlesByTimeframe: byTimeframe(all.slice(0, 63)), prev: null,

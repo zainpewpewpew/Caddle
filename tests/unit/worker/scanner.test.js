@@ -234,6 +234,7 @@ function setup({
   onClosedCandles,
   liquidity = DEFAULT_SCANNER_SETTINGS.liquidity,
   serverClock,
+  onMonitoringStopped,
 } = {}) {
   const log = [];
   const timers = createFakeTimers();
@@ -263,6 +264,7 @@ function setup({
     clearTimer: timers.clearTimer,
     options,
     serverClock,
+    onMonitoringStopped,
   });
   return { scanner, rest, repos, streams, timers, analysed, log, settings };
 }
@@ -639,6 +641,56 @@ describe('rediscovery & delisting', () => {
     await timers.advance(3_600_000);
     expect(scanner.liquidityOf('BTCUSDT')).toEqual({ quoteVolume24h: 1e9, spreadBps: 1, thresholds: null });
     await scanner.stop();
+  });
+
+  it('UNIT-SCN-014 onMonitoringStopped: delisted → SYMBOL_DELISTED, keluar seleksi → MONITORING_STOPPED (timeframes null), dipanggil setelah stream lama dihentikan', async () => {
+    const stops = [];
+    let ctx = null;
+    ctx = setup({
+      symbols: ['BTCUSDT', 'ETHUSDT', 'XRPUSDT'],
+      onMonitoringStopped: async (e) => { stops.push({ ...e, firstStreamStopped: ctx.streams.created[0].stopped }); },
+    });
+    const { scanner, rest, timers } = ctx;
+    await scanner.start();
+    expect(stops).toEqual([]);
+    rest.exchange = [symbolInfo('BTCUSDT'), symbolInfo('ETHUSDT', 'SETTLING'), { ...symbolInfo('XRPUSDT'), contractType: 'CURRENT_QUARTER' }];
+    await timers.advance(3_600_000);
+    const at = START + 3_600_000;
+    expect(stops).toEqual([
+      { symbol: 'ETHUSDT', timeframes: null, reason: 'SYMBOL_DELISTED', at, firstStreamStopped: true },
+      { symbol: 'XRPUSDT', timeframes: null, reason: 'MONITORING_STOPPED', at, firstStreamStopped: true },
+    ]);
+    // Rediscovery berikutnya tanpa perubahan → tidak dilaporkan ulang.
+    await timers.advance(3_600_000);
+    expect(stops).toHaveLength(2);
+    await scanner.stop();
+  });
+
+  it('UNIT-SCN-015 timeframe dilepas dari pengaturan → MONITORING_STOPPED hanya untuk timeframe itu; simbol terpantau di DB yang hilang dari exchangeInfo saat start → SYMBOL_DELISTED; discovery gagal → tidak ada pelepasan; error callback dicatat; callback bukan fungsi ditolak', async () => {
+    const stops = [];
+    const ctx = setup({
+      symbols: ['BTCUSDT'], timeframes: ['5m', '1h'], monitoredInDb: ['BTCUSDT', 'OLDUSDT'],
+      onMonitoringStopped: async (e) => {
+        stops.push(e);
+        if (e.symbol === 'BTCUSDT') throw new Error('DB terkunci');
+      },
+    });
+    const { scanner, rest, repos, timers, settings } = ctx;
+    await scanner.start();
+    expect(stops).toEqual([{ symbol: 'OLDUSDT', timeframes: null, reason: 'SYMBOL_DELISTED', at: START }]);
+
+    settings.timeframes = ['5m'];
+    await timers.advance(3_600_000);
+    expect(stops.at(-1)).toEqual({ symbol: 'BTCUSDT', timeframes: ['1h'], reason: 'MONITORING_STOPPED', at: START + 3_600_000 });
+    expect(recordedErrors(repos)).toEqual([{ at: START + 3_600_000, source: 'monitoring', message: 'DB terkunci' }]);
+    expect(scanner.status()).toMatchObject({ state: 'running', streams: 1 });
+
+    rest.failDiscovery = true;
+    await timers.advance(3_600_000);
+    expect(stops).toHaveLength(2);
+    await scanner.stop();
+    const base = { rest, repos, streamFactory: ctx.streams.factory, getSettings: async () => ({}), discoverSymbols: fakeDiscover };
+    expect(() => createScanner({ ...base, onMonitoringStopped: 'tutup' })).toThrow(TypeError);
   });
 
   it('EDGE-SCN-004 rediscovery tanpa perubahan tidak membuat ulang stream', async () => {

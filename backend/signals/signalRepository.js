@@ -7,7 +7,7 @@
 // explanation_json sebagai { factors: [...penjelasan skor], tracking: {...} }.
 
 import { ALIGNMENTS, RISK_FLAGS, SIGNAL_STATES, TERMINAL_STATES, TIMEFRAMES, TIMEFRAME_MS } from '../market/contracts.js';
-import { PATTERN_STATES } from './params.js';
+import { MONITORING_STOP_REASONS, PATTERN_STATES } from './params.js';
 
 export class SignalRepositoryError extends Error {
   constructor(message, code) {
@@ -194,6 +194,18 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       LIMIT @limit`),
     events: db.prepare(`SELECT id, occurred_at, candle_time, from_state, to_state, price, detail_json
       FROM signal_events WHERE signal_id = ? ORDER BY candle_time, id`),
+    openForSymbol: db.prepare(`SELECT s.*, sym.symbol, pd.pattern_key, pd.version AS pattern_version
+      FROM signals s
+      JOIN symbols sym ON sym.id = s.symbol_id
+      JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
+      WHERE s.symbol_id = @symbolId AND s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT')
+        AND s.timeframe IN (SELECT value FROM json_each(@timeframes))
+      ORDER BY s.timeframe, s.id`),
+    lastStoredClose: db.prepare(`SELECT open_time, close FROM candles
+      WHERE symbol_id = ? AND timeframe = ? ORDER BY open_time DESC LIMIT 1`),
+    expireSignal: db.prepare(`UPDATE signals SET state = 'EXPIRED', final_outcome = @finalOutcome,
+      updated_at = @at, closed_at = @at
+      WHERE id = @id AND closed_at IS NULL`),
     lastEventCandle: db.prepare(`SELECT MAX(e.candle_time) AS candle_time
       FROM signal_events e JOIN signals s ON s.id = e.signal_id
       WHERE s.symbol_id = ? AND s.timeframe = ?`),
@@ -276,6 +288,34 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
     return { id, opened: opening, closed: terminal, saved: true };
   });
 
+  const closeForSymbolTx = db.transaction(({ symbol, timeframes, reason, at }) => {
+    const sym = stmt.symbolId.get(symbol);
+    if (!sym) return [];
+    const closed = [];
+    for (const row of stmt.openForSymbol.all({ symbolId: sym.id, timeframes: JSON.stringify(timeframes) })) {
+      const snapshot = toSnapshot(row);
+      const last = stmt.lastStoredClose.get(sym.id, row.timeframe);
+      const price = isFiniteNumber(last?.close) ? last.close : null;
+      stmt.expireSignal.run({ id: row.id, at, finalOutcome: `EXPIRED:${snapshot.peakState ?? 'UNKNOWN'}` });
+      stmt.insertEvent.run({
+        signalId: row.id,
+        occurredAt: at,
+        // candle_time = candle terakhir yang dievaluasi (bukan `at`) agar titik awal replay pipeline
+        // (lastEventCandleTime) tidak melompati candle bila simbol dipantau lagi.
+        candleTime: snapshot.lastCandleTime,
+        fromState: row.state,
+        toState: 'EXPIRED',
+        price,
+        detailJson: JSON.stringify({
+          reason, barsInPrevState: snapshot.barsInState, firstDetectedPrice: snapshot.firstDetectedPrice,
+          invalidationPrice: snapshot.invalidationPrice, priceCandleTime: price === null ? null : last.open_time,
+        }),
+      });
+      closed.push({ id: row.id, timeframe: row.timeframe, fromState: row.state, price });
+    }
+    return closed;
+  });
+
   return {
     /**
      * Mendaftarkan definisi pola berversi secara idempoten (unik pattern_key + version).
@@ -332,6 +372,27 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       const updatedAt = now ?? snapshot.lastEvaluatedAt ?? event?.occurredAt;
       if (!Number.isInteger(updatedAt)) throw new TypeError('Waktu pembaruan (now / snapshot.lastEvaluatedAt) wajib bilangan bulat');
       return saveTx({ symbol, timeframe, snapshot, event, explanation, updatedAt });
+    },
+
+    /**
+     * Menutup semua sinyal terbuka sebuah simbol (opsional hanya timeframe tertentu) karena simbol berhenti
+     * dipantau: state → EXPIRED, closed_at = updated_at = `at`, final_outcome `EXPIRED:<peakState>`, dan satu
+     * baris signal_events per sinyal (reason, price = close candle tersimpan terakhir atau null) — semuanya
+     * dalam satu transaksi. Tanpa alert. Simbol tak dikenal / tanpa sinyal terbuka → { closed: [] }.
+     * @param {{ symbol: string, timeframes?: string[]|null, reason: 'SYMBOL_DELISTED'|'MONITORING_STOPPED', at: number }} input
+     * @returns {Promise<{ closed: Array<{ id: number, timeframe: string, fromState: string, price: number|null }> }>}
+     */
+    async closeOpenForSymbol({ symbol, timeframes = null, reason, at } = {}) {
+      assertSymbol(symbol);
+      if (!MONITORING_STOP_REASONS.includes(reason)) throw new RangeError(`Reason penutupan tidak valid: ${reason}`);
+      if (!Number.isInteger(at) || at < 0) throw new TypeError('at wajib epoch ms bilangan bulat');
+      let list = TIMEFRAMES;
+      if (timeframes !== null && timeframes !== undefined) {
+        if (!Array.isArray(timeframes)) throw new TypeError('timeframes harus array atau null');
+        for (const tf of timeframes) assertTimeframe(tf);
+        list = [...new Set(timeframes)];
+      }
+      return { closed: closeForSymbolTx({ symbol, timeframes: list, reason, at }) };
     },
 
     /**

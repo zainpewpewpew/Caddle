@@ -193,14 +193,39 @@ export function createAnalysisPipeline({
     };
   }
 
+  /** Menjalankan `task` setelah semua tugas antrean `keys` selesai; tugas berikutnya di antrean itu menunggu `task`. */
+  function serialize(keys, task) {
+    const prior = Promise.all(keys.map((k) => (queues.get(k) ?? Promise.resolve()).catch(() => {})));
+    const run = prior.then(task);
+    for (const key of keys) {
+      queues.set(key, run);
+      run.finally(() => { if (queues.get(key) === run) queues.delete(key); }).catch(() => {});
+    }
+    return run;
+  }
+
   return {
     /** @param {{ symbol: string, timeframe: string, candles?: object[], reason?: string }} series */
     onClosedCandles(series) {
-      const key = `${series?.symbol}:${series?.timeframe}`;
-      const run = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(() => evaluate(series));
-      queues.set(key, run);
-      run.finally(() => { if (queues.get(key) === run) queues.delete(key); }).catch(() => {});
-      return run;
+      return serialize([`${series?.symbol}:${series?.timeframe}`], () => evaluate(series));
+    },
+    /**
+     * Simbol berhenti dipantau (delisted / keluar dari set pantauan): tutup sinyal terbukanya menjadi EXPIRED
+     * dengan `reason` (signals.closeOpenForSymbol), diserialkan dengan evaluasi yang masih berjalan untuk
+     * seri yang sama. Tanpa alert. `timeframes` null → semua timeframe.
+     * @param {{ symbol: string, timeframes?: string[]|null, reason: string, at: number }} input
+     * @returns {Promise<{ closed: Array<{ id: number, timeframe: string, fromState: string, price: number|null }> }>}
+     */
+    closeSymbol({ symbol, timeframes = null, reason, at } = {}) {
+      if (typeof signals.closeOpenForSymbol !== 'function') return Promise.reject(new TypeError('signals.closeOpenForSymbol wajib ada'));
+      const list = timeframes ?? TIMEFRAMES;
+      return serialize(list.map((tf) => `${symbol}:${tf}`), async () => {
+        const result = await signals.closeOpenForSymbol({ symbol, timeframes: list, reason, at });
+        if (result.closed.length > 0) {
+          logger?.info?.({ symbol, reason, closed: result.closed.map((c) => `${c.timeframe}:${c.fromState}`) }, 'sinyal ditutup: simbol berhenti dipantau');
+        }
+        return result;
+      });
     },
     ensureDefinitions,
   };

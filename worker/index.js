@@ -110,6 +110,10 @@ async function main() {
       const result = await pipeline.onClosedCandles({ symbol, timeframe, candles, reason });
       logger.debug({ symbol, timeframe, reason, count: candles.length, ...result }, 'candle tertutup dianalisis');
     },
+    // Simbol delisted / keluar dari set pantauan tidak menerima candle lagi → sinyal terbukanya ditutup (EXPIRED).
+    onMonitoringStopped: async ({ symbol, timeframes, reason, at }) => {
+      await pipeline.closeSymbol({ symbol, timeframes, reason, at });
+    },
     clock: serverClock.now,
     serverClock,
     logger,

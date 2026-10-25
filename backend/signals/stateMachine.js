@@ -7,7 +7,8 @@
 //   MOMENTUM_BUILDING harga bergerak menjauh dari harga deteksi (ATR) atau volume relatif meningkat
 //   BREAKOUT          close menembus resistance (swing high terkonfirmasi terakhir) dengan RVOL tinggi
 //   INVALIDATED       terminal: close < invalidationPrice
-//   EXPIRED           terminal: tidak ada kemajuan (perpindahan state) dalam expiryBars[state] bar
+//   EXPIRED           terminal: tidak ada kemajuan (perpindahan state) dalam expiryBars[state] bar,
+//                     atau simbol berhenti dipantau (lihat baris terakhir tabel; di luar fungsi ini)
 //
 // Tabel transisi — hanya untuk candle BARU (candle.openTime > prev.lastCandleTime);
 // candle duplikat/lama → { next: prev, event: null, alert: false } (idempoten).
@@ -26,9 +27,14 @@
 // | QUIET                        | classification ≠ NONE ∧ earlyScore ≥ earlyMinScore                     | EARLY_BULLISH     | EARLY_SCORE_THRESHOLD    | ya    |
 // | QUIET/EARLY/MOMENTUM/BREAKOUT| barsInState ≥ expiryBars[state]                                        | EXPIRED           | NO_PROGRESS              | tidak |
 // | QUIET/EARLY/MOMENTUM/BREAKOUT| selain itu                                                             | (tetap)           | (tanpa event)            | –     |
+// | QUIET/EARLY/MOMENTUM/BREAKOUT| simbol delisted / berhenti dipantau scanner² (bukan candle)            | EXPIRED           | SYMBOL_DELISTED / MONITORING_STOPPED | tidak |
 //
 // ¹ INVALIDATED di-alert hanya bila sinyal sudah pernah di-alert (state sebelumnya EARLY_BULLISH,
 //   MOMENTUM_BUILDING, atau BREAKOUT) agar pengguna tahu sinyal yang ia terima gagal.
+// ² Bukan bagian transition(): simbol yang tidak lagi dipantau tidak menerima candle, sehingga sinyalnya
+//   ditutup oleh signalRepository.closeOpenForSymbol (dipicu scanner → pipeline.closeSymbol). Event-nya
+//   memakai candleTime = candle terakhir yang dievaluasi, occurredAt = waktu penutupan, price = close
+//   candle tersimpan terakhir (null bila tidak ada); reason di MONITORING_STOP_REASONS (params.js).
 //
 // Aturan tambahan:
 // - Transisi maju boleh melompat (mis. QUIET → BREAKOUT); tidak ada downgrade, sehingga alert

@@ -442,7 +442,7 @@ const problems = (entries) => entries.filter((e) => e.level === 'warn' || e.leve
 // Default: tidak ada rate limit / retry yang diharapkan; tidur berarti ada yang salah.
 const unexpectedSleep = async (ms) => { throw new Error(`klien REST menunggu ${ms} ms (tidak diharapkan)`); };
 
-async function createWorker({ timers, db, binance, settings, settleMs = 0, restSleep = unexpectedSleep }) {
+async function createWorker({ timers, db, binance, settings, settleMs = 0, restSleep = unexpectedSleep, scannerOptions = {} }) {
   const { logger, entries: logs } = createLogger();
   // Sama dengan worker/index.js: jam tersinkron server (offset terukur dari /fapi/v1/time) dipakai
   // repositori, klien REST, dan scanner; jam lokal = jam palsu.
@@ -470,6 +470,7 @@ async function createWorker({ timers, db, binance, settings, settleMs = 0, restS
   const analysed = [];
   const saves = [];
   const settles = [];
+  const stopped = [];
   const pipeline = createAnalysisPipeline({
     repos,
     // Repositori sinyal asli; save() hanya diamati agar snapshot per candle dapat dibandingkan dengan replay.
@@ -502,18 +503,24 @@ async function createWorker({ timers, db, binance, settings, settleMs = 0, restS
       const result = await pipeline.onClosedCandles(series);
       analysed.push({ ...series, result });
     },
+    // Sama dengan worker/index.js: simbol yang berhenti dipantau → sinyal terbukanya ditutup.
+    onMonitoringStopped: async (e) => {
+      stopped.push(e);
+      await pipeline.closeSymbol(e);
+    },
     clock: serverClock.now,
     serverClock,
     logger,
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
+    options: scannerOptions,
   });
   cleanups.push(() => scanner.stop());
-  return { repos, rest, hub, scanner, pipeline, alerts, analysed, saves, settles, logs, serverClock };
+  return { repos, rest, hub, scanner, pipeline, alerts, analysed, saves, settles, logs, serverClock, stopped };
 }
 
 /** `serverSkewMs`: jam server Binance palsu berada sekian ms di depan jam lokal worker (negatif = di belakang). */
-async function setup({ settings, configure, skip, delayOf, market = MARKET, settleMs, restSleep, serverSkewMs = 0 } = {}) {
+async function setup({ settings, configure, skip, delayOf, market = MARKET, settleMs, restSleep, serverSkewMs = 0, scannerOptions } = {}) {
   const timers = createFakeTimers(START);
   const db = openDatabase(':memory:');
   cleanups.push(() => db.close());
@@ -521,7 +528,7 @@ async function setup({ settings, configure, skip, delayOf, market = MARKET, sett
   const binance = createFakeBinance({ clock: () => timers.clock() + serverSkewMs, market });
   configure?.(binance);
   const worker = await createWorker({
-    timers, db, binance, settings, settleMs, restSleep: restSleep?.(timers),
+    timers, db, binance, settings, settleMs, restSleep: restSleep?.(timers), scannerOptions,
   });
   const driver = createMarketDriver({ timers, hub: worker.hub, from: START, market, skip, delayOf });
   return { timers, db, binance, driver, ...worker };
@@ -907,7 +914,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
   });
 
   it('INT-WRK-006 delisting (SETTLING) saat rediscovery → repositori simbol menandai delisted, stream diganti, pesan terlambat diabaikan; listing ulang menyambung histori tanpa gap', async () => {
-    const { scanner, repos, binance, driver, hub, db, logs } = await setup();
+    const { scanner, repos, binance, driver, hub, db, logs, stopped } = await setup();
     const symbolRow = (symbol) => db.prepare('SELECT status, is_monitored, monitored_since, delisted_at FROM symbols WHERE symbol = ?').get(symbol);
     await scanner.start();
     await driver.runUntil(START + H1 - 1_000);
@@ -915,6 +922,8 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     binance.listing.get(DOWN).status = 'SETTLING';
     await driver.runUntil(START + H1 + 1_000);
     expect(symbolRow(DOWN)).toEqual({ status: 'SETTLING', is_monitored: 0, monitored_since: null, delisted_at: START + H1 });
+    // Pelepasan pantauan dilaporkan sekali (penutupan sinyal terbuka: lihat INT-WRK-016; DWNUSDT tanpa sinyal).
+    expect(stopped).toEqual([{ symbol: DOWN, timeframes: null, reason: 'SYMBOL_DELISTED', at: START + H1 }]);
     expect(symbolRow(SA)).toMatchObject({ is_monitored: 1, monitored_since: START, delisted_at: null });
     expect(await repos.symbols.listMonitored()).toEqual([SA]);
     expect(hub.sockets).toHaveLength(2);
@@ -961,7 +970,66 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     // Sinyal simbol lain tidak terganggu oleh pergantian stream.
     expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, referenceReplay(SA, LIQ_SA)));
     expect(await repos.signals.history({ symbol: DOWN, limit: 10 })).toEqual([]);
+    expect(stopped).toHaveLength(1); // listing ulang tidak melaporkan pelepasan
     expect(problems(logs)).toEqual(['simbol delisted, stream dihentikan', 'galat scanner']);
+  });
+
+  it('INT-WRK-016 delisting simbol dengan sinyal terbuka (SA, EARLY_BULLISH) → sinyal EXPIRED reason SYMBOL_DELISTED tanpa alert & hilang dari screener; listing ulang → replay membuka sinyal BARU, identik dengan replay murni sejak candle 64', async () => {
+    const REDISCOVERY = 20 * 60_000; // rediscovery tiap 4 candle 5m: siklus di candle 52, 56, 60, 64, 68, 72, 76
+    const { scanner, repos, binance, driver, db, alerts, stopped, logs } = await setup({ scannerOptions: { rediscoveryMs: REDISCOVERY } });
+    await scanner.start();
+    const delistAt = START + 4 * REDISCOVERY; // = candle 64 + 7 dtk; candle 63 sudah tertutup & dianalisis
+    await driver.runUntil(delistAt - 1_000);
+    const [opened] = await repos.signals.history({ symbol: SA, limit: 10 });
+    expect(opened).toMatchObject({ state: 'EARLY_BULLISH', closedAt: null });
+    expect((await repos.signals.listActive()).map((s) => s.symbol)).toEqual([SA]);
+    const alertsBefore = alerts.length;
+
+    binance.listing.get(SA).status = 'SETTLING';
+    await driver.runUntil(delistAt + 1_000);
+    expect(stopped).toEqual([{ symbol: SA, timeframes: null, reason: 'SYMBOL_DELISTED', at: delistAt }]);
+    expect(await repos.signals.listActive()).toEqual([]);
+    expect(await repos.signals.getOpen({ symbol: SA, timeframe: '5m' })).toBeNull();
+    expect(alerts.length).toBe(alertsBefore); // penutupan karena delisting tidak di-alert
+
+    // Sinyal pertama = replay murni candle 48..63, lalu ditutup dengan event SYMBOL_DELISTED.
+    const first = expectedHistory(SA, referenceReplay(SA, LIQ_SA, { to: 63 }));
+    expect(first).toHaveLength(1);
+    const last63 = MARKET.get(seriesKey(SA, '5m'))[63];
+    const [closed] = withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }));
+    expect(closed).toEqual({
+      ...first[0], state: 'EXPIRED', finalOutcome: 'EXPIRED:EARLY_BULLISH', updatedAt: delistAt, closedAt: delistAt,
+      events: [...first[0].events, {
+        occurredAt: delistAt, candleTime: at5m(63), fromState: 'EARLY_BULLISH', toState: 'EXPIRED', price: last63.close,
+        detail: {
+          reason: 'SYMBOL_DELISTED', barsInPrevState: first[0].barsInState, firstDetectedPrice: first[0].firstDetectedPrice,
+          invalidationPrice: first[0].invalidationPrice, priceCandleTime: at5m(63),
+        },
+      }],
+    });
+
+    // Listing ulang: bootstrap 64..67 (histori, tanpa analisis); candle live 68 me-replay 64..68 dengan prev
+    // null → sinyal BARU terbuka di candle 66 (pola SA terdeteksi lagi), bukan melanjutkan sinyal lama.
+    const relistAt = START + 5 * REDISCOVERY;
+    await driver.runUntil(relistAt - 1_000);
+    binance.listing.get(SA).status = 'TRADING';
+    await driver.runUntil(END);
+    expect(await storedSeries(repos, SA, '5m')).toEqual(expectedSeries(SA, '5m', [
+      [0, BOOT - 1, 'rest'], [BOOT, 63, 'ws'], [64, 67, 'rest'], [68, LAST, 'ws'],
+    ]));
+    const second = referenceReplay(SA, LIQ_SA, { from: 64, to: LAST });
+    const expectedSecond = expectedHistory(SA, second);
+    expect(expectedSecond).toHaveLength(1);
+    expect(expectedSecond[0].events[0]).toMatchObject({ fromState: 'NO_PATTERN', candleTime: at5m(66) });
+    const history = withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }));
+    expect(history).toEqual([...expectedSecond, closed]);
+    expect(count(db, 'signals')).toBe(2);
+    expect((await repos.signals.listActive()).map((s) => s.firstDetectedAt)).toEqual([at5m(67) - 1]);
+    // Alert sinyal baru hanya untuk candle terbaru per batch (candle 64..67 di-replay tanpa alert).
+    expect(alerts.slice(alertsBefore).map(alertView)).toEqual(referenceAlerts(SA, second).filter((a) => a.index >= 68).map(dropIndex));
+    expect(stopped).toHaveLength(1);
+    expect((await repos.ingestion.getStatus()).recentErrors).toEqual([]);
+    expect(problems(logs)).toEqual(['simbol delisted, stream dihentikan']);
   });
 
   it('INT-WRK-007 restart worker di atas database yang sama: bootstrap hanya mengambil candle setelah lastOpenTime, sinyal terbuka dilanjutkan tanpa sinyal/event ganda', async () => {

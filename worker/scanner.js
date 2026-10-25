@@ -5,7 +5,8 @@
 // - lompatan openTime (gap, mis. setelah reconnect) di-backfill via REST SEBELUM analisis;
 // - duplikat/out-of-order tetap disimpan (idempoten) tetapi tidak memicu analisis ulang;
 // - sweep berkala menambal stream yang tertinggal (fallback bila WS diam);
-// - rediscovery periodik menangani simbol baru & delisting;
+// - rediscovery periodik menangani simbol baru & delisting; simbol/timeframe yang berhenti dipantau
+//   dilaporkan lewat onMonitoringStopped (worker menutup sinyal terbukanya) SETELAH stream-nya dilepas;
 // - semua error dicatat (dengan throttle) dan tidak menghentikan proses;
 // - bila `serverClock` diberikan, jam disinkronkan dengan waktu server Binance di awal setiap siklus
 //   (start, rediscovery, dan percobaan ulang discovery); `clock` sebaiknya = serverClock.now.
@@ -79,7 +80,7 @@ function createLimiter(max) {
   };
 }
 
-function assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, serverClock }) {
+function assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, serverClock }) {
   for (const m of ['getExchangeInfo', 'get24hTickers', 'getBookTickers', 'getKlines']) {
     if (typeof rest?.[m] !== 'function') throw new TypeError(`rest.${m} wajib ada`);
   }
@@ -97,6 +98,7 @@ function assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, 
   if (typeof getSettings !== 'function') throw new TypeError('getSettings wajib berupa fungsi');
   if (typeof discoverSymbols !== 'function') throw new TypeError('discoverSymbols wajib berupa fungsi');
   if (typeof onClosedCandles !== 'function') throw new TypeError('onClosedCandles wajib berupa fungsi');
+  if (typeof onMonitoringStopped !== 'function') throw new TypeError('onMonitoringStopped wajib berupa fungsi');
   if (serverClock !== undefined && serverClock !== null
     && (typeof serverClock.sync !== 'function' || typeof serverClock.offsetMs !== 'function')) {
     throw new TypeError('serverClock harus { sync(), offsetMs() }');
@@ -133,6 +135,8 @@ function liquidityThresholds(raw) {
  *   repos: { candles: object, symbols: object, ingestion: object },
  *   getSettings: () => Promise<object>,
  *   onClosedCandles?: (e: { symbol: string, timeframe: string, candles: object[], reason: string }) => Promise<void>|void,
+ *   onMonitoringStopped?: (e: { symbol: string, timeframes: string[]|null, reason: 'SYMBOL_DELISTED'|'MONITORING_STOPPED',
+ *     at: number }) => Promise<void>|void,
  *   discoverSymbols: (args: { symbols: object[], tickers: object[], bookTickers: object[], settings: object })
  *     => { selected: Array<{ symbol: string }>, rejected: object[] } | Promise<object>,
  *   clock?: () => number, logger?: object, setTimer?: Function, clearTimer?: Function, options?: object,
@@ -140,6 +144,11 @@ function liquidityThresholds(raw) {
  * }} deps
  *   serverClock: jam tersinkron server (backend/ingestion/serverClock.js); sync() dipanggil tiap siklus,
  *   kegagalan dicatat sebagai error ingesti sumber 'clock' (offset terakhir tetap dipakai).
+ *   onMonitoringStopped: dipanggil setelah stream dilepas untuk (a) simbol yang sebelumnya dipantau (termasuk
+ *   daftar di DB saat siklus pertama) dan tidak terpilih lagi — reason SYMBOL_DELISTED bila delisted, selain itu
+ *   MONITORING_STOPPED, timeframes null (= semua); (b) simbol yang tetap dipantau tetapi timeframe-nya dilepas
+ *   dari pengaturan — MONITORING_STOPPED dengan timeframes tersebut. Error dicatat (sumber 'monitoring').
+ *   Hanya setelah discovery berhasil; fallback daftar DB tidak pernah melepas simbol.
  * @returns {{ start(): Promise<void>, stop(): Promise<void>, status(): object, liquidityOf(symbol: string): object|null }}
  */
 export function createScanner({
@@ -148,6 +157,7 @@ export function createScanner({
   repos,
   getSettings,
   onClosedCandles = async () => {},
+  onMonitoringStopped = async () => {},
   discoverSymbols,
   clock = Date.now,
   logger = noopLogger,
@@ -156,7 +166,7 @@ export function createScanner({
   options = {},
   serverClock = null,
 }) {
-  assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, serverClock });
+  assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, serverClock });
   const cfg = { ...SCANNER_DEFAULTS, ...options };
   const limiter = createLimiter(cfg.restConcurrency);
 
@@ -549,15 +559,44 @@ export function createScanner({
       logger.warn({ symbols: delisted }, 'simbol delisted, stream dihentikan');
     }
     await repos.symbols.setMonitored(selected, now);
+    // Simbol yang berhenti dipantau → reason untuk penutupan sinyal terbukanya (setelah stream dilepas).
+    const chosen = new Set(selected);
+    const gone = new Set(delisted);
+    return new Map([...previously].filter((s) => !chosen.has(s))
+      .map((s) => [s, gone.has(s) ? 'SYMBOL_DELISTED' : 'MONITORING_STOPPED']));
   }
 
-  /** Menyesuaikan set stream dengan target; stream baru di-bootstrap. Mengembalikan jumlah candle. */
-  async function applyTarget(target) {
+  /** Melaporkan simbol/timeframe yang berhenti dipantau; error dicatat, tidak menghentikan siklus. */
+  async function notifyStopped(stoppedSymbols, removedKeys, target, at) {
+    const events = [...stoppedSymbols].map(([symbol, reason]) => ({ symbol, timeframes: null, reason }));
+    const kept = new Set(target);
+    const byTimeframe = new Map();
+    for (const { symbol, timeframe } of removedKeys) {
+      if (!kept.has(symbol) || stoppedSymbols.has(symbol)) continue;
+      if (!byTimeframe.has(symbol)) byTimeframe.set(symbol, []);
+      byTimeframe.get(symbol).push(timeframe);
+    }
+    for (const [symbol, timeframes] of byTimeframe) events.push({ symbol, timeframes, reason: 'MONITORING_STOPPED' });
+    for (const e of events) {
+      try {
+        await onMonitoringStopped({ ...e, at });
+      } catch (err) {
+        await report('monitoring', err);
+      }
+    }
+  }
+
+  /**
+   * Menyesuaikan set stream dengan target; stream baru di-bootstrap. Mengembalikan jumlah candle.
+   * `stopped` (dari syncSymbols) + stream yang dilepas → onMonitoringStopped setelah stream lama berhenti.
+   */
+  async function applyTarget(target, stopped = new Map(), at = clock()) {
     const desired = new Map();
     for (const symbol of target) {
       for (const timeframe of settings.timeframes) desired.set(streamKey(symbol, timeframe), { symbol, timeframe });
     }
     const removed = [...streams.keys()].filter((k) => !desired.has(k));
+    const removedStreams = removed.map((k) => streams.get(k));
     for (const k of removed) streams.delete(k);
     const added = [];
     for (const [k, d] of desired) {
@@ -568,10 +607,13 @@ export function createScanner({
     }
     monitored = [...target];
     if (added.length > 0 || removed.length > 0 || (stream === null && streams.size > 0)) replaceStream();
+    // Stream lama sudah dilepas (candle baru untuknya diabaikan) → aman menutup sinyal terbukanya.
+    const notified = notifyStopped(stopped, removedStreams, target, at);
     const counts = await Promise.all(added.map((st) => {
       let n = 0;
       return enqueue(st, async () => { n = await bootstrapStream(st); }).then(() => n);
     }));
+    await notified;
     return counts.reduce((a, b) => a + b, 0);
   }
 
@@ -596,10 +638,11 @@ export function createScanner({
     try {
       await loadSettings();
       let target = null;
+      let stopped = new Map();
       try {
         const found = await discover();
         checkStopping();
-        await syncSymbols(found.symbols, found.selected, startedAt);
+        stopped = await syncSymbols(found.symbols, found.selected, startedAt);
         target = found.selected;
         discoveryFailures = 0;
       } catch (err) {
@@ -611,7 +654,7 @@ export function createScanner({
         if (monitored.length === 0) target = await repos.symbols.listMonitored();
       }
       checkStopping();
-      if (target !== null) stats.candles += await applyTarget(target);
+      if (target !== null) stats.candles += await applyTarget(target, stopped, startedAt);
       logger.info({ kind, symbols: monitored.length, streams: streams.size, candles: stats.candles }, 'siklus scanner selesai');
     } catch (err) {
       if (!(err instanceof ScannerStopped)) {
