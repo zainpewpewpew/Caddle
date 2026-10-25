@@ -5,8 +5,8 @@ import { migrate } from '../../../backend/database/migrate.js';
 import { createRepositories } from '../../../backend/database/repositories/index.js';
 import { TIMEFRAME_MS } from '../../../backend/market/contracts.js';
 import { createSignalRepository } from '../../../backend/signals/index.js';
-import { downtrendCandles, silentAccumulationCandles } from '../../fixtures/candles/scenarios.js';
-import { withoutCandle, withProvisionalLast } from '../../fixtures/candles/synthetic.js';
+import { downtrendCandles, silentAccumulationCandles, zigzag } from '../../fixtures/candles/scenarios.js';
+import { generateCandles, withoutCandle, withProvisionalLast } from '../../fixtures/candles/synthetic.js';
 
 // Pipeline lengkap dengan detektor SA/PVA asli, konteks HTF, skor, state machine, dan SQLite.
 // Semua candle SINTETIS (tests/fixtures/candles) — bukan data pasar nyata.
@@ -58,6 +58,24 @@ async function feed({ repos, pipeline }, all, upto) {
 }
 
 const count = (db, table) => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+
+/**
+ * Skenario SA SINTETIS (sama dengan silentAccumulationCandles(1)) disambung `tail` candle sideways: sinyal
+ * pertama terbuka di candle 62 lalu EXPIRED di 88, sinyal QUIET kedua terbuka di 89, sesudahnya tanpa event.
+ */
+function saThenSideways(tail) {
+  const sideways = (bars, volume) => ({ bars, cycle: zigzag(3, 0.002, 3, 0.002), volume, volumeNoise: 0.15 });
+  const gradualUp = (bars, volume) => ({ bars, cycle: zigzag(5, 0.0015, 3, 0.0015), wick: 0.002, volume, volumeNoise: 0.1 });
+  return generateCandles({ seed: 1, segments: [sideways(48, 1000), gradualUp(28, 450), sideways(tail, 1000)] });
+}
+
+/** Memasukkan hanya candle 5m (tanpa HTF) satu per satu dan memicu pipeline per candle. */
+async function feedBase({ repos, pipeline }, candles) {
+  for (const c of candles) {
+    await repos.candles.upsertClosed([c], { now: NOW });
+    await pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
+  }
+}
 
 describe('analyzeAt (murni)', () => {
   it('UNIT-PIPE-001 skenario SA sintetis membuka EARLY_BULLISH dengan alert, skor & penjelasan', () => {
@@ -193,6 +211,47 @@ describe('createAnalysisPipeline (SQLite)', () => {
     // Candle berikutnya tetap diproses melanjutkan sinyal yang sama.
     await feed({ ...ctx, pipeline: restarted }, all, 64);
     expect(count(ctx.db, 'signals')).toBe(1);
+  });
+
+  it('EDGE-PIPE-007 restart setelah candle tanpa event: candle yang sudah dievaluasi tidak di-replay (kursor analisis persisten), hanya candle baru', async () => {
+    const ctx = await setup();
+    const all = saThenSideways(60);
+    await feedBase({ ...ctx, pipeline: createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals }) }, all.slice(0, -1));
+    const lastEvent = await ctx.signals.lastEventCandleTime({ symbol: SYMBOL, timeframe: '5m' });
+    // Guard fixture: event terakhir (candle 89) jauh sebelum candle terakhir yang dievaluasi (134).
+    expect(lastEvent).toBe(all[89].openTime);
+    expect(await ctx.signals.lastEvaluatedCandleTime({ symbol: SYMBOL, timeframe: '5m' })).toBe(all.at(-2).openTime);
+    const events = count(ctx.db, 'signal_events');
+
+    // Restart tanpa candle baru → tidak ada yang dievaluasi ulang.
+    const restarted = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals });
+    expect(await restarted.onClosedCandles({ symbol: SYMBOL, timeframe: '5m' })).toMatchObject({ skipped: 'ALREADY_EVALUATED' });
+    // Satu candle baru → tepat satu evaluasi (bukan 135 − 89 = 46 candle sejak event terakhir).
+    await ctx.repos.candles.upsertClosed([all.at(-1)], { now: NOW });
+    const r = await createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals }).onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
+    expect(r.evaluated).toBe(1);
+    expect(count(ctx.db, 'signal_events')).toBe(events);
+    expect(await ctx.signals.lastEvaluatedCandleTime({ symbol: SYMBOL, timeframe: '5m' })).toBe(all.at(-1).openTime);
+  });
+
+  it('EDGE-PIPE-008 replay panjang memberi giliran ke event loop tiap yieldEvery (25) candle → timer/heartbeat tidak tertahan sampai replay selesai', async () => {
+    const ctx = await setup();
+    const all = saThenSideways(60);
+    // getOpen dipanggil tepat sekali per candle yang dievaluasi.
+    let evaluatedCandles = 0;
+    const signals = { ...ctx.signals, getOpen: async (a) => { evaluatedCandles += 1; return ctx.signals.getOpen(a); } };
+    const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals });
+    await feedBase({ ...ctx, pipeline }, all.slice(0, 1));
+    await ctx.repos.candles.upsertClosed(all.slice(1, 81), { now: NOW });
+    evaluatedCandles = 0;
+    const ticks = [];
+    setImmediate(() => ticks.push(evaluatedCandles));
+    const r = await pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
+    expect(r.evaluated).toBe(80);
+    expect(evaluatedCandles).toBe(80);
+    // Callback setImmediate yang dijadwalkan sebelum replay berjalan setelah 25 candle, bukan setelah 80.
+    expect(ticks).toEqual([25]);
+    expect(() => createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, yieldEvery: 0 })).toThrow(RangeError);
   });
 
   it('POS-PIPE-002 close di bawah invalidation menutup sinyal (INVALIDATED) dan tidak membuka ulang di candle yang sama', async () => {

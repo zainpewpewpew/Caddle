@@ -1,4 +1,5 @@
-// Repositori sinyal: tabel signals, signal_events, pattern_definitions (migrasi 002).
+// Repositori sinyal: tabel signals, signal_events, pattern_definitions (migrasi 002) dan
+// analysis_cursors (migrasi 004: candle terakhir yang dievaluasi pipeline per seri).
 // Satu-satunya tempat SQL sinyal ditulis; semua query statis dengan parameter terikat.
 //
 // Catatan skema: migrasi 002 belum memiliki kolom untuk lastCandleTime, lastEvaluatedAt,
@@ -214,6 +215,16 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
     lastEventCandle: db.prepare(`SELECT MAX(e.candle_time) AS candle_time
       FROM signal_events e JOIN signals s ON s.id = e.signal_id
       WHERE s.symbol_id = ? AND s.timeframe = ?`),
+    // Kursor analisis lebih diutamakan; event tetap ikut (DB sebelum migrasi 004 belum punya kursor).
+    lastEvaluated: db.prepare(`SELECT MAX(t) AS t FROM (
+        SELECT last_open_time AS t FROM analysis_cursors WHERE symbol_id = @symbolId AND timeframe = @timeframe
+        UNION ALL
+        SELECT MAX(e.candle_time) FROM signal_events e JOIN signals s ON s.id = e.signal_id
+        WHERE s.symbol_id = @symbolId AND s.timeframe = @timeframe)`),
+    advanceCursor: db.prepare(`INSERT INTO analysis_cursors (symbol_id, timeframe, last_open_time, updated_at)
+      VALUES (@symbolId, @timeframe, @openTime, @at)
+      ON CONFLICT (symbol_id, timeframe) DO UPDATE SET last_open_time = excluded.last_open_time, updated_at = excluded.updated_at
+      WHERE excluded.last_open_time > analysis_cursors.last_open_time`),
   };
 
   const ensureDefinitionTx = db.transaction((row, definitionJson) => {
@@ -278,6 +289,10 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       });
     }
 
+    // Candle snapshot ini sudah dievaluasi: kursor analisis maju dalam transaksi yang sama dengan
+    // sinyal + event, sehingga restart tidak pernah mengevaluasi ulang candle yang menutup sinyal.
+    stmt.advanceCursor.run({ symbolId: sym.id, timeframe, openTime: snapshot.lastCandleTime, at: updatedAt });
+
     if (event) {
       const { reason = null, detail = {} } = event;
       stmt.insertEvent.run({
@@ -306,7 +321,7 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
         signalId: row.id,
         occurredAt: at,
         // candle_time = candle terakhir yang dievaluasi (bukan `at`) agar titik awal replay pipeline
-        // (lastEventCandleTime) tidak melompati candle bila simbol dipantau lagi.
+        // (lastEvaluatedCandleTime) tidak melompati candle bila simbol dipantau lagi.
         candleTime: snapshot.lastCandleTime,
         fromState: row.state,
         toState: 'EXPIRED',
@@ -412,7 +427,7 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
 
     /**
      * openTime candle terakhir yang menghasilkan event sinyal untuk simbol + timeframe (atau null).
-     * Dipakai pipeline setelah restart agar candle yang sudah menutup sinyal tidak membuka sinyal baru.
+     * Pipeline memakai lastEvaluatedCandleTime (kursor analisis, mencakup nilai ini) sebagai titik awal replay.
      */
     async lastEventCandleTime({ symbol, timeframe } = {}) {
       assertSymbol(symbol);
@@ -420,6 +435,35 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       const sym = stmt.symbolId.get(symbol);
       if (!sym) return null;
       return stmt.lastEventCandle.get(sym.id, timeframe)?.candle_time ?? null;
+    },
+
+    /**
+     * openTime candle dasar terakhir yang sudah dievaluasi pipeline untuk simbol + timeframe (atau null):
+     * maksimum dari kursor analisis (markEvaluated / save) dan candle event terakhir. Titik awal replay
+     * pipeline setelah restart — candle dengan openTime ≤ nilai ini tidak dievaluasi ulang.
+     */
+    async lastEvaluatedCandleTime({ symbol, timeframe } = {}) {
+      assertSymbol(symbol);
+      assertTimeframe(timeframe);
+      const sym = stmt.symbolId.get(symbol);
+      if (!sym) return null;
+      return stmt.lastEvaluated.get({ symbolId: sym.id, timeframe })?.t ?? null;
+    },
+
+    /**
+     * Mencatat bahwa candle `openTime` sudah dievaluasi (candle tanpa sinyal tersimpan, mis. NO_PATTERN).
+     * Kursor hanya maju; nilai yang lebih lama/sama diabaikan (idempoten). save() memajukan kursor sendiri.
+     * @returns {Promise<{ advanced: boolean }>}
+     */
+    async markEvaluated({ symbol, timeframe, openTime, now } = {}) {
+      assertSymbol(symbol);
+      assertTimeframe(timeframe);
+      if (!Number.isSafeInteger(openTime) || openTime < 0) throw new TypeError('openTime wajib epoch ms bilangan bulat');
+      const at = now ?? clock();
+      if (!Number.isInteger(at)) throw new TypeError('now harus epoch ms');
+      const sym = stmt.symbolId.get(symbol);
+      if (!sym) throw new SignalRepositoryError(`Simbol ${symbol} belum terdaftar`, 'UNKNOWN_SYMBOL');
+      return { advanced: stmt.advanceCursor.run({ symbolId: sym.id, timeframe, openTime, at }).changes > 0 };
     },
 
     /** Sinyal aktif (non-terminal), urut patternScore tertinggi; semua filter diterapkan sebelum limit. */

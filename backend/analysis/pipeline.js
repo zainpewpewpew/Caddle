@@ -2,6 +2,7 @@
 // Worker live memanggil `createAnalysisPipeline(...).onClosedCandles`; replay/backtest (M6) memanggil
 // `analyzeAt` yang sama dengan sumber candle historis, sehingga live dan backtest memakai logika identik.
 // Skor adalah skor aturan yang dapat dijelaskan, bukan probabilitas.
+import { setImmediate as nextMacrotask } from 'node:timers/promises';
 import { HIGHER_TIMEFRAMES, TIMEFRAME_MS, TIMEFRAMES } from '../market/contracts.js';
 import {
   PATTERN_VERSION, PVA_CONDITIONS, SA_CONDITIONS, evaluatePatterns, requiredCandles, resolveParams,
@@ -85,13 +86,16 @@ export function patternDefinitions(params = {}) {
  * Setiap candle dasar BARU dievaluasi berurutan (replay) — mis. setelah backfill gap beberapa candle
  * sekaligus — sehingga transisi state terjadi pada candle yang benar, sama seperti backtest.
  * Alert hanya untuk candle terbaru; transisi historis hasil replay disimpan tanpa alert.
- * Evaluasi pertama sebuah seri tanpa riwayat event hanya memakai candle terakhir (bootstrap = histori).
+ * Titik awal replay = kursor analisis persisten (signals.lastEvaluatedCandleTime: candle terakhir yang
+ * dievaluasi, termasuk candle tanpa event), sehingga restart hanya mengevaluasi candle setelah kursor.
+ * Evaluasi pertama sebuah seri tanpa kursor hanya memakai candle terakhir (bootstrap = histori).
+ * Replay panjang memberi giliran ke event loop tiap `yieldEvery` candle (heartbeat/WS tidak tertahan).
  *
  * @param {{ repos: { candles: any }, signals: any,
  *   getLiquidity?: (symbol: string) => { quoteVolume24h: number|null, spreadBps: number|null,
  *     thresholds?: { minQuoteVolume24h: number, maxSpreadBps: number } } | null | undefined,
  *   logger?: any, params?: object, lookback?: number, maxReplay?: number, settleMs?: number,
- *   sleep?: (ms: number) => Promise<void>,
+ *   sleep?: (ms: number) => Promise<void>, yieldEvery?: number, yieldToEventLoop?: () => Promise<void>,
  *   onAlert?: (alert: { symbol: string, timeframe: string, state: string, event: object, view: object }) => void }} deps
  *   settleMs: bila candle timeframe lebih tinggi yang tutup bersamaan belum tersimpan, tunggu sekali
  *   selama ini agar konteks live sama dengan replay (stream per timeframe diproses paralel).
@@ -101,17 +105,19 @@ export function patternDefinitions(params = {}) {
 export function createAnalysisPipeline({
   repos, signals, getLiquidity = () => undefined, logger, params = {}, lookback = ANALYSIS_LOOKBACK,
   maxReplay = 288, settleMs = 0, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onAlert,
+  yieldEvery = 25, yieldToEventLoop = () => nextMacrotask(),
 }) {
   if (!repos?.candles || !signals) throw new TypeError('repos.candles dan signals wajib ada');
   if (!Number.isInteger(lookback) || lookback < 100 || lookback > 1500) throw new RangeError('lookback harus 100..1500');
   if (!Number.isInteger(maxReplay) || maxReplay < 1 || maxReplay > 5000) throw new RangeError('maxReplay harus 1..5000');
   if (!Number.isInteger(settleMs) || settleMs < 0 || settleMs > 30_000) throw new RangeError('settleMs harus 0..30000');
+  if (!Number.isInteger(yieldEvery) || yieldEvery < 1 || yieldEvery > 5000) throw new RangeError('yieldEvery harus 1..5000');
   const definitions = patternDefinitions(params);
   let definitionsReady = null;
   const queues = new Map();
-  // openTime candle dasar terakhir yang dievaluasi per seri (diisi dari event tersimpan saat pertama kali,
-  // sehingga tetap berlaku setelah restart) — mencegah candle yang sama dievaluasi dua kali, termasuk
-  // membuka sinyal baru pada candle yang baru saja menutup sinyal sebelumnya.
+  // openTime candle dasar terakhir yang dievaluasi per seri (cache dari kursor analisis persisten, diisi
+  // saat pertama kali sehingga tetap berlaku setelah restart) — mencegah candle yang sama dievaluasi dua
+  // kali, termasuk membuka sinyal baru pada candle yang baru saja menutup sinyal sebelumnya.
   const lastEvaluated = new Map();
 
   function ensureDefinitions() {
@@ -153,7 +159,7 @@ export function createAnalysisPipeline({
     const base = await repos.candles.getLatest({ symbol, timeframe, limit: lookback + maxReplay });
     if (!base.length) return { symbol, timeframe, skipped: 'NO_DATA' };
     const last = base[base.length - 1];
-    if (!lastEvaluated.has(key)) lastEvaluated.set(key, await signals.lastEventCandleTime({ symbol, timeframe }));
+    if (!lastEvaluated.has(key)) lastEvaluated.set(key, await signals.lastEvaluatedCandleTime({ symbol, timeframe }));
     const seen = lastEvaluated.get(key);
     if (seen !== null && last.openTime <= seen) return { symbol, timeframe, skipped: 'ALREADY_EVALUATED' };
 
@@ -172,14 +178,20 @@ export function createAnalysisPipeline({
 
     const { liquidity, params: runParams } = liquidityInputs(getLiquidity(symbol));
     let result = null;
-    for (const index of pending) {
+    for (let n = 0; n < pending.length; n += 1) {
+      // Repositori better-sqlite3 resolve sinkron: tanpa jeda eksplisit replay panjang menahan timer & I/O.
+      if (n > 0 && n % yieldEvery === 0) await yieldToEventLoop();
+      const index = pending[n];
       const candle = base[index];
       const window = base.slice(Math.max(0, index + 1 - lookback), index + 1);
       const prev = await signals.getOpen({ symbol, timeframe });
       result = analyzeAt({ symbol, timeframe, candlesByTimeframe: { [timeframe]: window, ...higher }, prev, liquidity, params: runParams });
+      let saved = null;
       if (result.event || (prev && result.next !== prev)) {
-        await signals.save({ symbol, timeframe, snapshot: result.next, event: result.event, explanation: result.view.explanation });
+        // save() memajukan kursor analisis dalam transaksi yang sama dengan sinyal + event.
+        saved = await signals.save({ symbol, timeframe, snapshot: result.next, event: result.event, explanation: result.view.explanation });
       }
+      if (saved?.saved !== true) await signals.markEvaluated({ symbol, timeframe, openTime: candle.openTime, now: candle.closeTime });
       lastEvaluated.set(key, candle.openTime);
     }
 

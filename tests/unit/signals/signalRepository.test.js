@@ -384,6 +384,46 @@ describe('repositori sinyal', () => {
     expect((await repo.listActive()).map((a) => a.timeframe).sort()).toEqual(['1h', '5m']);
   });
 
+  it('UNIT-SREP-008 kursor analisis: markEvaluated hanya maju; save memajukannya dalam transaksi yang sama; lastEvaluatedCandleTime = max(kursor, event terakhir); bertahan setelah restart (file DB)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lr-cursor-'));
+    tempDirs.push(dir);
+    const path = join(dir, 'signals.db');
+    const { db, repo } = setup(path);
+    await repo.ensurePatternDefinition(SA_V1);
+    const at = (i) => T0 + i * TF_MS['5m'];
+    const cursorRow = () => db.prepare('SELECT last_open_time, updated_at FROM analysis_cursors').all();
+    expect(await repo.lastEvaluatedCandleTime({ symbol: 'BTCUSDT', timeframe: '5m' })).toBeNull();
+
+    // Candle tanpa sinyal (NO_PATTERN) → kursor maju; nilai lebih lama/sama diabaikan.
+    expect(await repo.markEvaluated({ symbol: 'BTCUSDT', timeframe: '5m', openTime: at(3), now: at(4) - 1 })).toEqual({ advanced: true });
+    expect(await repo.markEvaluated({ symbol: 'BTCUSDT', timeframe: '5m', openTime: at(2) })).toEqual({ advanced: false });
+    expect(await repo.markEvaluated({ symbol: 'BTCUSDT', timeframe: '5m', openTime: at(3) })).toEqual({ advanced: false });
+    expect(cursorRow()).toEqual([{ last_open_time: at(3), updated_at: at(4) - 1 }]);
+
+    // save() sinyal di candle 5 memajukan kursor ke candle snapshot (atomik dengan sinyal + event).
+    const opened = transition(null, input(5, 100));
+    await repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: opened.next, event: opened.event });
+    expect(await repo.lastEvaluatedCandleTime({ symbol: 'BTCUSDT', timeframe: '5m' })).toBe(at(5));
+    // Save yang gagal di tengah (event tidak dapat diserialisasi) tidak memajukan kursor.
+    const next = transition(opened.next, input(6, 100.1, { sa: { earlyScore: 80 } }));
+    await expect(repo.save({ symbol: 'BTCUSDT', timeframe: '5m', snapshot: next.next, event: { ...next.event, detail: { bad: 10n } } })).rejects.toThrow(TypeError);
+    expect(cursorRow()).toEqual([{ last_open_time: at(5), updated_at: at(6) - 1 }]);
+
+    // DB tanpa kursor (sebelum migrasi 004) → event terakhir tetap menjadi titik awal.
+    db.prepare('DELETE FROM analysis_cursors').run();
+    expect(await repo.lastEvaluatedCandleTime({ symbol: 'BTCUSDT', timeframe: '5m' })).toBe(at(5));
+    await repo.markEvaluated({ symbol: 'BTCUSDT', timeframe: '5m', openTime: at(9) });
+    db.close();
+
+    const reopened = createSignalRepository(openDatabase(path), { clock: () => T0 });
+    expect(await reopened.lastEvaluatedCandleTime({ symbol: 'BTCUSDT', timeframe: '5m' })).toBe(at(9));
+    expect(await reopened.lastEvaluatedCandleTime({ symbol: 'BTCUSDT', timeframe: '1h' })).toBeNull();
+    expect(await reopened.lastEvaluatedCandleTime({ symbol: 'XRPUSDT', timeframe: '5m' })).toBeNull();
+    await expect(reopened.markEvaluated({ symbol: 'XRPUSDT', timeframe: '5m', openTime: at(1) })).rejects.toMatchObject({ code: 'UNKNOWN_SYMBOL' });
+    await expect(reopened.markEvaluated({ symbol: 'BTCUSDT', timeframe: '4h', openTime: at(1) })).rejects.toThrow(RangeError);
+    await expect(reopened.markEvaluated({ symbol: 'BTCUSDT', timeframe: '5m', openTime: 1.5 })).rejects.toThrow(TypeError);
+  });
+
   it('EDGE-SREP-002 simpan ulang snapshot yang sama idempoten; penjelasan dipertahankan bila tidak dikirim', async () => {
     const { db, repo } = setup();
     await repo.ensurePatternDefinition(SA_V1);
