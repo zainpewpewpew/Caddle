@@ -378,11 +378,11 @@ describe('bootstrap', () => {
     rest.failKlines.add('ETHUSDT');
     await scanner.start();
     const errs = recordedErrors(repos);
-    expect(errs).toHaveLength(1);
+    // ETHUSDT 5m + konteks 15m/1h gagal: satu baris per seri (pesan memuat simbol & timeframe).
+    expect(errs.map((e) => e.message.slice(0, 12))).toEqual(['ETHUSDT 5m: ', 'ETHUSDT 15m:', 'ETHUSDT 1h: ']);
     expect(errs[0]).toMatchObject({ at: START, source: 'bootstrap' });
     expect(errs[0].message).toMatch(/ETHUSDT 5m: HTTP 500/);
     expect(repos.store.get('BTCUSDT:5m').size).toBe(5);
-    // ETHUSDT 5m + konteks 15m/1h gagal (3 error; pesan sama di-throttle → 1 baris tercatat).
     expect(scanner.status()).toMatchObject({ state: 'running', errors: 3, streams: 6 });
     expect(streams.current().keys()).toContain('ETHUSDT:5m');
     expect(repos.ingestion.recordRun.mock.calls[0][0]).toMatchObject({ errors: 3, candles: 15 });
@@ -396,6 +396,25 @@ describe('bootstrap', () => {
     rest.failKlines.clear();
     await timers.advance(300_000);
     expect(repos.store.get('ETHUSDT:5m')?.size).toBeGreaterThanOrEqual(5);
+    await scanner.stop();
+  });
+
+  it('NEG-SCN-008 error yang sama di beberapa simbol (bootstrap HTTP 500) → satu baris ingestion_errors per simbol, bukan hanya yang pertama; simbol yang sama dalam 60 d tetap di-throttle', async () => {
+    const { scanner, rest, repos, timers } = setup({ symbols: ['BBBUSDT', 'CCCUSDT', 'DDDUSDT'], timeframes: ['1h'], restBackfillIntervalSec: 30 });
+    for (const sym of ['BBBUSDT', 'CCCUSDT', 'DDDUSDT']) rest.failKlines.add(sym);
+    await scanner.start();
+    expect(recordedErrors(repos)).toEqual(['BBBUSDT', 'CCCUSDT', 'DDDUSDT'].map((sym) => ({
+      at: START, source: 'bootstrap', message: `${sym} 1h: HTTP 500 dari Binance`,
+    })));
+    expect(scanner.status().errors).toBe(3);
+    await timers.advance(30_000); // sweep: gagal lagi (sumber 'backfill') → satu baris per simbol
+    expect(scanner.status().errors).toBe(6);
+    expect(recordedErrors(repos).slice(3).map((e) => [e.source, e.message.slice(0, 7)])).toEqual([
+      ['backfill', 'BBBUSDT'], ['backfill', 'CCCUSDT'], ['backfill', 'DDDUSDT'],
+    ]);
+    await timers.advance(30_000); // sweep berikutnya: pesan per simbol yang sama dalam 60 d → di-throttle
+    expect(scanner.status().errors).toBe(9);
+    expect(recordedErrors(repos)).toHaveLength(6);
     await scanner.stop();
   });
 
@@ -1122,7 +1141,10 @@ describe('heartbeat, status, stop', () => {
     await scanner.start();
     expect(repos.ingestion.heartbeat.mock.calls.map(([b]) => b.at)).toEqual([START + AHEAD, START + AHEAD]);
     expect(repos.ingestion.recordRun).toHaveBeenCalledWith(expect.objectContaining({ startedAt: START + AHEAD, finishedAt: START + AHEAD }));
-    expect(recordedErrors(repos)).toEqual([expect.objectContaining({ at: START + AHEAD, source: 'bootstrap' })]);
+    // Bootstrap 5m + konteks 15m/1h gagal: satu baris per seri.
+    expect(recordedErrors(repos)).toEqual(['5m', '15m', '1h'].map((tf) => expect.objectContaining({
+      at: START + AHEAD, source: 'bootstrap', message: expect.stringContaining(`BTCUSDT ${tf}: `),
+    })));
     // Waktu pasar tetap jam server: bootstrap berakhir di candle tertutup terakhir menurut clock (bukan +2 menit).
     expect(klinesOf(rest).map((r) => r.endTime)).toEqual([LAST_CLOSED + M5 - 1]);
     expect(repos.symbols.setMonitored).toHaveBeenCalledWith(['BTCUSDT'], START);

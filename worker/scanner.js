@@ -267,7 +267,10 @@ export function createScanner({
     timers.set(name, handle);
   }
 
-  /** Mencatat error: dihitung selalu, ditulis ke repositori dengan throttle per sumber+pesan. */
+  /**
+   * Mencatat error: dihitung selalu, ditulis ke repositori dengan throttle per sumber + pesan tersimpan (pesan
+   * memuat simbol & timeframe), sehingga error yang sama di simbol lain tetap tercatat.
+   */
   async function report(source, err, st) {
     if (err instanceof ScannerStopped) return;
     errors += 1;
@@ -276,7 +279,7 @@ export function createScanner({
     const message = `${st ? `${st.symbol} ${st.timeframe}: ` : ''}${detail}`.slice(0, MESSAGE_MAX);
     logger.warn({ source, symbol: st?.symbol, timeframe: st?.timeframe, err: detail }, 'galat scanner');
     const now = localClock();
-    const key = `${source}|${detail}`;
+    const key = `${source}|${message}`;
     const last = errorSeen.get(key);
     if (last !== undefined && now - last < cfg.errorThrottleMs) return;
     if (errorSeen.size >= 1000) errorSeen.clear();
