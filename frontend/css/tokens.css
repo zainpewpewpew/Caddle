@@ -1,0 +1,128 @@
+/*
+ * Long Radar — design tokens.
+ * Satu-satunya sumber nilai visual. Komponen hanya boleh merujuk variabel di bawah.
+ * Kontras teks utama/sekunder terhadap --lr-bg diverifikasi ≥ AA (lihat docs/04-design-system.md).
+ */
+:root {
+  color-scheme: dark;
+
+  /* ---- Warna dasar ---- */
+  --lr-bg: #080b10;
+  --lr-bg-sunken: #05070a;
+  --lr-surface: #10151d;
+  --lr-surface-2: #171e28;
+  --lr-surface-3: #1d2531;
+  --lr-surface-hover: #1a222d;
+  --lr-border: #27303b;
+  --lr-border-subtle: #1b222c;
+  --lr-border-strong: #364250;
+
+  --lr-text: #eaf0f6;
+  --lr-text-2: #8b98a8;
+  --lr-text-3: #7a8696;
+  --lr-text-inverse: #080b10;
+
+  /* ---- Semantik pasar ---- */
+  --lr-bull: #21c58e;
+  --lr-bull-soft: rgb(33 197 142 / 0.12);
+  --lr-bull-line: rgb(33 197 142 / 0.35);
+  --lr-warn: #f4b860;
+  --lr-warn-soft: rgb(244 184 96 / 0.12);
+  --lr-warn-line: rgb(244 184 96 / 0.35);
+  --lr-bear: #f16b75;
+  --lr-bear-soft: rgb(241 107 117 / 0.12);
+  --lr-bear-line: rgb(241 107 117 / 0.35);
+  --lr-accent: #69a8ff;
+  --lr-accent-soft: rgb(105 168 255 / 0.12);
+  --lr-accent-line: rgb(105 168 255 / 0.4);
+  --lr-neutral-soft: rgb(139 152 168 / 0.12);
+
+  /* ---- Tahapan sinyal (state machine) ---- */
+  --lr-stage-quiet: var(--lr-text-2);
+  --lr-stage-early: var(--lr-accent);
+  --lr-stage-momentum: var(--lr-bull);
+  --lr-stage-breakout: #4fe0ae;
+  --lr-stage-invalid: var(--lr-bear);
+  --lr-stage-expired: var(--lr-text-3);
+
+  /* ---- Tipografi ---- */
+  --lr-font-sans: "Inter", "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --lr-font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --lr-text-2xs: 0.6875rem;  /* 11px — label tabel, caption */
+  --lr-text-xs: 0.75rem;     /* 12px — metadata */
+  --lr-text-sm: 0.8125rem;   /* 13px — teks dasar terminal */
+  --lr-text-md: 0.875rem;    /* 14px — teks penting */
+  --lr-text-lg: 1rem;        /* 16px — judul panel */
+  --lr-text-xl: 1.25rem;     /* 20px — judul halaman */
+  --lr-text-2xl: 1.625rem;   /* 26px — angka utama KPI */
+
+  --lr-weight-regular: 400;
+  --lr-weight-medium: 500;
+  --lr-weight-semibold: 600;
+
+  --lr-leading-tight: 1.2;
+  --lr-leading-normal: 1.45;
+  --lr-tracking-caps: 0.06em;
+
+  /* ---- Spasi (basis 4px) ---- */
+  --lr-space-0: 0;
+  --lr-space-1: 0.25rem;
+  --lr-space-2: 0.5rem;
+  --lr-space-3: 0.75rem;
+  --lr-space-4: 1rem;
+  --lr-space-5: 1.25rem;
+  --lr-space-6: 1.5rem;
+  --lr-space-8: 2rem;
+  --lr-space-10: 2.5rem;
+  --lr-space-12: 3rem;
+
+  /* ---- Radius ---- */
+  --lr-radius-xs: 3px;
+  --lr-radius-sm: 5px;
+  --lr-radius-md: 8px;
+  --lr-radius-lg: 12px;
+  --lr-radius-pill: 999px;
+
+  /* ---- Elevasi: garis tipis + bayangan halus, bukan glow ---- */
+  --lr-shadow-1: 0 1px 0 rgb(255 255 255 / 0.02) inset, 0 1px 2px rgb(0 0 0 / 0.35);
+  --lr-shadow-2: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 8px 24px rgb(0 0 0 / 0.45);
+  --lr-shadow-3: 0 16px 48px rgb(0 0 0 / 0.55);
+  --lr-focus-ring: 0 0 0 2px var(--lr-bg), 0 0 0 4px var(--lr-accent-line);
+
+  /* ---- Gerak ---- */
+  --lr-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --lr-dur-fast: 120ms;
+  --lr-dur: 180ms;
+  --lr-dur-slow: 280ms;
+
+  /* ---- Tata letak ---- */
+  --lr-sidebar-w: 232px;
+  --lr-sidebar-w-collapsed: 60px;
+  --lr-topbar-h: 52px;
+  --lr-content-max: 1600px;
+  --lr-row-h: 34px;
+  --lr-row-h-compact: 28px;
+
+  --lr-z-sticky: 10;
+  --lr-z-nav: 20;
+  --lr-z-overlay: 40;
+  --lr-z-toast: 50;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --lr-dur-fast: 0ms;
+    --lr-dur: 0ms;
+    --lr-dur-slow: 0ms;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --lr-text-2: #b3bfcc;
+    --lr-text-3: #97a3b2;
+    --lr-border: #3a4655;
+    --lr-border-subtle: #2c3642;
+  }
+}
