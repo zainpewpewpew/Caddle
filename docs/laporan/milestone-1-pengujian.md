@@ -57,6 +57,8 @@ $ detect-secrets scan --all-files (kecuali node_modules, lockfile, hasil tes)
   docs/laporan/hasil-tes-otomatis.md (judul tes). Ditriase: false positive, tidak ada rahasia nyata.
 ```
 
+Catatan: berkas aturan Semgrep pada perintah di atas kini bernama `config/semgrep/alphalens.yml`; hasil di atas tidak diubah.
+
 Registry ruleset Semgrep (`p/javascript`, `p/nodejs`, `p/owasp-top-ten`, `p/secrets`) gagal diunduh: `ProxyError ... semgrep.dev ... 403 Forbidden`.
 
 ## 5. Cacat yang ditemukan tes dan diperbaiki

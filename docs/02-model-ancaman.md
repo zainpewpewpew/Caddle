@@ -59,7 +59,7 @@ Legenda status: **Diterapkan** = ada di kode M1 dan diuji · **Sebagian** · **D
 | Alat | Hasil | Catatan |
 |---|---|---|
 | `npm audit` (prod + dev, 218 paket) | 0 kerentanan | Dijalankan 2026-10-25. |
-| Semgrep 1.182.1, aturan lokal `config/semgrep/long-radar.yml` (9 aturan, 48 file) | 0 temuan | Ruleset registry (`p/javascript`, `p/owasp-top-ten`, dll.) **tidak dapat diunduh** — semgrep.dev diblokir jaringan build. Harus dijalankan di CI (M7). Dua temuan awal (interpolasi konstanta SQL, `execSync`) direfaktor walau bukan celah nyata. |
+| Semgrep 1.182.1, aturan lokal `config/semgrep/alphalens.yml` (9 aturan, 48 file) | 0 temuan | Ruleset registry (`p/javascript`, `p/owasp-top-ten`, dll.) **tidak dapat diunduh** — semgrep.dev diblokir jaringan build. Harus dijalankan di CI (M7). Dua temuan awal (interpolasi konstanta SQL, `execSync`) direfaktor walau bukan celah nyata. |
 | detect-secrets 1.5.0 (pengganti sementara Gitleaks) | 22 kandidat, **semuanya false positive** | Kata sandi fixture tes (`tests/**`), string dummy timing di `password.js`, contoh `user:pw@` di tes konfigurasi, judul tes di laporan. Tidak ada rahasia nyata. |
 | Gitleaks | **Tidak dijalankan** | Binary hanya tersedia dari GitHub Releases/Docker Hub yang diblokir. Direncanakan di CI. |
 | Trivy | **Tidak dijalankan** | Sama seperti di atas; belum ada image container (M8). |

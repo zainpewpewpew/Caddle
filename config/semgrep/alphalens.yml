@@ -1,4 +1,4 @@
-# Aturan Semgrep lokal Long Radar. Dipakai karena registry semgrep.dev tidak selalu
+# Aturan Semgrep lokal AlphaLens. Dipakai karena registry semgrep.dev tidak selalu
 # dapat dijangkau dari lingkungan build. Melengkapi (bukan menggantikan) ruleset registry.
 rules:
   - id: lr-dom-html-sink

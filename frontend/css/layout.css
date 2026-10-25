@@ -1,4 +1,4 @@
-/* Long Radar — kerangka aplikasi: sidebar, topbar, area konten. */
+/* AlphaLens — kerangka aplikasi: sidebar, topbar, area konten. */
 .app {
   display: grid;
   grid-template-columns: var(--lr-sidebar-w) minmax(0, 1fr);

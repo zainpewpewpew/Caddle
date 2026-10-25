@@ -1,4 +1,4 @@
-# Long Radar
+# AlphaLens
 
 Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — mendeteksi struktur bullish lebih awal pada USDT-M perpetual Binance, dengan sinyal yang dapat dijelaskan. Aplikasi ini **bukan** sistem trading otomatis dan tidak mengeksekusi order.
 

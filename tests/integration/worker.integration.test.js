@@ -1,4 +1,4 @@
-// Tes integrasi end-to-end worker Long Radar.
+// Tes integrasi end-to-end worker AlphaLens.
 //
 // Modul ASLI dirakit oleh worker/assemble.js (perakitan yang sama dengan worker/index.js): SQLite (:memory:) + migrasi + repositori, klien REST
 // Binance, klien WebSocket kline, discovery simbol, scanner, dan pipeline analisis (pola → konteks

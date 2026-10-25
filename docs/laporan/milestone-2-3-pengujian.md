@@ -13,7 +13,7 @@ Laporan ini merangkum metode dan hasil untuk Milestone 2 (data pasar) dan Milest
 | Playwright E2E (desktop 1440×900 + mobile 390×844) | `npm run test:e2e` | **48 / 48 lulus** |
 | Uji live Binance (opt-in) | `npm run test:live` | **Tidak dapat diverifikasi di sini** — 4/4 gagal dengan HTTP 451 (lokasi dibatasi), bukan cacat kode |
 | npm audit (prod + dev) | `npm audit` | 0 kerentanan (218 dependensi) |
-| Semgrep (aturan lokal) | `semgrep scan --config config/semgrep/long-radar.yml` | 0 temuan (9 aturan, 93 file JS; semgrep 1.182.1) |
+| Semgrep (aturan lokal) | `semgrep scan --config config/semgrep/long-radar.yml` (berkas aturan kini bernama `config/semgrep/alphalens.yml`) | 0 temuan (9 aturan, 93 file JS; semgrep 1.182.1) |
 | Gitleaks, Trivy, OWASP ZAP | — | **Tidak dijalankan** (sumber unduhan diblokir; dijadwalkan M7) |
 
 ## 2. Cakupan tes per area
