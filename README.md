@@ -60,6 +60,7 @@ Selama masih prototipe, `npm start` otomatis membuat akun default pada start per
 
 - **Hanya untuk pengembangan lokal.** Akun dibuat hanya bila `NODE_ENV=development` (default), server hanya lokal (`HOST` dan `APP_ORIGIN` loopback — `127.0.0.1`, `::1`, atau `localhost` — dan `TRUST_PROXY=false`), serta tabel pengguna masih kosong. Akun yang sudah ada tidak pernah ditimpa atau di-reset. Log server menampilkan peringatan saat akun dibuat, atau alasan bila tidak dibuat.
 - **Ganti kata sandinya:** `npm run user:password -- --username admin` (prompt tersembunyi dengan konfirmasi; semua sesi akun itu dicabut). Selama `admin` masih memakai kata sandi default, server menolak start bila tidak lagi hanya lokal (mis. `HOST=0.0.0.0`) atau `NODE_ENV=production`.
+- **Ketik kata sandi secara manual** setelah prompt muncul: prompt `user:create`/`user:password` menolak tempelan multi-baris, ketikan sebelum prompt tampil, dan karakter kontrol (panah, Esc, Tab, Ctrl+D). Untuk otomasi, kirim satu baris lewat stdin: `printf '%s' "$PASS" | npm run user:password -- --username admin`.
 - **Nonaktifkan:** set `DEFAULT_USER=false` di `.env` sebelum start pertama. `DEFAULT_USER=true` ditolak di produksi.
 - Akun `admin` dihitung dalam `MAX_USERS`. Bila ingin dua akun pribadi tanpa `admin`, jalankan `npm run user:create` sebelum `npm start` pertama (akun default tidak dibuat bila sudah ada pengguna).
 
