@@ -97,6 +97,15 @@ function parseDefaultUser(raw, nodeEnv) {
 }
 
 /**
+ * Flag boolean opsional: kosong → `fallback`; selain 'true'/'false' → ConfigError.
+ * WORKER_CONTROL (tombol jalankan/hentikan scanner di website): default aktif hanya di development.
+ * WORKER_AUTOSTART (server menjalankan worker saat boot, hanya bila WORKER_CONTROL aktif): default false.
+ */
+function parseFlag(name, raw, fallback) {
+  return raw === undefined ? fallback : parseBoolean(name, raw);
+}
+
+/**
  * Membaca dan memvalidasi konfigurasi.
  * @param {Record<string, string | undefined>} env
  */
@@ -153,5 +162,7 @@ export function loadConfig(env = process.env) {
     }),
     maxUsers: parseInteger('MAX_USERS', read('MAX_USERS'), { min: 1, max: 10 }),
     defaultUser: parseDefaultUser(read('DEFAULT_USER'), nodeEnv),
+    workerControl: parseFlag('WORKER_CONTROL', read('WORKER_CONTROL'), nodeEnv === 'development'),
+    workerAutostart: parseFlag('WORKER_AUTOSTART', read('WORKER_AUTOSTART'), false),
   });
 }

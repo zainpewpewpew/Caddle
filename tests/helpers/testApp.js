@@ -17,10 +17,16 @@ export function createClock(start = Date.UTC(2026, 0, 1, 0, 0, 0)) {
   return clock;
 }
 
-export async function createTestApp({ env = {}, users = [ADMIN, ANALYST], clock = createClock() } = {}) {
+/**
+ * @param {{ env?: object, users?: object[], clock?: Function,
+ *           appOptions?: object | ((ctx: { db: object, clock: Function, config: object }) => object) }} [options]
+ *   appOptions: opsi tambahan buildApp (mis. `workerSupervisor` dengan fork tiruan) — boleh fungsi bila butuh db.
+ */
+export async function createTestApp({ env = {}, users = [ADMIN, ANALYST], clock = createClock(), appOptions = {} } = {}) {
   const config = loadConfig({ NODE_ENV: 'test', APP_ORIGIN: TEST_ORIGIN, LOG_LEVEL: 'silent', ...env });
   const db = openDatabase(':memory:');
-  const app = await buildApp({ config, db, clock, hasherOptions: TEST_HASHER_OPTIONS });
+  const extra = typeof appOptions === 'function' ? appOptions({ db, clock, config }) : appOptions;
+  const app = await buildApp({ config, db, clock, hasherOptions: TEST_HASHER_OPTIONS, ...extra });
   const { repos, hasher } = app.services;
   for (const u of users) {
     await createUser({ users: repos.users, audit: repos.audit, hasher, maxUsers: config.maxUsers, clock }, u);

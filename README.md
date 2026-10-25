@@ -45,8 +45,9 @@ cp config/.env.example .env          # sesuaikan bila perlu
 npm run migrate                      # membuat/memperbarui skema database
 npm run user:create -- --username mary --role admin   # opsional (lihat Login prototipe); kata sandi diminta tersembunyi
 npm start                            # http://127.0.0.1:8080
-npm run worker                       # terminal terpisah: scanner & analisis pola
 ```
+
+Cukup **satu terminal**: login sebagai admin, buka **System Health**, lalu tekan **Jalankan scanner**. Server menjalankan worker scanner (discovery simbol, candle REST/WebSocket, analisis pola) sebagai proses terpisah, dan log worker tampil di terminal `npm start` yang sama. Lihat [Scanner (worker)](#scanner-worker).
 
 Pendaftaran publik sengaja tidak ada. Maksimal dua pengguna (`MAX_USERS=2`) dibuat lewat CLI di server; batas ini berlaku juga bila beberapa `user:create` berjalan bersamaan. Kata sandi minimal 12 karakter (kecuali kata sandi akun default prototipe di bawah, yang dipilih pemilik).
 
@@ -64,13 +65,32 @@ Selama masih prototipe, `npm start` otomatis membuat akun default pada start per
 - **Nonaktifkan:** set `DEFAULT_USER=false` di `.env` sebelum start pertama. `DEFAULT_USER=true` ditolak di produksi.
 - Akun `admin` dihitung dalam `MAX_USERS`. Bila ingin dua akun pribadi tanpa `admin`, jalankan `npm run user:create` sebelum `npm start` pertama (akun default tidak dibuat bila sudah ada pengguna, juga bila `user:create` selesai saat start pertama masih berjalan).
 
+## Scanner (worker)
+
+Worker scanner selalu berjalan sebagai **proses terpisah** dari server API, dengan dua cara menjalankannya. Pilih salah satu, jangan keduanya.
+
+1. **Dari website (disarankan):** System Health → kartu **Kontrol scanner** → **Jalankan scanner** / **Hentikan scanner** (dengan konfirmasi). Bila scanner belum berjalan, Overview juga menampilkan callout dengan tombol **Jalankan scanner**. Hanya **admin** yang dapat menjalankan atau menghentikan; analyst hanya melihat statusnya.
+   - Status: *Berjalan*, *Berhenti*, *Memulai…*, *Menghentikan…*, *Gagal (kode keluar N)*, atau *Berjalan di luar website*.
+   - Menghentikan scanner mengirim SIGTERM (worker menyelesaikan tugas aktif dan menulis heartbeat akhir); bila belum berhenti dalam 15 detik, worker dihentikan paksa (SIGKILL).
+   - Menutup server (Ctrl+C / SIGTERM) menghentikan worker lebih dulu. Bila server mati mendadak, worker berhenti sendiri saat koneksi IPC ke server terputus.
+   - Worker yang crash **tidak** dijalankan ulang otomatis: status menjadi *Gagal (kode keluar N)*. Periksa log di terminal `npm start`, lalu tekan **Jalankan scanner** lagi.
+   - Setiap start/stop (berhasil maupun ditolak) tercatat di log audit (`worker.start` / `worker.stop`).
+2. **Terminal terpisah:** `npm run worker` tetap tersedia (mis. bila kontrol website dinonaktifkan). Jangan jalankan bersamaan dengan worker dari website: dua worker pada satu database menggandakan ingesti. Selama worker dari terminal masih mengirim heartbeat (< 90 detik), tombol menolak menjalankan worker kedua dan status tampil *Berjalan di luar website*. Hentikan worker itu dari terminalnya (Ctrl+C).
+
+| Variabel | Default | Fungsi |
+|---|---|---|
+| `WORKER_CONTROL` | aktif bila `NODE_ENV=development`; nonaktif di `test` & `production` | `true`/`false`: menampilkan & mengizinkan tombol scanner di website. Saat nonaktif, API start/stop menjawab 503 dan System Health menyarankan `npm run worker`. |
+| `WORKER_AUTOSTART` | `false` | `true`: server langsung menjalankan worker saat start (butuh `WORKER_CONTROL` aktif; tercatat di audit). Dibatalkan bila worker di luar website sedang berjalan. |
+
+Nilai selain `true`/`false` membuat server menolak start (fail fast).
+
 ## Perintah
 
 | Perintah | Fungsi |
 |---|---|
-| `npm start` | Menjalankan server (memuat `.env` bila ada) |
+| `npm start` | Menjalankan server (memuat `.env` bila ada); scanner dijalankan dari tombol di System Health |
 | `npm run dev` | Server dengan auto-reload |
-| `npm run worker` | Worker scanner: discovery simbol, candle REST/WebSocket, analisis pola |
+| `npm run worker` | Worker scanner di terminal terpisah (alternatif tombol website; jangan dijalankan bersamaan) |
 | `npm run migrate` | Menerapkan migrasi database |
 | `npm run user:create -- --username <u> --role admin\|analyst` | Membuat pengguna |
 | `npm run user:password -- --username <u>` | Mengganti kata sandi pengguna (prompt tersembunyi) dan mencabut semua sesinya |
@@ -99,8 +119,8 @@ backend/
   scoring/      skor, risk flag, penjelasan
   signals/      state machine sinyal & repositori
   analysis/     pipeline analisis (live & backtest)
-  system/       status worker, konteks pasar
-worker/         proses scanner terpisah (npm run worker)
+  system/       status worker, supervisor worker (tombol scanner), konteks pasar
+worker/         proses scanner terpisah (dijalankan server lewat tombol, atau npm run worker)
 frontend/
   index.html, login.html
   css/          tokens.css (design tokens), base, layout, components, login

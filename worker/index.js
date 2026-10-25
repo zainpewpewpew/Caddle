@@ -1,4 +1,5 @@
-// Entry point proses worker scanner (Milestone 2–3): `npm run worker`.
+// Entry point proses worker scanner (Milestone 2–3): `npm run worker`, atau dijalankan server sebagai child
+// process lewat tombol "Jalankan scanner" (backend/system/workerSupervisor.js).
 // Membuka SQLite + migrasi, merakit dependensi nyata lewat worker/assemble.js (REST/WS Binance, jam
 // server, repositori, pipeline analisis SA/PVA), menjalankan scanner, dan menangani graceful shutdown (SIGTERM/SIGINT).
 // Log terstruktur JSON per baris ke stdout.
@@ -45,6 +46,11 @@ function createJsonLogger({ level = 'info', write = (line) => process.stdout.wri
 }
 
 async function main() {
+  // Saat dijalankan dari website, stdout/stderr adalah pipe ke server. Bila server mati, tulisan log gagal
+  // (EPIPE) sebagai event 'error' asinkron; tanpa listener event itu menjadi uncaughtException yang
+  // handler-nya menulis log lagi (EPIPE lagi) dan graceful shutdown tidak pernah selesai. Log yang tidak
+  // dapat ditulis dibuang saja.
+  for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {});
   let config;
   try {
     config = loadConfig();
@@ -110,6 +116,9 @@ async function main() {
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  // Dijalankan dari website (child process server dengan kanal IPC): bila server mati tanpa sempat
+  // menghentikan worker, kanal IPC terputus → worker berhenti sendiri, tidak menjadi proses yatim.
+  if (typeof process.send === 'function') process.on('disconnect', () => shutdown('disconnect'));
   process.on('unhandledRejection', (err) => {
     logger.fatal({ err }, 'unhandled rejection');
     shutdown('unhandledRejection', 1);

@@ -3,6 +3,7 @@ import { badge, dataTable, emptyState, page, panel, stage, stat } from '../lib/c
 import { h } from '../lib/dom.js';
 import { formatInteger, formatPercent, formatPrice, formatRelative, formatUtc } from '../lib/format.js';
 import { MILESTONES } from './roadmap.js';
+import { workerStartCallout } from './workerControl.js';
 import { binancePill, scannerPill } from './workerFormat.js';
 
 const TREND_TONE = { BULLISH: 'bull', NEUTRAL: undefined, BEARISH: 'bear' };
@@ -25,8 +26,9 @@ function trendBadge(item) {
   return badge(text, tone);
 }
 
-export async function overviewView() {
-  const data = await api('/api/overview');
+export async function overviewView(ctx) {
+  // Status kontrol scanner bersifat pelengkap: kegagalannya tidak boleh menggagalkan Overview.
+  const [data, worker] = await Promise.all([api('/api/overview'), api('/api/system/worker').catch(() => null)]);
 
   const kpis = h('div', { class: 'grid grid--kpi' },
     stat({ label: 'Simbol dipantau', value: formatInteger(data.monitoredSymbols), hint: 'USDT-M perpetual', testId: 'kpi-monitored' }),
@@ -92,6 +94,7 @@ export async function overviewView() {
     title: 'Overview',
     subtitle: 'Ringkasan kondisi pemindaian. Semua angka berasal dari database; nilai nol berarti memang belum ada data.',
   },
+  workerStartCallout({ user: ctx?.user, status: worker }),
   kpis,
   h('div', { class: 'grid grid--main-side' },
     h('div', { class: 'stack' }, market, detections),

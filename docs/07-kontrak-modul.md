@@ -460,7 +460,68 @@ ensureDefaultUser({ users, audit, hasher, maxUsers, clock,
 
 `config.defaultUser` (`loadConfig`): `DEFAULT_USER` kosong → `nodeEnv === 'development'`; `'true'`/`'false'` eksplisit; nilai lain → `ConfigError`; `true` dengan `NODE_ENV=production` → `ConfigError`.
 
-## 11. Penyimpangan dari draf awal
+## 11. Kontrol scanner dari website — `backend/system/workerSupervisor.js`, `backend/api/workerRoutes.js`
+
+Tujuan: cukup `npm start`, lalu admin menekan **Jalankan scanner** di System Health. Server menjalankan `worker/index.js` sebagai **child process terpisah** (`child_process.fork`); scanner tidak pernah berjalan di dalam proses server. `npm run worker` di terminal lain tetap didukung, tetapi tidak boleh bersamaan dengan worker dari website.
+
+```
+WORKER_SCRIPT_PATH = <repo>/worker/index.js   // path absolut tetap di kode
+STOP_TIMEOUT_MS = 15_000   START_TIMEOUT_MS = 10_000   MAX_LINE_LENGTH = 16_384
+WORKER_STATES = ['stopped', 'starting', 'running', 'stopping', 'crashed', 'external']
+
+createWorkerSupervisor({ fork = child_process.fork, scriptPath = WORKER_SCRIPT_PATH /* wajib absolut */,
+  env = process.env /* disnapshot saat dibuat */, logger, clock = Date.now, stopTimeoutMs, startTimeoutMs,
+  readExternalHeartbeat = async () => null /* { at, state } | null */, output = baris → stdout server,
+  maxLineLength, setTimer, clearTimer })
+  → {
+    status({ heartbeat? }) → Promise<{ state, startedAt, stoppedAt, exitCode, signal }>
+      // Tanpa child (stopped/crashed) + heartbeat segar (isHeartbeatLive) yang BUKAN milik child server ini
+      // → state 'external'. Heartbeat dengan at ≤ waktu keluar child terakhir dianggap milik child tsb.
+    start() → Promise<status>          // resolve setelah event 'spawn' (state 'running')
+    stop({ wait = true }) → Promise<status>   // SIGTERM; SIGKILL bila belum keluar setelah stopTimeoutMs
+    shutdown() → Promise<void>         // tolak start baru, tunggu start berjalan, lalu stop(); idempoten
+    killChild(signal = 'SIGKILL') → boolean   // sinkron, untuk handler process 'exit' / keluar paksa
+  }
+createLineForwarder(write, maxLength) → { push(chunk), flush() }
+  // Baris > maxLength: dipotong + ' …[dipotong]', sisa dibuang sampai newline; CR & karakter kontrol dibuang.
+WorkerSupervisorError { code, statusCode, message /* Bahasa Indonesia */ }
+```
+
+Transisi: `stopped|crashed → starting` (klaim sinkron sebelum await pertama, sehingga start bersamaan ditolak) `→ running` (event `spawn`) `→ stopping` (stop) `→ stopped`. Child keluar tanpa diminta: kode 0 → `stopped` (mis. Ctrl+C di terminal `npm start` juga mengirim SIGINT ke child), selain itu → `crashed` dengan `exitCode`/`signal`. Tidak ada restart otomatis. Spawn gagal (fork melempar, `error` sebelum `spawn`, keluar sebelum `spawn`, atau tanpa `spawn` dalam `startTimeoutMs` → SIGKILL) → `crashed` + `WORKER_SPAWN_FAILED`.
+
+`fork(scriptPath, [], { env: snapshot, execArgv: [], stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true })`: argv selalu kosong; `execArgv: []` agar flag server (mis. `--watch` dari `npm run dev`) tidak diwariskan. Baris stdout & stderr child diteruskan ke stdout server (log JSON worker tetap terlihat di terminal `npm start`).
+
+| Kode | HTTP | Kapan |
+|---|---|---|
+| `WORKER_ALREADY_RUNNING` | 409 | start saat starting/running |
+| `WORKER_STARTING` | 409 | stop saat starting |
+| `WORKER_STOPPING` | 409 | start saat stopping (stop kedua saat stopping = idempoten) |
+| `WORKER_EXTERNAL` | 409 | start/stop saat worker lain (heartbeat segar) berjalan di luar website |
+| `WORKER_NOT_RUNNING` | 409 | stop tanpa worker |
+| `WORKER_SHUTTING_DOWN` | 503 | start setelah `shutdown()` |
+| `WORKER_SPAWN_FAILED` | 500 | child gagal dijalankan |
+| `WORKER_CONTROL_DISABLED` | 503 | route start/stop saat `WORKER_CONTROL=false` |
+
+API (gerbang autentikasi & CSRF standar, lihat `docs/01-arsitektur.md` §4):
+
+| Endpoint | Peran | Respons |
+|---|---|---|
+| `GET /api/system/worker` | semua pengguna terautentikasi | `{ enabled, state, startedAt, stoppedAt, exitCode, signal }` |
+| `POST /api/system/worker/start` | admin + `X-CSRF-Token` | 200 status (`running`) · 409/500/503 `{ error, message }` |
+| `POST /api/system/worker/stop` | admin + `X-CSRF-Token` | 200 status (`stopping`, tidak menunggu exit) · 409/503 |
+| `GET /api/system/status` | semua | `+ workerControl` (bentuk sama dengan `GET /api/system/worker`, memakai heartbeat yang sudah dibaca) |
+
+Body/query start/stop diabaikan. Setiap POST yang sampai ke handler dicatat di audit: `worker.start` / `worker.stop`, `outcome` `success` (`detail.state`) atau `failure` (`detail.reason` = kode di atas); 401/403 ditolak di gerbang sebelum handler (sama dengan `PUT /api/settings/scanner`). Respons tidak memuat pid, path, env, atau log.
+
+Perakitan (`buildApp`): supervisor dibuat dengan `scriptPath = WORKER_SCRIPT_PATH`, `env = { ...process.env, DATABASE_PATH: config.databasePath }`, `readExternalHeartbeat = repos.ingestion.getStatus().heartbeat`. Opsi `workerSupervisor` / `workerScriptPath` hanya untuk tes & E2E (kode), tidak pernah dari env atau request. `WORKER_AUTOSTART=true` + `WORKER_CONTROL` aktif → `start()` di hook `onReady` (audit `worker.start` tanpa user, `detail.via = 'autostart'`); autostart tanpa kontrol → diabaikan + peringatan log. Hook `onClose` → `shutdown()`.
+
+Penutupan server (`backend/app/server.js`): SIGINT/SIGTERM → `supervisor.shutdown()` (SIGTERM → ≤ 15 detik → SIGKILL) → `app.close()`; keluar paksa setelah `STOP_TIMEOUT_MS + 5 detik` dengan `killChild('SIGKILL')` lebih dulu. Handler `process.on('exit')` mengirim SIGTERM ke child yang tersisa. Bila server mati tanpa sempat menjalankan handler (SIGKILL/OOM), `worker/index.js` mendeteksi kanal IPC terputus (`process.on('disconnect')`, hanya bila dijalankan dengan IPC) dan berhenti dengan graceful; error tulis stdout/stderr (EPIPE ke server yang sudah mati) diabaikan agar shutdown itu selesai.
+
+Konfigurasi (`loadConfig`): `WORKER_CONTROL` kosong → `nodeEnv === 'development'`; `WORKER_AUTOSTART` kosong → `false`; nilai selain `'true'`/`'false'` → `ConfigError` (`"<NAMA> harus 'true' atau 'false'"`).
+
+Frontend: `frontend/js/views/workerControl.js` — kartu **Kontrol scanner** (System Health; dibuat sekali, auto-refresh 10 detik hanya memanggil `update()`) dan callout ringkas Overview (`canStartWorker`: kontrol aktif & state `stopped`/`crashed`). Label di `workerFormat.js` (`workerControlLabel`): Berjalan / Berhenti / Memulai… / Menghentikan… / Gagal (kode keluar N | sinyal X) / Berjalan di luar website. Tombol hanya untuk admin, nonaktif selama request; stop butuh konfirmasi; state diumumkan lewat `aria-live="polite"`; saat starting/stopping UI memantau `GET /api/system/worker` tiap 2 detik dengan `X-LR-Background: 1`.
+
+## 12. Penyimpangan dari draf awal
 
 | Draf | Implementasi | Alasan |
 |---|---|---|
