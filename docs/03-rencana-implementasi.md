@@ -51,7 +51,7 @@
 | Engine timeframe hibrida (trend BULLISH/NEUTRAL/BEARISH, alignment 4 tingkat, hanya HTF tertutup, HTF tidak membuang pola dasar) | Selesai | `backend/timeframe/` |
 | Pattern Score, Early Score, 6 risk flag, penjelasan per faktor | Selesai | `backend/scoring/` |
 | State machine 7 state, transisi & event dipersistensi, tanpa alert berulang | Selesai | `backend/signals/` |
-| Pipeline analisis (`analyzeAt` murni, dipakai bersama live & backtest M6) terhubung ke worker | Selesai | `backend/analysis/pipeline.js`, `worker/index.js` |
+| Pipeline analisis (`analyzeAt` murni, dipakai bersama live & backtest M6) terhubung ke worker; kursor analisis persisten (migrasi `004`: `analysis_cursors` + indeks riwayat sinyal) agar restart tidak me-replay | Selesai | `backend/analysis/pipeline.js`, `worker/assemble.js`, `backend/database/migrations/004_analysis_state.sql` |
 | API sinyal + Screener & Signal History memakai data nyata; Overview/Health memakai heartbeat worker | Selesai | `backend/api/signalRoutes.js`, `frontend/js/views/` |
 | Validasi out-of-sample efektivitas pola | **Belum** — butuh data historis nyata & backtest (M6). Tidak ada klaim profitabilitas | — |
 
@@ -74,4 +74,4 @@ Mengikuti roadmap spesifikasi. Prioritas teknis yang sudah diputuskan:
 | Peran pengguna kedua | `analyst` (baca saja untuk pengaturan) atau `admin` — dapat dipilih saat `user:create`. |
 | Bahasa UI | Bahasa Indonesia dengan istilah trading standar dalam bahasa Inggris (Screener, Breakout, dll.). |
 | Lanjut ke Milestone 4 | Setelah PR M1–M3 direview dan uji live Binance dijalankan dari lokasi yang tidak dibatasi. |
-| Migrasi `004` kolom tracking sinyal | Usulan di `docs/05-database.md` §6; dibuat sebelum M6. |
+| Migrasi `005` kolom tracking sinyal | Usulan di `docs/05-database.md` §6 (nomor `004` sudah dipakai kursor analisis); dibuat sebelum M6. |

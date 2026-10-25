@@ -75,18 +75,30 @@ Append-only: `occurred_at`, `user_id`, `action`, `outcome` (`success|failure`), 
 | `symbols.monitored_since` | Kapan simbol mulai dipantau; `NULL` bila tidak dipantau. Indeks parsial `idx_symbols_monitored` |
 | `provisional_candles` | Candle **belum tertutup**, satu baris terbaru per simbol × timeframe (PK `(symbol_id, timeframe)`). Tidak pernah masuk `candles` dan tidak pernah dipakai sinyal terkonfirmasi. Ditolak bila sudah ada candle tertutup untuk interval yang sama/lebih baru |
 | `ingestion_runs` | Satu baris per siklus scanner/backfill: `started_at`, `finished_at`, jumlah simbol, candle, error |
-| `ingestion_errors` | Error ingesti terbaru untuk System Health; pesan ≤ 500 karakter, retensi dibatasi repositori |
-| `worker_heartbeat` | Singleton (`id = 1`): `at` + `state_json` = snapshot `scanner.status()`. API menandai `stale` bila > 90 detik, `not_running` bila tidak ada baris |
+| `ingestion_errors` | Error ingesti terbaru untuk System Health; pesan ≤ 500 karakter, retensi dibatasi repositori. Scanner menulis maksimal satu baris per sumber + pesan per 60 detik (`errorThrottleMs`); pesan memuat simbol & timeframe, sehingga praktis satu baris per seri per pesan per 60 detik |
+| `worker_heartbeat` | Singleton (`id = 1`): `at` + `state_json` = snapshot `scanner.status()` (termasuk `clockOffsetMs` dan `clockFault`: `'OFFSET_OUT_OF_RANGE'` atau `null`). API menandai `stale` bila > 90 detik, `not_running` bila tidak ada baris |
 
 ## 6. Penyimpanan sinyal (M3)
 
+### Tabel — 004 status analisis (`004_analysis_state.sql`)
+
+| Perubahan | Keterangan |
+|---|---|
+| `analysis_cursors` | Kursor analisis per seri: PK `(symbol_id, timeframe)`, `STRICT`, `WITHOUT ROWID`; `symbol_id` FK ke `symbols` `ON DELETE CASCADE`; timeframe ∈ {5m,15m,1h}; `last_open_time` = openTime candle dasar terakhir yang **sudah dievaluasi** pipeline (termasuk candle tanpa event, mis. `NO_PATTERN`); `updated_at`. Hanya maju: upsert repositori mengabaikan nilai yang lebih lama/sama |
+| `idx_signals_first_detected` | Indeks `signals(first_detected_at)` — riwayat semua sinyal `ORDER BY first_detected_at DESC, id DESC` tanpa scan penuh + sort sementara |
+| `idx_signals_symbol_first_detected` | Indeks `signals(symbol_id, first_detected_at)` — riwayat per simbol dengan urutan yang sama |
+
+Kursor dimajukan oleh `save()` (dalam transaksi yang sama dengan sinyal + event, ke `snapshot.lastCandleTime`) dan oleh `markEvaluated()` untuk candle yang tidak menyimpan apa pun. Database yang dimigrasi dari sebelum 004 mulai dengan tabel kosong; `lastEvaluatedCandleTime` lalu jatuh kembali ke candle event terakhir.
+
+### Aturan penyimpanan
+
 - Satu baris `signals` per sinyal hidup; state `NO_PATTERN` **tidak pernah** dipersistensi. Sinyal terminal (`INVALIDATED`, `EXPIRED`) mengisi `closed_at` dan `final_outcome`; deteksi berikutnya membuka baris baru.
-- Setiap transisi state ditulis ke `signal_events` dalam **transaksi yang sama** dengan update `signals` (`save()`), sehingga riwayat tidak pernah tertinggal dari state.
+- Setiap transisi state ditulis ke `signal_events` dalam **transaksi yang sama** dengan update `signals` (`save()`), sehingga riwayat tidak pernah tertinggal dari state. `save()` menolak snapshot yang mengubah state sinyal terbuka tanpa event (`STATE_CHANGE_WITHOUT_EVENT`).
 - `pattern_definition_id` menunjuk versi pola (`pattern_definitions`, kunci `SA`/`PVA`, versi `PATTERN_VERSION`, `definition_json` berisi parameter, kondisi, dan warm-up). Sinyal lama tetap mereferensikan versinya.
 - `explanation_json` berbentuk `{ factors: [{ factor, contribution, detail }], tracking: { lastCandleTime, lastEvaluatedAt, barsInState, peakPrice, peakState } }`. Bentuk lama (array saja) tetap dapat dibaca.
-- `lastEventCandleTime` (MAX `signal_events.candle_time` per simbol × timeframe) dipakai pipeline sebagai titik awal replay setelah restart.
+- `lastEvaluatedCandleTime` = max(`analysis_cursors.last_open_time`, MAX `signal_events.candle_time`) per simbol × timeframe dipakai pipeline sebagai titik awal replay setelah restart; candle dengan openTime ≤ nilai itu tidak dievaluasi ulang. `lastEventCandleTime` (hanya MAX `signal_events.candle_time`) tetap tersedia.
 
-**Usulan migrasi `004` (belum dibuat):** memindahkan `tracking` ke kolom sendiri (`last_candle_time`, `bars_in_state`, `peak_price`, `peak_state`) dengan indeks `(symbol_id, timeframe, last_candle_time)`, serta mengisi ulang dari `explanation_json`. Ditunda agar M3 tidak mengubah skema yang sedang direview; dibutuhkan sebelum M6 (backtest membaca MFE/peak dalam jumlah besar).
+**Usulan migrasi `005` (belum dibuat):** memindahkan `tracking` ke kolom sendiri (`last_candle_time`, `bars_in_state`, `peak_price`, `peak_state`) dengan indeks `(symbol_id, timeframe, last_candle_time)`, serta mengisi ulang dari `explanation_json`. Ditunda agar M3 tidak mengubah tabel `signals` yang sedang direview (migrasi 004 hanya menambah `analysis_cursors` dan dua indeks); dibutuhkan sebelum M6 (backtest membaca MFE/peak dalam jumlah besar).
 
 ## 7. Catatan presisi
 
