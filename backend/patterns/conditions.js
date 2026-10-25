@@ -260,8 +260,11 @@ export function describeConditions(defs) {
 
 /**
  * Kerangka umum detektor: validasi input, gerbang data, lalu `measure` khusus pola.
- * `measure(candles, params, features)` → { values, structureWindow, liquidityWindow }.
+ * `measure(candles, params, features)` → { values: { [idKondisi]: number|null }, structure
+ * (hasil analyzeStructure), liquidity (rata-rata quote volume) }. Risk flag volatilitas &
+ * extension memakai fitur bersama dengan ambang dari parameter pola masing-masing.
  * Detektor SA & PVA masing-masing memanggil fungsi ini dengan definisi & pengukurnya sendiri.
+ * @throws {TypeError} bila candles bukan array
  */
 export function runDetector({ pattern, candles, params, minCandles, defs, thresholds, measure }) {
   if (!Array.isArray(candles)) throw new TypeError('candles harus berupa array');
