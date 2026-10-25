@@ -52,14 +52,35 @@ describe('helper kondisi pola', () => {
     expect(computePatternScore([])).toBe(0);
   });
 
-  it('UNIT-PCND-004 earlyScore mengikuti formula 100 × (0,6 × jarak + 0,4 × usia)', () => {
-    const structure = { fromSwing: true, higherLows: 1, anchorPrice: 100, startIndex: 70 };
-    // kenaikan 2 ATR → jarak 0,5; usia 15 candle → 0,75 → 100 × (0,30 + 0,30) = 60
-    expect(computeEarlyScore(structure, { atr: 1, close: 102, last: 85 })).toBe(60);
+  it('UNIT-PCND-004 earlyScore mengikuti formula 100 × (0,6 × jarak + 0,4 × usia), jarak dari awal struktur', () => {
+    // Awal struktur (swing low pertama rantai) 100, higher low terbaru (anchor) 102.
+    const structure = { fromSwing: true, higherLows: 1, anchorPrice: 102, startPrice: 100, startIndex: 70 };
+    // kenaikan 3 ATR dari awal (bukan 1 ATR dari anchor) → jarak 0,5; usia 15 candle → 0,75 → 100 × (0,30 + 0,30) = 60
+    expect(computeEarlyScore(structure, { atr: 1, close: 103, last: 85 })).toBe(60);
     expect(computeEarlyScore({ ...structure, startIndex: 85 }, { atr: 1, close: 100, last: 85 })).toBe(100);
     expect(computeEarlyScore(structure, { atr: 1, close: 110, last: 200 })).toBe(0);
-    // harga di bawah anchor tidak memberi skor jarak > 1
+    // harga di bawah awal struktur tidak memberi skor jarak > 1
     expect(computeEarlyScore({ ...structure, startIndex: 85 }, { atr: 1, close: 99, last: 85 })).toBe(100);
+  });
+
+  it('UNIT-PCND-008 higher low baru (anchor naik, awal sama) → earlyScore tidak naik; invalidasi tetap ikut anchor', () => {
+    const base = { fromSwing: true, higherLows: 1, anchorPrice: 101, startPrice: 100, startIndex: 70 };
+    const later = { ...base, higherLows: 3, anchorPrice: 104.5 };
+    const f = { atr: 1, close: 105, last: 85 };
+    // 5 ATR dari awal → jarak (1 − 5/6) apa pun anchor-nya; usia 15 → 0,75 → 100 × (0,1 + 0,3) = 40
+    expect(computeEarlyScore(base, f)).toBe(40);
+    expect(computeEarlyScore(later, f)).toBe(40);
+    expect(computeInvalidation(base, f, 0.25)).toBe(100.75);
+    expect(computeInvalidation(later, f, 0.25)).toBe(104.25);
+  });
+
+  it('UNIT-PCND-009 analyzeStructure: startPrice = low swing pertama rantai higher-low, anchor = swing low terbaru', () => {
+    // swing low 8 (idx 2) → 8,5 (idx 6) → 9 (idx 10), masing-masing terkonfirmasi 2 candle kemudian.
+    const candles = fromLows([10, 9, 8, 9, 10, 9.5, 8.5, 9.5, 10.5, 10, 9, 10, 11, 11.5]);
+    const s = analyzeStructure(candles, computeFeatures(candles), 20);
+    expect(s).toMatchObject({ fromSwing: true, higherLows: 2, anchorIndex: 10, anchorPrice: 9, startIndex: 2, startPrice: 8 });
+    const broken = fromLows([10, 9, 8, 9, 10, 9.5, 8.5, 9.5, 10.5, 7]);
+    expect(analyzeStructure(broken, computeFeatures(broken), 20)).toMatchObject({ fromSwing: false, startIndex: 9, startPrice: 7, anchorPrice: 7 });
   });
 
   it('EDGE-PCND-001 earlyScore 0 tanpa struktur bullish atau ATR nol', () => {

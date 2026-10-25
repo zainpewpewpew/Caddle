@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RISK_FLAGS } from '../../../backend/market/contracts.js';
-import { GATE_CONDITIONS } from '../../../backend/patterns/conditions.js';
+import { EARLY_SCORE, GATE_CONDITIONS, analyzeStructure, computeFeatures } from '../../../backend/patterns/conditions.js';
 import { DEFAULT_SA_PARAMS, PatternParamsError } from '../../../backend/patterns/params.js';
 import { SA_CONDITIONS, detectSilentAccumulation } from '../../../backend/patterns/silentAccumulation.js';
 import {
@@ -211,6 +211,49 @@ describe('Pattern #001 Silent Accumulation', () => {
     const early = detectSilentAccumulation(generateCandles({ seed: 1, segments: seg(28) }));
     const late = detectSilentAccumulation(generateCandles({ seed: 1, segments: seg(52) }));
     expect(early.earlyScore).toBeGreaterThan(late.earlyScore);
+  });
+
+  // Uptrend matang dengan pullback dangkal: 5 candle naik 0,2%, 2 candle turun 0,1% → higher low
+  // baru tiap 7 candle (sintetis, temuan review C7).
+  const maturingRun = () => generateCandles({ seed: 1, segments: [{ bars: 48, cycle: zigzag(3, 0.002, 3, 0.002), volumeNoise: 0.15 }, { bars: 60, cycle: zigzag(5, 0.002, 2, 0.001), wick: 0.002, volume: 450, volumeNoise: 0.1 }] });
+
+  it('EDGE-PSA-008 kenaikan matang (≈10 ATR dari awal struktur) setelah pullback → earlyScore < 60 walau higher low terbaru dekat', () => {
+    const candles = maturingRun().slice(0, 78);
+    const r = detectSilentAccumulation(candles);
+    const f = computeFeatures(candles);
+    const s = analyzeStructure(candles, f, DEFAULT_SA_PARAMS.priceLookback);
+    // Prasyarat skenario: terdeteksi, harga dekat higher low terbaru tetapi jauh dari awal struktur.
+    expect(r.detected).toBe(true);
+    expect(r.riskFlags).toContain('EXTENDED_PRICE');
+    expect((f.close - s.anchorPrice) / f.atr).toBeLessThan(2);
+    expect((f.close - candles[s.startIndex].low) / f.atr).toBeGreaterThan(EARLY_SCORE.maxRunAtr);
+    expect(r.earlyScore).toBeLessThan(60);
+    // Hanya komponen usia yang tersisa (komponen jarak 0).
+    expect(r.earlyScore).toBeCloseTo(100 * EARLY_SCORE.ageWeight * (1 - (f.last - s.startIndex) / EARLY_SCORE.maxAgeBars), 1);
+  });
+
+  it('EDGE-PSA-009 walk-forward satu struktur: harga makin jauh dari awal struktur → earlyScore tidak pernah naik', () => {
+    const scenarios = [maturingRun(), ...[1, 2, 3, 4].map((seed) => generateCandles({ seed, segments: [{ bars: 48, cycle: zigzag(3, 0.002, 3, 0.002), volumeNoise: 0.15 }, { bars: 60, cycle: zigzag(5, 0.0015, 3, 0.0015), wick: 0.002, volume: 450, volumeNoise: 0.1 }] }))];
+    let compared = 0;
+    for (const all of scenarios) {
+      const rows = [];
+      for (let k = 63; k <= all.length; k += 1) {
+        const c = all.slice(0, k);
+        const f = computeFeatures(c);
+        const s = analyzeStructure(c, f, DEFAULT_SA_PARAMS.priceLookback);
+        if (!s.fromSwing || s.higherLows < 1) continue;
+        rows.push({ k, start: s.startIndex, run: (f.close - c[s.startIndex].low) / f.atr, early: detectSilentAccumulation(c).earlyScore });
+      }
+      for (let i = 0; i < rows.length; i += 1) {
+        for (let j = i + 1; j < rows.length; j += 1) {
+          const [a, b] = [rows[i], rows[j]];
+          if (a.start !== b.start || b.run < a.run) continue;
+          compared += 1;
+          expect(b.early, `k ${a.k}→${b.k}, run ${a.run.toFixed(2)}→${b.run.toFixed(2)} ATR`).toBeLessThanOrEqual(a.early);
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(100);
   });
 
   it('UNIT-PSA-004 deterministik dan tidak memutasi input', () => {

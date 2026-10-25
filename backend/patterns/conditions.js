@@ -28,14 +28,22 @@ export const EMA_SLOW_FLAT_EPSILON = 0.0002;
 export const ZERO_VOLUME_STREAK = 3;
 
 /**
- * Formula earlyScore (lihat computeEarlyScore):
+ * Formula earlyScore (lihat computeEarlyScore) — seberapa AWAL struktur masih berada:
  *   earlyScore = 100 × (distanceWeight × skorJarak + ageWeight × skorUsia)
- *   skorJarak  = clamp01(1 − kenaikanAtr / maxRunAtr), kenaikanAtr = (close − anchor) / ATR
- *   skorUsia   = clamp01(1 − usia / maxAgeBars),       usia = candle sejak struktur mulai
- * Harga ≥ 4 ATR di atas dasar struktur → komponen jarak 0; struktur ≥ 60 candle → komponen usia 0.
- * Jarak diberi bobot lebih besar karena menentukan seberapa jauh harga dari level invalidasi.
+ *   skorJarak  = clamp01(1 − kenaikanAtr / maxRunAtr), kenaikanAtr = (close − harga awal) / ATR
+ *   skorUsia   = clamp01(1 − usia / maxAgeBars),       usia = last − startIndex (candle sejak awal)
+ * Jarak & usia sama-sama diukur dari AWAL struktur (swing low pertama rantai higher-low,
+ * structure.startIndex / structure.startPrice), BUKAN dari swing low terbaru: pullback yang
+ * membentuk higher low baru tidak "me-reset" jarak, sehingga kenaikan yang sudah matang tidak
+ * pernah tampak awal lagi. Harga ≥ 6 ATR di atas awal struktur → komponen jarak 0; struktur
+ * ≥ 60 candle → komponen usia 0. Jarak diberi bobot lebih besar karena paling langsung
+ * menunjukkan seberapa jauh harga sudah berjalan. Level invalidasi tetap memakai anchor (swing low
+ * terbaru) — lihat computeInvalidation.
+ * maxRunAtr 6 (v1: 4 ATR dari swing low terbaru): struktur sah termuda (satu higher low) sudah
+ * ±2 ATR di atas awalnya, sehingga skala ikut digeser sebesar jarak itu; tetap titik awal yang
+ * wajib divalidasi backtest (Milestone 6), bukan hasil optimasi.
  */
-export const EARLY_SCORE = Object.freeze({ maxRunAtr: 4, maxAgeBars: 60, distanceWeight: 0.6, ageWeight: 0.4 });
+export const EARLY_SCORE = Object.freeze({ maxRunAtr: 6, maxAgeBars: 60, distanceWeight: 0.6, ageWeight: 0.4 });
 
 /** Kondisi gerbang (bobot 0, wajib) yang selalu berada di awal daftar kondisi. */
 export const GATE_CONDITIONS = Object.freeze([
@@ -149,8 +157,10 @@ export function computeFeatures(candles) {
 /**
  * Struktur higher-low dalam `window` candle terakhir.
  * Bila swing low terkonfirmasi terbaru berada di jendela dan close masih di atasnya (struktur
- * belum patah): anchor = swing low itu, higherLows = jumlah higher low berurutan, startIndex =
- * swing low pertama rantai tersebut. Selain itu: anchor = low terendah jendela, higherLows = 0.
+ * belum patah): anchor = swing low itu (dasar invalidasi), higherLows = jumlah higher low
+ * berurutan, startIndex/startPrice = swing low pertama rantai tersebut (awal struktur, dasar
+ * earlyScore; boleh berada di luar jendela). Selain itu: anchor = awal = low terendah jendela,
+ * higherLows = 0.
  */
 export function analyzeStructure(candles, features, window) {
   const { last, close, swingLows } = features;
@@ -158,28 +168,32 @@ export function analyzeStructure(candles, features, window) {
   const lastLow = swingLows.at(-1);
   if (lastLow && lastLow.index >= from && close > lastLow.price) {
     const chain = trailingHigherLows(swingLows);
+    const startLow = swingLows[swingLows.length - 1 - chain];
     return {
       higherLows: chain,
       anchorPrice: lastLow.price,
       anchorIndex: lastLow.index,
-      startIndex: swingLows[swingLows.length - 1 - chain].index,
+      startIndex: startLow.index,
+      startPrice: startLow.price,
       fromSwing: true,
     };
   }
   let idx = from;
   for (let i = from + 1; i <= last; i += 1) if (candles[i].low < candles[idx].low) idx = i;
-  return { higherLows: 0, anchorPrice: candles[idx].low, anchorIndex: idx, startIndex: idx, fromSwing: false };
+  const low = candles[idx].low;
+  return { higherLows: 0, anchorPrice: low, anchorIndex: idx, startIndex: idx, startPrice: low, fromSwing: false };
 }
 
 /**
  * earlyScore 0–100 (formula di EARLY_SCORE). Hanya bermakna bila ada struktur bullish: minimal
  * satu higher low terkonfirmasi yang masih utuh. Tanpa struktur (mis. downtrend, harga datar)
  * atau ATR nol → 0, agar harga yang jatuh/diam di dekat low tidak tampak "sangat awal".
+ * Jarak & usia diukur dari awal struktur (startPrice/startIndex), bukan dari anchor.
  */
 export function computeEarlyScore(structure, features) {
   const { atr: a, close, last } = features;
   if (!structure.fromSwing || structure.higherLows < 1 || !(a > 0)) return 0;
-  const runAtr = Math.max(0, (close - structure.anchorPrice) / a);
+  const runAtr = Math.max(0, (close - structure.startPrice) / a);
   const age = last - structure.startIndex;
   const distance = clamp01(1 - runAtr / EARLY_SCORE.maxRunAtr);
   const youth = clamp01(1 - age / EARLY_SCORE.maxAgeBars);
