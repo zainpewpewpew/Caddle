@@ -1,4 +1,5 @@
-import { api, setCsrfToken } from './lib/api.js';
+import { ApiError, api, setCsrfToken } from './lib/api.js';
+import { toast } from './lib/components.js';
 import { h, icon } from './lib/dom.js';
 import { formatClockUtc } from './lib/format.js';
 import { createRouter } from './lib/router.js';
@@ -30,6 +31,7 @@ const ROUTES = [
 ];
 
 const app = document.getElementById('app');
+const sidebar = document.getElementById('sidebar');
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const heading = document.getElementById('heading');
@@ -40,6 +42,8 @@ const mobile = window.matchMedia('(max-width: 820px)');
 
 const ctx = { user: null };
 let cleanup = null;
+// Nomor urut navigasi: view yang selesai dimuat setelah navigasi yang lebih baru dianggap basi.
+let navSeq = 0;
 
 function renderNav() {
   let section = '';
@@ -57,6 +61,9 @@ function renderNav() {
 function setNavState(state) {
   app.dataset.nav = state;
   collapseBtn.setAttribute('aria-expanded', String(state !== 'collapsed'));
+  // Laci mobile yang tertutup tidak boleh dapat difokus atau terbaca pembaca layar.
+  sidebar.inert = mobile.matches && state !== 'open';
+  navOpen.setAttribute('aria-expanded', String(state === 'open'));
   try {
     if (!mobile.matches) window.localStorage.setItem(NAV_KEY, state);
   } catch {
@@ -64,8 +71,20 @@ function setNavState(state) {
   }
   document.querySelector('.nav-scrim')?.remove();
   if (state === 'open') {
-    app.append(h('div', { class: 'nav-scrim', on: { click: () => setNavState('expanded') } }));
+    app.append(h('div', { class: 'nav-scrim', on: { click: closeDrawer } }));
   }
+}
+
+/** Buka laci mobile dan pindahkan fokus ke dalamnya (tautan halaman aktif bila ada). */
+function openDrawer() {
+  setNavState('open');
+  (nav.querySelector('.nav__link[aria-current="page"]') ?? nav.querySelector('.nav__link'))?.focus();
+}
+
+/** Tutup laci mobile dan kembalikan fokus ke tombol pembukanya. */
+function closeDrawer() {
+  setNavState('expanded');
+  navOpen.focus();
 }
 
 function initNav() {
@@ -82,17 +101,30 @@ function initNav() {
   mobile.addEventListener('change', sync);
   sync();
   collapseBtn.addEventListener('click', () => {
-    if (mobile.matches) return setNavState('expanded');
+    if (mobile.matches) return closeDrawer();
     saved = app.dataset.nav === 'collapsed' ? 'expanded' : 'collapsed';
     setNavState(saved);
   });
-  navOpen.addEventListener('click', () => setNavState('open'));
+  navOpen.addEventListener('click', openDrawer);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && app.dataset.nav === 'open') setNavState('expanded');
+    if (e.key === 'Escape' && app.dataset.nav === 'open') closeDrawer();
   });
 }
 
+function initSkipLink() {
+  // Skip link memindahkan fokus ke konten tanpa mengubah hash (hash dipakai oleh router).
+  document.querySelector('.skip-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    main.focus();
+  });
+}
+
+function showLoadError() {
+  main.replaceChildren(h('div', { class: 'page' }, h('div', { class: 'callout callout--bear', role: 'alert' }, 'Gagal memuat halaman.')));
+}
+
 async function show(route) {
+  const seq = ++navSeq;
   if (cleanup) cleanup();
   cleanup = null;
   for (const link of nav.querySelectorAll('.nav__link')) {
@@ -104,7 +136,21 @@ async function show(route) {
   document.title = `${route.label} · Long Radar`;
   if (app.dataset.nav === 'open') setNavState('expanded');
 
-  const result = await route.view(ctx);
+  let result;
+  try {
+    result = await route.view(ctx);
+  } catch (err) {
+    // Error milik navigasi yang sudah ditinggalkan tidak relevan; 401 sudah diarahkan ke login oleh api().
+    if (seq !== navSeq || err?.status === 401) return;
+    showLoadError();
+    main.focus({ preventScroll: true });
+    return;
+  }
+  if (seq !== navSeq) {
+    // Pengguna sudah berpindah halaman: buang hasil basi dan hentikan timer/listener miliknya.
+    result?.cleanup?.();
+    return;
+  }
   main.replaceChildren(result.el ?? result);
   cleanup = result.cleanup ?? null;
   main.focus({ preventScroll: true });
@@ -121,7 +167,8 @@ async function pollConnection() {
   const el = document.getElementById('conn-status');
   const label = el.querySelector('span:last-child');
   try {
-    const res = await fetch('/api/ready', { cache: 'no-store' });
+    // Tanpa cookie sesi: polling latar tidak boleh memperpanjang idle timeout sesi.
+    const res = await fetch('/api/ready', { cache: 'no-store', credentials: 'omit' });
     el.dataset.state = res.ok ? 'ok' : 'error';
     label.textContent = res.ok ? 'Server terhubung' : 'Server tidak siap';
   } catch {
@@ -130,27 +177,54 @@ async function pollConnection() {
   }
 }
 
+async function requestLogout() {
+  const post = () => api('/api/auth/logout', { method: 'POST', redirectOn401: false });
+  try {
+    await post();
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 403 && err.code === 'CSRF_INVALID')) throw err;
+    // Token CSRF di memori basi: ambil ulang dari sesi lalu coba sekali lagi.
+    const session = await api('/api/auth/session', { redirectOn401: false });
+    setCsrfToken(session.csrfToken);
+    await post();
+  }
+}
+
+/** Pindah ke halaman login hanya bila sesi benar-benar berakhir (sukses atau 401). */
+async function logout() {
+  try {
+    await requestLogout();
+  } catch (err) {
+    // Selain 401, sesi masih berlaku — login.html akan memantulkan kembali ke dashboard.
+    if (!(err instanceof ApiError && err.status === 401)) {
+      toast('Gagal keluar. Coba lagi.', 'bear');
+      return;
+    }
+  }
+  window.location.replace('/login.html');
+}
+
 async function boot() {
+  initSkipLink();
   const session = await api('/api/auth/session');
   setCsrfToken(session.csrfToken);
   ctx.user = session.user;
   document.getElementById('user-name').textContent = session.user.username;
   document.getElementById('user-avatar').textContent = session.user.username.slice(0, 1);
 
-  document.getElementById('logout').addEventListener('click', async () => {
-    try {
-      await api('/api/auth/logout', { method: 'POST' });
-    } finally {
-      window.location.replace('/login.html');
-    }
-  });
+  document.getElementById('logout').addEventListener('click', logout);
 
   renderNav();
   initNav();
   startClock();
   pollConnection();
   setInterval(pollConnection, 30_000);
-  createRouter({ routes: ROUTES.filter((r) => r.path), fallback: '/overview', onChange: show }).start();
+  createRouter({
+    routes: ROUTES.filter((r) => r.path),
+    fallback: '/overview',
+    onChange: show,
+    onError: (err) => { if (err?.status !== 401) showLoadError(); },
+  }).start();
 }
 
 boot().catch((err) => {

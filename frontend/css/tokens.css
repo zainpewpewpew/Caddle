@@ -88,7 +88,9 @@
   --lr-shadow-1: 0 1px 0 rgb(255 255 255 / 0.02) inset, 0 1px 2px rgb(0 0 0 / 0.35);
   --lr-shadow-2: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 8px 24px rgb(0 0 0 / 0.45);
   --lr-shadow-3: 0 16px 48px rgb(0 0 0 / 0.55);
-  --lr-focus-ring: 0 0 0 2px var(--lr-bg), 0 0 0 4px var(--lr-accent-line);
+  /* Cincin fokus memakai aksen solid: 8.11:1 vs --lr-bg, 7.54:1 vs --lr-surface (WCAG 1.4.11 mensyaratkan ≥ 3:1).
+     --lr-accent-line (alfa 0.4) hanya ±2.2:1 sehingga tidak dipakai di sini. */
+  --lr-focus-ring: 0 0 0 2px var(--lr-bg), 0 0 0 4px var(--lr-accent);
 
   /* ---- Gerak ---- */
   --lr-ease: cubic-bezier(0.2, 0.7, 0.2, 1);

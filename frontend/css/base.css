@@ -71,6 +71,14 @@ table {
   border-radius: var(--lr-radius-sm);
 }
 
+/* Mode warna paksa (mis. Windows High Contrast) membuang box-shadow — pakai outline warna sistem. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
 ::selection {
   background: var(--lr-accent-soft);
   color: var(--lr-text);

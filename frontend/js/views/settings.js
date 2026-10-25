@@ -2,23 +2,32 @@ import { ApiError, api } from '../lib/api.js';
 import { badge, callout, inputField, page, panel, segmented, selectField, toast, toggle } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { formatUtc } from '../lib/format.js';
-import { validateSettings } from '../lib/settingsValidation.js';
+import { parseNumberInput, validateSettings } from '../lib/settingsValidation.js';
 
 const TIMEFRAMES = ['5m', '15m', '1h'];
 
-function readForm(form) {
-  const fd = new FormData(form);
+/**
+ * Membaca isi form pengaturan dari FormData. Field angka yang dikosongkan menjadi NaN
+ * (bukan 0) sehingga ditolak validasi alih-alih tersimpan diam-diam.
+ * @param {FormData} fd
+ */
+export function settingsFromFormData(fd) {
+  const num = (name) => parseNumberInput(fd.get(name));
   const manual = String(fd.get('manual') ?? '')
     .split(/[\s,]+/)
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
   return {
-    symbols: { mode: fd.get('mode'), maxAuto: Number(fd.get('maxAuto')), manual: [...new Set(manual)] },
+    symbols: { mode: fd.get('mode'), maxAuto: num('maxAuto'), manual: [...new Set(manual)] },
     timeframes: TIMEFRAMES.filter((tf) => fd.getAll('timeframes').includes(tf)),
-    liquidity: { minQuoteVolume24h: Number(fd.get('minQuoteVolume24h')), maxSpreadBps: Number(fd.get('maxSpreadBps')) },
-    refresh: { bootstrapCandles: Number(fd.get('bootstrapCandles')), restBackfillIntervalSec: Number(fd.get('restBackfillIntervalSec')) },
+    liquidity: { minQuoteVolume24h: num('minQuoteVolume24h'), maxSpreadBps: num('maxSpreadBps') },
+    refresh: { bootstrapCandles: num('bootstrapCandles'), restBackfillIntervalSec: num('restBackfillIntervalSec') },
     alerts: { enabled: fd.get('alertsEnabled') === 'on', minStage: fd.get('minStage') },
   };
+}
+
+function readForm(form) {
+  return settingsFromFormData(new FormData(form));
 }
 
 function showErrors(form, errors) {

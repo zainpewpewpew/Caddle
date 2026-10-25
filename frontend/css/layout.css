@@ -177,10 +177,11 @@
   padding: var(--lr-space-5);
 }
 
-/* Fokus programatik setelah navigasi tidak perlu ring visual. */
+/* Fokus programatik setelah navigasi tidak perlu ring visual (termasuk outline mode warna paksa). */
 .main:focus,
 .main:focus-visible {
   box-shadow: none;
+  outline: none;
 }
 
 .page {
@@ -271,17 +272,22 @@
       "main";
   }
 
+  /* Laci tertutup disembunyikan dari fokus & pembaca layar setelah animasi geser selesai
+     (JS juga memasang atribut inert). */
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
     width: min(280px, 86vw);
     transform: translateX(-100%);
-    transition: transform var(--lr-dur-slow) var(--lr-ease);
+    visibility: hidden;
+    transition: transform var(--lr-dur-slow) var(--lr-ease), visibility 0s linear var(--lr-dur-slow);
     box-shadow: var(--lr-shadow-3);
   }
 
   .app[data-nav="open"] .sidebar {
     transform: none;
+    visibility: visible;
+    transition: transform var(--lr-dur-slow) var(--lr-ease), visibility 0s;
   }
 
   .app[data-nav="collapsed"] .brand__text,

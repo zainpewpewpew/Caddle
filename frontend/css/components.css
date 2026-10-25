@@ -469,6 +469,14 @@ textarea.input {
   box-shadow: var(--lr-focus-ring);
 }
 
+/* Input segmen transparan (opacity 0): di mode warna paksa outline dipasang pada label yang terlihat. */
+@media (forced-colors: active) {
+  .segmented__option input:focus-visible + span {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+  }
+}
+
 /* Toggle */
 .switch {
   display: inline-flex;
