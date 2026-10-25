@@ -12,9 +12,11 @@ import { E2E_PORT, E2E_USERS } from './fixtures.js';
 
 const port = Number(process.env.E2E_SERVER_PORT ?? E2E_PORT);
 const dbPath = join(mkdtempSync(join(tmpdir(), 'lr-e2e-')), 'e2e.db');
+// Batas login dinaikkan khusus E2E: seluruh suite (desktop + mobile) memakai ~20 login per server
+// dan tidak ada skenario E2E yang menguji rate limit (itu diuji di tests/security & tests/negative).
 const config = loadConfig({
   NODE_ENV: 'test', HOST: '127.0.0.1', PORT: String(port), APP_ORIGIN: `http://127.0.0.1:${port}`,
-  DATABASE_PATH: dbPath, LOG_LEVEL: 'warn', LOGIN_RATE_LIMIT_MAX: '20',
+  DATABASE_PATH: dbPath, LOG_LEVEL: 'warn', LOGIN_RATE_LIMIT_MAX: '60',
 });
 const db = openDatabase(dbPath);
 const app = await buildApp({ config, db });
