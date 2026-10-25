@@ -265,6 +265,42 @@ describe('createAnalysisPipeline (SQLite)', () => {
     expect(() => createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, yieldEvery: 0 })).toThrow(RangeError);
   });
 
+  it('EDGE-PIPE-009 empat seri me-replay 80 candle bersamaan (yieldEvery 25) → tiap giliran event loop paling banyak 25 candle TOTAL (anggaran bersama), bukan 4 × 25', async () => {
+    const ctx = await setup();
+    // Simbol SINTETIS tambahan; seri sama persis (saThenSideways) dengan symbol berbeda.
+    const symbols = [SYMBOL, 'SYNBUSDT', 'SYNCUSDT', 'SYNDUSDT'];
+    await ctx.repos.symbols.upsertFromExchange(symbols.slice(1).map((symbol) => ({
+      symbol, baseAsset: symbol.replace('USDT', ''), quoteAsset: 'USDT', contractType: 'PERPETUAL', status: 'TRADING',
+      tickSize: '0.0001', stepSize: '1', onboardDate: 0,
+    })), NOW);
+    let evaluatedCandles = 0;
+    const signals = { ...ctx.signals, getOpen: async (a) => { evaluatedCandles += 1; return ctx.signals.getOpen(a); } };
+    const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals });
+    const series = symbols.map((symbol) => saThenSideways(60).map((c) => ({ ...c, symbol })));
+    // Candle pertama tiap seri = bootstrap (kursor), lalu 80 candle baru tersimpan sekaligus (gap di-backfill).
+    for (const candles of series) {
+      await ctx.repos.candles.upsertClosed(candles.slice(0, 1), { now: NOW });
+      await pipeline.onClosedCandles({ symbol: candles[0].symbol, timeframe: '5m' });
+      await ctx.repos.candles.upsertClosed(candles.slice(1, 81), { now: NOW });
+    }
+    evaluatedCandles = 0;
+    // Probe: callback setImmediate berantai mencatat jumlah candle yang sudah dievaluasi tiap giliran.
+    const ticks = [];
+    let done = false;
+    const probe = () => { ticks.push(evaluatedCandles); if (!done) setImmediate(probe); };
+    setImmediate(probe);
+    const results = await Promise.all(symbols.map((symbol) => pipeline.onClosedCandles({ symbol, timeframe: '5m' })));
+    done = true;
+    expect(results.map((r) => r.evaluated)).toEqual([80, 80, 80, 80]);
+    expect(evaluatedCandles).toBe(320);
+    // 320 candle / 25 per giliran → probe berjalan sedikitnya 12 kali selama replay (tidak tertahan sampai selesai).
+    expect(ticks.length).toBeGreaterThanOrEqual(12);
+    const perTurn = ticks.map((t, i) => t - (i === 0 ? 0 : ticks[i - 1]));
+    expect(Math.max(...perTurn, 320 - ticks.at(-1))).toBeLessThanOrEqual(25);
+    // Hasil tetap identik dengan replay satu seri: state akhir sama untuk keempat simbol.
+    expect(new Set(results.map((r) => r.state)).size).toBe(1);
+  });
+
   it('POS-PIPE-002 close di bawah invalidation menutup sinyal (INVALIDATED) dan tidak membuka ulang di candle yang sama', async () => {
     const ctx = await setup();
     const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals });

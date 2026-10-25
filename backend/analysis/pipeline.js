@@ -97,7 +97,9 @@ export function patternDefinitions(params = {}) {
  * Titik awal replay = kursor analisis persisten (signals.lastEvaluatedCandleTime: candle terakhir yang
  * dievaluasi, termasuk candle tanpa event), sehingga restart hanya mengevaluasi candle setelah kursor.
  * Evaluasi pertama sebuah seri tanpa kursor hanya memakai candle terakhir (bootstrap = histori).
- * Replay panjang memberi giliran ke event loop tiap `yieldEvery` candle (heartbeat/WS tidak tertahan).
+ * Replay panjang memberi giliran ke event loop tiap `yieldEvery` candle TOTAL di seluruh pipeline — anggaran
+ * bersama antar seri, bukan per seri — sehingga banyak seri yang me-replay bersamaan (mis. setelah gap
+ * panjang di-backfill) tetap menahan timer/heartbeat/WS paling lama ±`yieldEvery` candle, bukan N × `yieldEvery`.
  *
  * @param {{ repos: { candles: any }, signals: any,
  *   getLiquidity?: (symbol: string) => { quoteVolume24h: number|null, spreadBps: number|null,
@@ -130,6 +132,32 @@ export function createAnalysisPipeline({
   // saat pertama kali sehingga tetap berlaku setelah restart) — mencegah candle yang sama dievaluasi dua
   // kali, termasuk membuka sinyal baru pada candle yang baru saja menutup sinyal sebelumnya.
   const lastEvaluated = new Map();
+  // Anggaran giliran event loop bersama untuk seluruh pipeline: `sliceUsed` = candle yang dievaluasi sejak
+  // jeda terakhir. Seri yang kehabisan anggaran menjadwalkan SATU jeda (`sliceTurn`) — dijadwalkan saat itu
+  // juga, jadi berjalan setelah timer/callback yang sudah antre — dan semua seri lain yang ikut kehabisan
+  // menunggu jeda yang SAMA; anggaran di-reset saat jeda berjalan. Dengan jeda per seri, N lanjutan
+  // setImmediate jatuh di fase check yang sama dan masing-masing menjalankan `yieldEvery` candle sebelum
+  // timer/I/O sempat berjalan. Bila tidak ada evaluasi yang berjalan, anggaran di-reset (sama dengan
+  // perilaku per panggilan sebelumnya untuk satu seri).
+  let sliceUsed = 0;
+  let sliceTurn = null;
+  let activeEvaluations = 0;
+
+  async function takeEvaluationSlot() {
+    while (sliceUsed >= yieldEvery) {
+      if (sliceTurn === null) {
+        const turn = Promise.resolve(yieldToEventLoop()).catch(() => {}).then(() => {
+          if (sliceTurn === turn) {
+            sliceUsed = 0;
+            sliceTurn = null;
+          }
+        });
+        sliceTurn = turn;
+      }
+      await sliceTurn;
+    }
+    sliceUsed += 1;
+  }
 
   function ensureDefinitions() {
     definitionsReady ??= (async () => {
@@ -163,7 +191,20 @@ export function createAnalysisPipeline({
     return { liquidity, params: { ...params, view: { ...params.view, ...thresholds } } };
   }
 
-  async function evaluate({ symbol, timeframe }) {
+  async function evaluate(series) {
+    activeEvaluations += 1;
+    try {
+      return await evaluateSeries(series);
+    } finally {
+      activeEvaluations -= 1;
+      if (activeEvaluations === 0) {
+        sliceUsed = 0;
+        sliceTurn = null;
+      }
+    }
+  }
+
+  async function evaluateSeries({ symbol, timeframe }) {
     if (!TIMEFRAMES.includes(timeframe)) throw new RangeError(`Timeframe tidak didukung: ${timeframe}`);
     await ensureDefinitions();
     const key = `${symbol}:${timeframe}`;
@@ -192,7 +233,7 @@ export function createAnalysisPipeline({
     let result = null;
     for (let n = 0; n < pending.length; n += 1) {
       // Repositori better-sqlite3 resolve sinkron: tanpa jeda eksplisit replay panjang menahan timer & I/O.
-      if (n > 0 && n % yieldEvery === 0) await yieldToEventLoop();
+      await takeEvaluationSlot();
       const index = pending[n];
       const candle = base[index];
       const window = base.slice(Math.max(0, index + 1 - lookback), index + 1);
