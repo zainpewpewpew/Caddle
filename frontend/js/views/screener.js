@@ -24,7 +24,9 @@ const ALL = { value: '', label: 'Semua' };
 // Tidak ada filter di klien: memfilter setelah potongan top-N patternScore membuat hasil diam-diam tidak lengkap.
 const SERVER_FILTERS = { tf: 'timeframe', pattern: 'classification', stage: 'state', alignment: 'alignment', minScore: 'minScore' };
 // Batas maksimum API (1–500). Sinyal terbuka maks. 1 per simbol × timeframe (≤ 100 × 3), sehingga daftar lengkap
-// dan urutan Early Score di klien mencakup seluruh hasil; bila batas tercapai, UI menandainya secara eksplisit.
+// dan urutan Early Score di klien mencakup seluruh hasil. API tidak mengirim total/penanda terpotong (count = panjang
+// halaman), jadi count = limit hanya berarti "batas tercapai": bisa tepat 500, bisa lebih. UI menyatakan itu apa adanya
+// ("≥ 500", "mungkin terpotong"), tidak mengklaim ada sisa yang belum tentu ada.
 const SCREENER_LIMIT = 500;
 
 function buildQuery(form) {
@@ -73,8 +75,8 @@ export async function screenerView() {
     if (id !== request) return; // respons usang dari filter sebelumnya
     const rows = data.items;
     const filtered = [...new FormData(filters).values()].some(Boolean);
-    const truncated = data.count >= SCREENER_LIMIT;
-    count.textContent = truncated ? `${data.count}+ hasil` : `${data.count} hasil`;
+    const limitReached = data.count >= SCREENER_LIMIT;
+    count.textContent = limitReached ? `≥ ${SCREENER_LIMIT} hasil` : `${data.count} hasil`;
     const table = dataTable({
       columns: SCREENER_COLUMNS,
       rows,
@@ -82,8 +84,8 @@ export async function screenerView() {
       initialSort: { key: 'earlyScore', dir: 'desc' },
       empty: emptyResult(filtered),
     });
-    host.replaceChildren(...(truncated
-      ? [callout(`Menampilkan ${SCREENER_LIMIT} kandidat teratas menurut Pattern Score; persempit filter untuk melihat sisanya.`, 'warn'), table]
+    host.replaceChildren(...(limitReached
+      ? [callout(`Batas ${SCREENER_LIMIT} kandidat tercapai (urut Pattern Score); hasil mungkin terpotong. Persempit filter agar tidak ada kandidat yang terlewat.`, 'warn'), table]
       : [table]));
   }
 

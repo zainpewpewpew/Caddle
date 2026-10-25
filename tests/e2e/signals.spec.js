@@ -66,20 +66,41 @@ test('E2E-SIG-004 filter alignment screener dikirim ke server bersama limit=500,
   expect(errors).toEqual([]);
 });
 
-test('E2E-SIG-005 respons mencapai limit 500 → screener menandai hasil terpotong, tidak tampil seolah lengkap', async ({ page }) => {
-  const errors = watchErrors(page);
-  // Respons API diganti 500 baris SINTETIS (bukan data pasar) hanya untuk memicu kondisi batas tercapai.
-  const items = Array.from({ length: 500 }, (_, i) => ({
+// Respons API diganti baris SINTETIS (bukan data pasar) hanya untuk memicu kondisi batas limit.
+function syntheticActive(n) {
+  return Array.from({ length: n }, (_, i) => ({
     id: i + 1, symbol: `SYN${String(i).padStart(3, '0')}USDT`, timeframe: '5m', classification: 'SA', state: 'QUIET',
     patternKey: 'SA', patternVersion: 1, firstDetectedAt: Date.UTC(2027, 0, 1), firstDetectedPrice: 1, invalidationPrice: null,
     patternScore: 60, earlyScore: 50, alignment: null, riskFlags: [], explanation: [], peakPrice: null, peakState: 'QUIET',
     barsInState: 0, finalOutcome: null, updatedAt: Date.UTC(2027, 0, 1), closedAt: null, lastPrice: null, lastCandleAt: null,
   }));
+}
+
+test('E2E-SIG-005 respons tepat 500 baris (= limit, tanpa total dari API) → "≥ 500 hasil" & "mungkin terpotong", tidak mengklaim ada sisa', async ({ page }) => {
+  const errors = watchErrors(page);
+  const items = syntheticActive(500);
   await page.route('**/api/signals/active?*', (route) => route.fulfill({ json: { items, count: items.length } }));
   await signIn(page);
   await page.goto('/#/screener');
-  await expect(page.locator('.panel__actions .badge')).toHaveText('500+ hasil');
-  await expect(page.getByTestId('screener-results').getByText('Menampilkan 500 kandidat teratas')).toBeVisible();
+  const results = page.getByTestId('screener-results');
+  await expect(page.locator('.panel__actions .badge')).toHaveText('≥ 500 hasil');
+  await expect(results.getByText('Batas 500 kandidat tercapai')).toBeVisible();
+  await expect(results.getByText('mungkin terpotong')).toBeVisible();
+  // count API = panjang halaman: klien tidak tahu apakah ada baris ke-501, jadi tidak boleh menyatakan "500+"/"sisanya".
+  await expect(page.locator('.panel__actions .badge')).not.toHaveText(/500\+/);
+  await expect(results.getByText(/sisanya/)).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('E2E-SIG-006 batas: respons 499 baris (< limit 500) → "499 hasil" tanpa callout batas tercapai', async ({ page }) => {
+  const errors = watchErrors(page);
+  const items = syntheticActive(499);
+  await page.route('**/api/signals/active?*', (route) => route.fulfill({ json: { items, count: items.length } }));
+  await signIn(page);
+  await page.goto('/#/screener');
+  await expect(page.locator('.panel__actions .badge')).toHaveText('499 hasil');
+  await expect(page.getByTestId('screener-results').getByRole('cell', { name: 'SYN498USDT' })).toBeVisible();
+  await expect(page.getByTestId('screener-results').getByText('Batas 500 kandidat tercapai')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
