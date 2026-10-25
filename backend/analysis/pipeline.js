@@ -17,6 +17,14 @@ export const ANALYSIS_LOOKBACK = 300;
 
 const PATTERN_NAMES = Object.freeze({ SA: 'Silent Accumulation', PVA: 'Progressive Volume Accumulation' });
 
+/** Penjelasan likuiditas untuk candle historis hasil replay (ukuran saat ini tidak dipakai — tanpa lookahead). */
+export const REPLAY_LIQUIDITY_DETAIL = 'Data likuiditas tidak tersedia untuk candle historis (replay): ukuran 24 jam '
+  + 'dari discovery terakhir hanya berlaku untuk candle terbaru, sehingga risk flag likuiditas/spread tidak dinilai';
+
+function withReplayLiquidity(view) {
+  return { ...view, explanation: view.explanation.map((e) => (e.factor === 'CONTEXT:LIQUIDITY' ? { ...e, detail: REPLAY_LIQUIDITY_DETAIL } : e)) };
+}
+
 /**
  * Kualitas seri dasar yang dimuat: celah (openTime tidak bersambung), candle belum tertutup, campuran seri.
  * Pola juga memeriksa jendelanya sendiri; ini menangkap masalah di luar jendela pola (mis. konteks swing).
@@ -101,6 +109,9 @@ export function patternDefinitions(params = {}) {
  *   selama ini agar konteks live sama dengan replay (stream per timeframe diproses paralel).
  *   getLiquidity: ukuran likuiditas dari discovery terakhir; `thresholds` (ambang pengaturan yang dipakai
  *   discovery yang sama) menggantikan `params.view` agar risk flag & penjelasan memakai batas pengguna.
+ *   Ukuran itu menggambarkan pasar SAAT INI, jadi hanya dipakai untuk candle terbaru batch; candle
+ *   historis hasil replay dievaluasi dengan likuiditas tidak diketahui (tanpa POOR_LIQUIDITY/WIDE_SPREAD,
+ *   penjelasan CONTEXT:LIQUIDITY = REPLAY_LIQUIDITY_DETAIL) agar tidak ada lookahead.
  */
 export function createAnalysisPipeline({
   repos, signals, getLiquidity = () => undefined, logger, params = {}, lookback = ANALYSIS_LOOKBACK,
@@ -177,6 +188,7 @@ export function createAnalysisPipeline({
     }
 
     const { liquidity, params: runParams } = liquidityInputs(getLiquidity(symbol));
+    const latest = pending[pending.length - 1];
     let result = null;
     for (let n = 0; n < pending.length; n += 1) {
       // Repositori better-sqlite3 resolve sinkron: tanpa jeda eksplisit replay panjang menahan timer & I/O.
@@ -185,7 +197,10 @@ export function createAnalysisPipeline({
       const candle = base[index];
       const window = base.slice(Math.max(0, index + 1 - lookback), index + 1);
       const prev = await signals.getOpen({ symbol, timeframe });
-      result = analyzeAt({ symbol, timeframe, candlesByTimeframe: { [timeframe]: window, ...higher }, prev, liquidity, params: runParams });
+      const historical = index !== latest;
+      result = analyzeAt({ symbol, timeframe, candlesByTimeframe: { [timeframe]: window, ...higher }, prev,
+        liquidity: historical ? undefined : liquidity, params: runParams });
+      if (historical) result = { ...result, view: withReplayLiquidity(result.view) };
       let saved = null;
       if (result.event || (prev && result.next !== prev)) {
         // save() memajukan kursor analisis dalam transaksi yang sama dengan sinyal + event.

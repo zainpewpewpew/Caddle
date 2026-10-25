@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeAt, assessSeriesQuality, createAnalysisPipeline, patternDefinitions } from '../../../backend/analysis/pipeline.js';
+import { REPLAY_LIQUIDITY_DETAIL, analyzeAt, assessSeriesQuality, createAnalysisPipeline, patternDefinitions } from '../../../backend/analysis/pipeline.js';
 import { openDatabase } from '../../../backend/database/connection.js';
 import { migrate } from '../../../backend/database/migrate.js';
 import { createRepositories } from '../../../backend/database/repositories/index.js';
@@ -349,6 +349,36 @@ describe('createAnalysisPipeline (SQLite)', () => {
     const r = analyzeAt({ symbol: SYMBOL, timeframe: '5m', candlesByTimeframe: byTimeframe(all.slice(0, 63)), prev: null,
       liquidity: { quoteVolume24h: 1_000, spreadBps: 80 } });
     expect(r.view.riskFlags).toEqual(expect.arrayContaining(['POOR_LIQUIDITY', 'WIDE_SPREAD']));
+  });
+
+  it('NEG-PIPE-006 replay batch backfill dengan likuiditas buruk saat ini → candle historis tanpa POOR_LIQUIDITY/WIDE_SPREAD dan penjelasan "tidak tersedia (replay)"; hanya candle terbaru memakai likuiditas', async () => {
+    const ctx = await setup();
+    const saves = [];
+    const signals = { ...ctx.signals, save: async (a) => { saves.push(a); return ctx.signals.save(a); } };
+    const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals, getLiquidity: () => ({ quoteVolume24h: 1_000, spreadBps: 80 }) });
+    const all = silentAccumulationCandles(1);
+    for (let k = 1; k <= 55; k += 1) await feed({ ...ctx, pipeline }, all, k);
+    // Candle 56..76 tiba sekaligus (backfill): deteksi di candle 62 berada di dalam replay.
+    const htf = byTimeframe(all);
+    await ctx.repos.candles.upsertClosed([...all.slice(55), ...htf['15m'], ...htf['1h']], { now: NOW });
+    const r = await pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '5m', reason: 'gap' });
+    expect(r.evaluated).toBe(all.length - 55);
+
+    const liquidityLine = (s) => s.explanation.find((e) => e.factor === 'CONTEXT:LIQUIDITY').detail;
+    const historical = saves.filter((s) => s.snapshot.lastCandleTime < all.at(-1).openTime);
+    expect(historical.length).toBeGreaterThan(0);
+    expect(historical[0].event).toMatchObject({ fromState: 'NO_PATTERN' });
+    for (const s of historical) {
+      expect(s.snapshot.riskFlags).not.toContain('POOR_LIQUIDITY');
+      expect(s.snapshot.riskFlags).not.toContain('WIDE_SPREAD');
+      expect(liquidityLine(s)).toBe(REPLAY_LIQUIDITY_DETAIL);
+      expect(s.explanation.some((e) => e.factor === 'RISK:POOR_LIQUIDITY')).toBe(false);
+    }
+    // Candle terbaru batch memakai ukuran likuiditas saat ini (dengan batas default).
+    const latest = saves.at(-1);
+    expect(latest.snapshot.lastCandleTime).toBe(all.at(-1).openTime);
+    expect(latest.snapshot.riskFlags).toEqual(expect.arrayContaining(['POOR_LIQUIDITY', 'WIDE_SPREAD']));
+    expect(liquidityLine(latest)).toMatch(/^Quote volume 24 jam 1000 /);
   });
 
   it('POS-PIPE-005 closeSymbol (SYMBOL_DELISTED) → sinyal terbuka EXPIRED tanpa alert, diserialkan setelah evaluasi yang sedang berjalan; candle berikutnya membuka sinyal BARU', async () => {
