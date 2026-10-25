@@ -242,9 +242,10 @@ function setup({
   listOpenSeries,
   wrapGetSettings,
   discover = fakeDiscover,
+  start = START,
 } = {}) {
   const log = [];
-  const timers = createFakeTimers();
+  const timers = createFakeTimers(start);
   const rest = createFakeRest({ clock: timers.clock, symbols, log });
   const repos = createFakeRepos({ log, monitoredInDb });
   const streams = createFakeStreams();
@@ -651,6 +652,40 @@ describe('event WebSocket', () => {
     expect(klinesOf(rest).at(-1)).toMatchObject({ startTime: LAST_CLOSED + M5, limit: 1 });
     await timers.advance(60_000);
     expect(analysed).toHaveLength(1);
+    await scanner.stop();
+    expect(timers.pending.size).toBe(0);
+  });
+
+  it('UNIT-SCN-025 outage 2 candle, socket terbuka lagi 1 d setelah close #13, latensi REST 3 d (> margin 2 d) → sweep ulang setelah margin tetap mengantre stream yang sinkronisasi pertamanya masih berjalan: #13 dianalisis "reconnect" ≈ 7 d setelah open, bukan di sweep berkala 5 menit kemudian; tanpa duplikat', async () => {
+    const { scanner, streams, analysed, timers, rest } = await running();
+    const s = streams.current();
+    s.opts.onState({ event: 'state', state: 'reconnecting' });
+    const boundary = T0 + 14 * M5; // candle #13 (openTime T0+13·5m) tutup di boundary − 1
+    timers.setNow(boundary + 1_000);
+    rest.klinesGate = () => new Promise((resolve) => timers.setTimer(resolve, 3_000));
+    s.opts.onState({ event: 'state', state: 'open' });
+    await flush();
+    await timers.advance(10_000);
+    const fiveMin = () => analysed.filter((a) => a.timeframe === '5m').map((a) => [a.reason, a.candles.map((c) => (c.openTime - T0) / M5)]);
+    // Sinkronisasi pertama (direncanakan saat open: #13 belum lewat margin) membawa #12; antrean kedua membawa #13.
+    expect(fiveMin()).toEqual([['reconnect', [12]], ['reconnect', [13]]]);
+    rest.klinesGate = null;
+    await timers.advance(300_000);
+    expect(fiveMin().filter(([, list]) => list.includes(13))).toHaveLength(1);
+    await scanner.stop();
+  });
+
+  it('UNIT-SCN-026 start 1 d setelah batas 5m (bootstrap tidak boleh mengambil candle yang baru tutup), socket terbuka sebelum kline final berikutnya → satu sweep catch-up ≈ 2 d setelah open mengambil candle itu via REST sebagai histori (tanpa analisis, seperti bootstrap); stream mutakhir tidak menyentuh REST', async () => {
+    const boundary = T0 + 13 * M5; // candle #12 tutup di boundary − 1
+    const { scanner, repos, rest, analysed, timers } = setup({ symbols: ['BTCUSDT'], start: boundary + 1_000 });
+    await scanner.start();
+    expect(repos.store.get('BTCUSDT:5m').has(T0 + 12 * M5)).toBe(false); // < margin: dikecualikan bootstrap
+    const before = rest.klineCalls().length;
+    await timers.advance(2_500);
+    expect(repos.store.get('BTCUSDT:5m').has(T0 + 12 * M5)).toBe(true);
+    // Hanya 5m yang tertinggal: 15m dan 1h (tutup di T0+60m−1) sudah mutakhir → hanya satu request.
+    expect(rest.klineCalls().slice(before)).toEqual([expect.objectContaining({ timeframe: '5m', startTime: T0 + 12 * M5, limit: 1 })]);
+    expect(analysed).toEqual([]);
     await scanner.stop();
     expect(timers.pending.size).toBe(0);
   });

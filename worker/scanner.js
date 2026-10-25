@@ -351,8 +351,11 @@ export function createScanner({
       analyze,
       lastOpenTime: null,
       lastCloseTime: null,
+      // Waktu server saat bootstrap stream dimulai: candle yang tutup sebelumnya = histori (lihat firstOpenSweep).
+      liveFrom: null,
       chain: Promise.resolve(),
-      syncing: false,
+      // Jumlah sinkronisasi sweep yang antre/berjalan untuk stream ini (lihat sweep()).
+      syncing: 0,
       provisionalAt: null,
       provisionalOpenTime: null,
     };
@@ -383,17 +386,21 @@ export function createScanner({
     return candles.filter((c) => !bad.has(c.openTime));
   }
 
-  /** Memajukan high-water mark stream; memanggil analisis untuk candle yang lebih baru. */
-  async function commit(st, accepted, reason, emit) {
+  /**
+   * Memajukan high-water mark stream; memanggil analisis untuk candle yang lebih baru (`emitFrom`: hanya candle
+   * dengan closeTime ≥ nilai itu yang dianalisis; yang lebih awal disimpan sebagai histori).
+   */
+  async function commit(st, accepted, reason, emit, emitFrom = null) {
     const fresh = accepted.filter((c) => st.lastOpenTime === null || c.openTime > st.lastOpenTime);
     if (fresh.length === 0) return;
     const last = fresh.at(-1);
     st.lastOpenTime = last.openTime;
     st.lastCloseTime = last.closeTime;
     if (latestCloseTime === null || last.closeTime > latestCloseTime) latestCloseTime = last.closeTime;
-    if (!emit || !isActive(st) || !st.analyze) return;
+    const emitted = emitFrom === null ? fresh : fresh.filter((c) => c.closeTime >= emitFrom);
+    if (!emit || emitted.length === 0 || !isActive(st) || !st.analyze) return;
     try {
-      await onClosedCandles({ symbol: st.symbol, timeframe: st.timeframe, candles: fresh, reason });
+      await onClosedCandles({ symbol: st.symbol, timeframe: st.timeframe, candles: emitted, reason });
     } catch (err) {
       await report('analysis', err, st);
     }
@@ -411,9 +418,9 @@ export function createScanner({
   /**
    * Mengambil semua candle tertutup setelah high-water mark sampai sekarang (REST), digabung dengan
    * `extra` (mis. candle WS pemicu), disimpan, lalu dianalisis berurutan.
-   * Seri yang belum punya data (bootstrap murni) tidak dianalisis kecuali emitBootstrap.
+   * Seri yang belum punya data (bootstrap murni) tidak dianalisis kecuali emitBootstrap. `emitFrom`: lihat commit.
    */
-  async function syncStream(st, reason, extra = []) {
+  async function syncStream(st, reason, extra = [], emitFrom = null) {
     if (!isActive(st)) return 0;
     const fresh = st.lastOpenTime === null;
     const plan = planBackfill({
@@ -426,7 +433,7 @@ export function createScanner({
     for (const req of plan) fetched.push(...await fetchKlines(st, req));
     const accepted = await upsertClosed(st, mergeClosed(st, [...extra, ...fetched]));
     const emit = reason === 'bootstrap' || fresh ? cfg.emitBootstrap : true;
-    await commit(st, accepted, reason, emit);
+    await commit(st, accepted, reason, emit, emitFrom);
     return accepted.length;
   }
 
@@ -453,6 +460,7 @@ export function createScanner({
   async function bootstrapStream(st) {
     if (!isActive(st)) return 0;
     let n = 0;
+    st.liveFrom ??= clock();
     try {
       const last = await repos.candles.getLastOpenTime({ symbol: st.symbol, timeframe: st.timeframe });
       if (Number.isSafeInteger(last) && st.lastOpenTime === null) {
@@ -530,6 +538,7 @@ export function createScanner({
       logger.info({ state: s.state, reconnects: s.reconnects }, 'state WebSocket');
       if (s.state === 'open') {
         if (meta.down) reconnectSweep();
+        else if (!meta.opened) firstOpenSweep();
         meta.opened = true;
         meta.down = false;
       } else if (meta.opened) {
@@ -568,22 +577,29 @@ export function createScanner({
   /**
    * Menjadwalkan sinkronisasi REST untuk stream yang tertinggal dari candle tertutup terakhir.
    * Grace minimal = margin penutupan, agar stream tidak disinkronkan untuk candle yang belum boleh diambil REST.
+   * Stream yang sinkronisasi sweep-nya masih antre/berjalan dilewati, KECUALI `includeSyncing`: rencana
+   * sinkronisasi yang berjalan dibuat saat ia mulai (bisa sebelum candle terbaru boleh diambil), jadi satu
+   * sinkronisasi lagi diantrekan; antrean per stream menyerialkannya dan rencananya dihitung ulang dari
+   * high-water mark saat ia berjalan (kosong bila candle itu sudah diterima). `catchup`: saat tugas berjalan,
+   * stream yang belum punya data (bootstrap gagal) dilewati — dicoba ulang oleh sweep berkala — dan candle yang
+   * tutup sebelum bootstrap stream dimulai (`liveFrom`) disimpan sebagai histori tanpa analisis, seperti bootstrap.
    */
-  function sweep(reason, graceMs) {
+  function sweep(reason, graceMs, { includeSyncing = false, catchup = false } = {}) {
     const now = clock() - Math.max(graceMs, cfg.closeMarginMs);
     const tasks = [];
     for (const st of streams.values()) {
-      if (st.syncing) continue;
+      if (st.syncing > 0 && !includeSyncing) continue;
       const expected = lastClosedOpenTime(now, st.timeframe);
       if (st.lastOpenTime !== null && st.lastOpenTime >= expected) continue;
-      st.syncing = true;
+      st.syncing += 1;
       tasks.push(enqueue(st, async () => {
         try {
-          await syncStream(st, reason);
+          if (!catchup) await syncStream(st, reason);
+          else if (st.lastOpenTime !== null) await syncStream(st, reason, [], st.liveFrom ?? clock());
         } catch (err) {
           await report('backfill', err, st);
         } finally {
-          st.syncing = false;
+          st.syncing -= 1;
         }
       }));
     }
@@ -593,11 +609,24 @@ export function createScanner({
   /**
    * Catch-up setelah (re)connect: Binance tidak mengulang kline final yang terkirim saat socket putus. Semua
    * candle yang tutup sebelum socket dibuka harus diambil REST — tanpa grace selain margin penutupan. Yang tutup
-   * kurang dari margin sebelum open belum boleh diambil REST, jadi sweep diulang sekali setelah margin berlalu.
+   * kurang dari margin sebelum open belum boleh diambil REST, jadi sweep diulang sekali setelah margin berlalu —
+   * juga untuk stream yang sinkronisasi pertamanya masih berjalan (rencananya mungkin tanpa candle tersebut).
    */
   function reconnectSweep() {
     track(sweep('reconnect', cfg.closeMarginMs));
-    schedule('reconnect-sweep', cfg.closeMarginMs, () => sweep('reconnect', cfg.closeMarginMs));
+    schedule('reconnect-sweep', cfg.closeMarginMs, () => sweep('reconnect', cfg.closeMarginMs, { includeSyncing: true }));
+  }
+
+  /**
+   * Open pertama stream awal (bukan reconnect/penggantian): bootstrap bisa saja merencanakan REST kurang dari
+   * margin setelah candle terbaru tutup (candle itu dikecualikan), sementara kline final-nya terkirim sebelum
+   * socket terbuka. Satu sweep setelah margin berlalu mengambilnya (antre di belakang bootstrap; stream yang
+   * sudah mutakhir tidak menyentuh REST; stream yang bootstrap-nya gagal tidak dicoba ulang secepat ini).
+   * Candle yang tutup sebelum bootstrap dimulai tetap histori (tanpa analisis); yang tutup sesudahnya
+   * dianalisis dengan reason 'catchup'.
+   */
+  function firstOpenSweep() {
+    schedule('open-sweep', cfg.closeMarginMs, () => sweep('catchup', cfg.closeMarginMs, { catchup: true }));
   }
 
   function scheduleSweep() {
