@@ -194,6 +194,9 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       LIMIT @limit`),
     events: db.prepare(`SELECT id, occurred_at, candle_time, from_state, to_state, price, detail_json
       FROM signal_events WHERE signal_id = ? ORDER BY candle_time, id`),
+    lastEventCandle: db.prepare(`SELECT MAX(e.candle_time) AS candle_time
+      FROM signal_events e JOIN signals s ON s.id = e.signal_id
+      WHERE s.symbol_id = ? AND s.timeframe = ?`),
   };
 
   const ensureDefinitionTx = db.transaction((row, definitionJson) => {
@@ -329,6 +332,18 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       const updatedAt = now ?? snapshot.lastEvaluatedAt ?? event?.occurredAt;
       if (!Number.isInteger(updatedAt)) throw new TypeError('Waktu pembaruan (now / snapshot.lastEvaluatedAt) wajib bilangan bulat');
       return saveTx({ symbol, timeframe, snapshot, event, explanation, updatedAt });
+    },
+
+    /**
+     * openTime candle terakhir yang menghasilkan event sinyal untuk simbol + timeframe (atau null).
+     * Dipakai pipeline setelah restart agar candle yang sudah menutup sinyal tidak membuka sinyal baru.
+     */
+    async lastEventCandleTime({ symbol, timeframe } = {}) {
+      assertSymbol(symbol);
+      assertTimeframe(timeframe);
+      const sym = stmt.symbolId.get(symbol);
+      if (!sym) return null;
+      return stmt.lastEventCandle.get(sym.id, timeframe)?.candle_time ?? null;
     },
 
     /** Sinyal aktif (non-terminal), urut patternScore tertinggi. */
