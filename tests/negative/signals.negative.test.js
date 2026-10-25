@@ -83,6 +83,26 @@ describe('API sinyal — alur negatif', () => {
     await expect(signals.listActive({ limit: 500 })).resolves.toEqual([]);
   });
 
+  it.each([
+    ['alignment tidak dikenal', '/api/signals/active?alignment=BULLISH'],
+    ['alignment huruf kecil', '/api/signals/active?alignment=aligned'],
+    ['alignment kosong', '/api/signals/active?alignment='],
+    ['alignment null literal', '/api/signals/active?alignment=null'],
+    ['alignment ganda (array)', '/api/signals/active?alignment=ALIGNED&alignment=COUNTERTREND'],
+    ['alignment di riwayat', '/api/signals/history?alignment=ALIGNED'],
+  ])('NEG-SIG-007 %s → 400 VALIDATION_ERROR', async (_label, url) => {
+    const res = await ctx.app.inject({ url, headers: { cookie: auth.cookie } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('VALIDATION_ERROR');
+  });
+
+  it('NEG-SIG-008 listActive menolak alignment tidak valid (termasuk upaya injeksi SQL) dengan RangeError', async () => {
+    const { signals } = ctx.app.services.repos;
+    await expect(signals.listActive({ alignment: 'BULLISH' })).rejects.toThrow(RangeError);
+    await expect(signals.listActive({ alignment: "ALIGNED' OR 1=1 --" })).rejects.toThrow(RangeError);
+    await expect(signals.listActive({ alignment: 'ALIGNED' })).resolves.toEqual([]);
+  });
+
   it.each(['POST', 'PUT', 'DELETE'])('NEG-SIG-003 %s ke endpoint sinyal (baca saja) → 404', async (method) => {
     const res = await ctx.app.inject({
       method, url: '/api/signals/active',

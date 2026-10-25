@@ -20,8 +20,12 @@ export const SCREENER_COLUMNS = [
 ];
 
 const ALL = { value: '', label: 'Semua' };
-// Filter yang dikirim ke server (nama field form → parameter query API).
-const SERVER_FILTERS = { tf: 'timeframe', pattern: 'classification', stage: 'state', minScore: 'minScore' };
+// Semua filter dikirim ke server (nama field form → parameter query API) dan diterapkan SEBELUM limit.
+// Tidak ada filter di klien: memfilter setelah potongan top-N patternScore membuat hasil diam-diam tidak lengkap.
+const SERVER_FILTERS = { tf: 'timeframe', pattern: 'classification', stage: 'state', alignment: 'alignment', minScore: 'minScore' };
+// Batas maksimum API (1–500). Sinyal terbuka maks. 1 per simbol × timeframe (≤ 100 × 3), sehingga daftar lengkap
+// dan urutan Early Score di klien mencakup seluruh hasil; bila batas tercapai, UI menandainya secara eksplisit.
+const SCREENER_LIMIT = 500;
 
 function buildQuery(form) {
   const params = new URLSearchParams();
@@ -29,8 +33,8 @@ function buildQuery(form) {
     const value = form.elements[field].value;
     if (value) params.set(param, value);
   }
-  const qs = params.toString();
-  return qs ? `/api/signals/active?${qs}` : '/api/signals/active';
+  params.set('limit', String(SCREENER_LIMIT));
+  return `/api/signals/active?${params.toString()}`;
 }
 
 function emptyResult(filtered) {
@@ -67,17 +71,20 @@ export async function screenerView() {
       return;
     }
     if (id !== request) return; // respons usang dari filter sebelumnya
-    const alignment = filters.elements.alignment.value;
-    const rows = alignment ? data.items.filter((r) => r.alignment === alignment) : data.items;
+    const rows = data.items;
     const filtered = [...new FormData(filters).values()].some(Boolean);
-    count.textContent = `${rows.length} hasil`;
-    host.replaceChildren(dataTable({
+    const truncated = data.count >= SCREENER_LIMIT;
+    count.textContent = truncated ? `${data.count}+ hasil` : `${data.count} hasil`;
+    const table = dataTable({
       columns: SCREENER_COLUMNS,
       rows,
       caption: 'Kandidat LONG',
       initialSort: { key: 'earlyScore', dir: 'desc' },
       empty: emptyResult(filtered),
-    }));
+    });
+    host.replaceChildren(...(truncated
+      ? [callout(`Menampilkan ${SCREENER_LIMIT} kandidat teratas menurut Pattern Score; persempit filter untuk melihat sisanya.`, 'warn'), table]
+      : [table]));
   }
 
   filters.addEventListener('change', () => { load(); });

@@ -182,6 +182,7 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
         AND (@timeframe IS NULL OR s.timeframe = @timeframe)
         AND (@classification IS NULL OR s.classification = @classification)
         AND (@state IS NULL OR s.state = @state)
+        AND (@alignment IS NULL OR s.alignment = @alignment)
         AND (@minScore IS NULL OR s.pattern_score >= @minScore)
       ORDER BY s.pattern_score DESC, s.updated_at DESC, s.id DESC
       LIMIT @limit`),
@@ -421,18 +422,20 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       return stmt.lastEventCandle.get(sym.id, timeframe)?.candle_time ?? null;
     },
 
-    /** Sinyal aktif (non-terminal), urut patternScore tertinggi. */
+    /** Sinyal aktif (non-terminal), urut patternScore tertinggi; semua filter diterapkan sebelum limit. */
     async listActive(filters = {}) {
       if (filters === null || typeof filters !== 'object') throw new TypeError('filter harus objek');
-      const allowed = ['timeframe', 'classification', 'state', 'minScore', 'limit'];
+      const allowed = ['timeframe', 'classification', 'state', 'alignment', 'minScore', 'limit'];
       for (const key of Object.keys(filters)) if (!allowed.includes(key)) throw new TypeError(`Filter tidak dikenal: ${key}`);
-      const { timeframe = null, classification = null, state = null, minScore = null, limit = 200 } = filters;
+      const { timeframe = null, classification = null, state = null, alignment = null, minScore = null, limit = 200 } = filters;
       if (timeframe !== null) assertTimeframe(timeframe);
       if (classification !== null && !SIGNAL_CLASSIFICATIONS.includes(classification)) throw new RangeError('Filter klasifikasi tidak valid');
       if (state !== null && !PATTERN_STATES.includes(state)) throw new RangeError('Filter state harus state aktif');
+      // Alignment null (konteks HTF tidak diketahui) tidak dapat dipilih sebagai filter; tanpa filter tetap tampil.
+      if (alignment !== null && !ALIGNMENTS.includes(alignment)) throw new RangeError('Filter alignment tidak valid');
       if (minScore !== null && !(isFiniteNumber(minScore) && minScore >= 0 && minScore <= 100)) throw new RangeError('minScore harus 0..100');
       assertLimit(limit, ACTIVE_MAX);
-      return stmt.listActive.all({ timeframe, classification, state, minScore, limit }).map(toView);
+      return stmt.listActive.all({ timeframe, classification, state, alignment, minScore, limit }).map(toView);
     },
 
     /** Riwayat sinyal (terbuka & tertutup) terbaru dulu, lengkap dengan event transisinya. */

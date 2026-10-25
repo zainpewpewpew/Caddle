@@ -141,6 +141,22 @@ describe('API sinyal — filter & urutan atas matriks sinyal sintetis', () => {
     expect(await symbols(`/api/signals/history?limit=${limit}`)).toHaveLength(Math.min(n, 7));
   });
 
+  it.each([
+    ['ALIGNED', ['AAAUSDT', 'GGGUSDT']],
+    ['PARTIALLY_CONFIRMED', ['CCCUSDT']],
+    ['UNCONFIRMED', ['DDDUSDT']],
+    ['COUNTERTREND', ['BBBUSDT']],
+  ])('POS-SIG-014 alignment=%s → hanya alignment itu, alignment null (tidak diketahui) tidak ikut %j', async (alignment, expected) => {
+    expect(await symbols(`/api/signals/active?alignment=${alignment}`)).toEqual(expected);
+  });
+
+  it('POS-SIG-015 alignment difilter SEBELUM limit: ALIGNED dengan patternScore terendah tetap masuk (bukan potongan top-N)', async () => {
+    // Top-2 tanpa filter = AAA, DDD → memfilter ALIGNED setelahnya hanya menyisakan AAA dan kehilangan GGG.
+    expect(await symbols('/api/signals/active?limit=2')).toEqual(['AAAUSDT', 'DDDUSDT']);
+    expect(await symbols('/api/signals/active?alignment=ALIGNED&limit=2')).toEqual(['AAAUSDT', 'GGGUSDT']);
+    expect(await symbols('/api/signals/active?alignment=ALIGNED&timeframe=15m&state=EARLY_BULLISH&minScore=50')).toEqual(['GGGUSDT']);
+  });
+
   it('POS-SIG-012 riwayat memuat sinyal tertutup, urut deteksi terbaru, limit & simbol membedakan baris', async () => {
     expect(await symbols('/api/signals/history')).toEqual(
       ['FFFUSDT', 'GGGUSDT', 'EEEUSDT', 'DDDUSDT', 'CCCUSDT', 'BBBUSDT', 'AAAUSDT'],

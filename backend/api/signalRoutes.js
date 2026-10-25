@@ -1,6 +1,6 @@
 // API sinyal (baca saja): kandidat aktif untuk screener dan riwayat sinyal dengan transisinya.
 // Query string tidak dikoersi (AJV coerceTypes: false) sehingga angka divalidasi sebagai pola string.
-import { TIMEFRAMES } from '../market/contracts.js';
+import { ALIGNMENTS, TIMEFRAMES } from '../market/contracts.js';
 import { PATTERN_STATES } from '../signals/index.js';
 
 // limit 1..500 (sama dengan batas listActive/history di repositori). Di luar rentang → 400, tidak dipotong diam-diam.
@@ -13,6 +13,8 @@ const activeQuerySchema = {
     timeframe: { type: 'string', enum: [...TIMEFRAMES] },
     classification: { type: 'string', enum: ['SA', 'PVA', 'BOTH'] },
     state: { type: 'string', enum: [...PATTERN_STATES] },
+    // Alignment HTF difilter di server SEBELUM limit, agar hasil tidak terpotong oleh top-N patternScore.
+    alignment: { type: 'string', enum: [...ALIGNMENTS] },
     minScore: { type: 'string', pattern: '^(100|[1-9]?[0-9])$' },
     limit: LIMIT,
   },
@@ -46,6 +48,7 @@ export async function signalRoutes(app, { signals, candles }) {
       timeframe: q.timeframe ?? null,
       classification: q.classification ?? null,
       state: q.state ?? null,
+      alignment: q.alignment ?? null,
       minScore: q.minScore === undefined ? null : toInt(q.minScore),
       limit,
     });
