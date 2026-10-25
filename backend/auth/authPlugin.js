@@ -1,5 +1,8 @@
 import { isApiRoute, requireCsrf } from '../security/requestGuards.js';
 
+/** Request polling latar belakang (auto-refresh) yang tidak boleh memperpanjang idle timeout. */
+const isBackgroundPoll = (request) => request.method === 'GET' && request.headers['x-lr-background'] === '1';
+
 /**
  * Menghubungkan sesi ke request. Seluruh route /api/* WAJIB terautentikasi
  * kecuali diberi `config: { public: true }` (secure by default).
@@ -37,8 +40,10 @@ export function registerAuth(app, { sessionService, cookieName }) {
     }
     const denied = await requireCsrf(request, reply);
     if (denied) return denied;
-    // Hanya aktivitas API terautentikasi yang memperpanjang idle timeout.
-    await sessionService.touch(request.auth);
+    // Hanya aktivitas API terautentikasi yang memperpanjang idle timeout. Polling otomatis UI
+    // (GET + X-LR-Background: 1) tidak dihitung sebagai aktivitas. Header ini hanya dapat
+    // MEMPERPENDEK umur sesi pemiliknya sendiri, sehingga aman dipercaya dari klien.
+    if (!isBackgroundPoll(request)) await sessionService.touch(request.auth);
   }
 
   app.addHook('onRoute', (routeOptions) => {

@@ -130,6 +130,30 @@ describe('idle timeout & gerbang fail-closed', () => {
     }
   });
 
+  it('SEC-RT-011 auto-refresh (GET + X-LR-Background: 1) tetap terautentikasi tetapi tidak memperpanjang idle', async () => {
+    const ctx = await createTestApp();
+    try {
+      const a = await login(ctx.app);
+      const poll = (headers = {}) => ctx.app.inject({ url: '/api/system/status', headers: { cookie: a.cookie, ...headers } });
+      ctx.clock.advance(20 * 60_000);
+      expect((await poll({ 'x-lr-background': '1' })).statusCode).toBe(200);
+      // 31 menit sejak aktivitas terakhir (login), hanya diisi polling latar belakang → idle kedaluwarsa.
+      ctx.clock.advance(11 * 60_000);
+      expect((await poll({ 'x-lr-background': '1' })).statusCode).toBe(401);
+      expect((await ctx.app.inject({ url: '/api/system/status', headers: { 'x-lr-background': '1' } })).statusCode).toBe(401);
+
+      // Nilai lain atau method tidak aman tidak mendapat pengecualian.
+      const b = await login(ctx.app);
+      for (let i = 0; i < 3; i += 1) {
+        ctx.clock.advance(20 * 60_000);
+        const res = await ctx.app.inject({ url: '/api/system/status', headers: { cookie: b.cookie, 'x-lr-background': 'true' } });
+        expect(res.statusCode).toBe(200);
+      }
+    } finally {
+      await ctx.app.close();
+    }
+  });
+
   it('SEC-RT-009 route API yang terdaftar sebelum registerAuth (tanpa gerbang) ditolak, bukan dilayani', async () => {
     const { default: Fastify } = await import('fastify');
     const { default: cookie } = await import('@fastify/cookie');

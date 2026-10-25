@@ -55,7 +55,8 @@ export async function healthView() {
   const body = h('div', { class: 'stack' }, render(await api('/api/system/status')));
   const timer = setInterval(async () => {
     try {
-      body.replaceChildren(...render(await api('/api/system/status')));
+      // Auto-refresh bukan aktivitas pengguna: tidak memperpanjang idle timeout sesi.
+      body.replaceChildren(...render(await api('/api/system/status', { background: true })));
     } catch {
       // Error ditampilkan oleh indikator koneksi di topbar.
     }

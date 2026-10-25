@@ -21,10 +21,13 @@ const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 /**
  * @param {string} path
- * @param {{ method?: string, body?: unknown, redirectOn401?: boolean, signal?: AbortSignal }} [options]
+ * @param {{ method?: string, body?: unknown, redirectOn401?: boolean, signal?: AbortSignal, background?: boolean }} [options]
+ *   `background`: polling otomatis (GET) yang tidak dihitung sebagai aktivitas pengguna,
+ *   sehingga tidak memperpanjang idle timeout sesi.
  */
-export async function api(path, { method = 'GET', body, redirectOn401 = true, signal } = {}) {
+export async function api(path, { method = 'GET', body, redirectOn401 = true, signal, background = false } = {}) {
   const headers = { Accept: 'application/json' };
+  if (background && method === 'GET') headers['X-LR-Background'] = '1';
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (UNSAFE.has(method) && csrfToken) headers['X-CSRF-Token'] = csrfToken;
 
