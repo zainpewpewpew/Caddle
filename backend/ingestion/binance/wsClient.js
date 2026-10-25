@@ -11,8 +11,9 @@ import { TIMEFRAMES, expectedCloseTime, isAlignedOpenTime } from '../../market/c
 
 // Sejak upgrade WebSocket USDⓈ-M (pemberitahuan Binance 2026-03-06; URL lama `/ws` & `/stream` dimatikan
 // setelah 2026-04-23) stream dibagi per kategori: `/public`, `/market`, `/private`. Kline termasuk kategori
-// "market". Koneksi tanpa path ter-rute hanya menerima data "public" (depth/bookTicker), sehingga stream kline
-// di URL lama tersambung tetapi tidak pernah mengirim pesan. Satu koneksi tidak boleh mencampur kategori.
+// "market". Menurut dokumentasi Binance, koneksi tanpa path ter-rute hanya menerima data "public"
+// (depth/bookTicker), jadi stream kline di URL lama tidak pernah mengirim pesan (laporan pengguna lain: socket
+// terbuka tetapi diam). Satu koneksi tidak boleh mencampur kategori.
 export const KLINE_WS_ROUTE = '/market';
 export const BINANCE_WS_BASE_URL = `wss://fstream.binance.com${KLINE_WS_ROUTE}`;
 export const ALLOWED_WS_HOSTS = Object.freeze(['fstream.binance.com']);
@@ -66,7 +67,7 @@ function assertBaseUrl(baseUrl) {
   if (!ALLOWED_WS_HOSTS.includes(url.hostname) || url.port || url.username || url.password) {
     throw new TypeError(`Host WebSocket di luar allowlist: ${url.hostname}`);
   }
-  // Fail closed: URL tanpa rute (atau rute lain) tersambung tetapi tidak pernah mengirim kline.
+  // Fail closed: URL tanpa rute (atau rute lain) tidak pernah mengirim kline.
   if (url.pathname.replace(/\/$/, '') !== KLINE_WS_ROUTE || url.search || url.hash) {
     throw new TypeError(`baseUrl WebSocket wajib memakai path ter-rute ${KLINE_WS_ROUTE} (kategori stream kline), tanpa query/fragment`);
   }

@@ -128,8 +128,8 @@ createKlineStream({ WebSocketImpl = globalThis.WebSocket, baseUrl = 'wss://fstre
   // diputar sebelum batas 24 jam Binance, dianggap stale bila tidak ada pesan selama staleMs.
   // URL: `${baseUrl}/stream?streams=a/b` → wss://fstream.binance.com/market/stream?streams=btcusdt@kline_5m/…
   // Sejak upgrade WebSocket USDⓈ-M Binance (pemberitahuan 2026-03-06; URL lama /ws & /stream dimatikan setelah
-  // 2026-04-23) stream dibagi ke rute /public, /market, /private; kline = /market. URL tanpa rute tersambung tetapi
-  // tidak mengirim kline, jadi baseUrl selain rute /market (tanpa query/fragment) ditolak saat konstruksi (fail closed).
+  // 2026-04-23) stream dibagi ke rute /public, /market, /private; kline = /market. URL tanpa rute tidak mengirim
+  // kline, jadi baseUrl selain rute /market (tanpa query/fragment) ditolak saat konstruksi (fail closed).
 KLINE_WS_ROUTE = '/market'
 
 CLOSE_MARGIN_MS = 2_000      // margin penutupan: isClosed REST, rencana backfill/gap/sweep, toleransi jam WS (§3)
