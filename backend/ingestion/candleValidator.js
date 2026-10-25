@@ -2,6 +2,7 @@
 // Hanya candle yang lolos validasi (dan tertutup) yang boleh masuk tabel kanonik `candles`.
 
 import { TIMEFRAMES, TIMEFRAME_MS, expectedCloseTime, isAlignedOpenTime } from '../market/contracts.js';
+import { CLOSE_MARGIN_MS } from './backfill.js';
 
 const SYMBOL_PATTERN = /^[A-Z0-9]{1,32}$/;
 const SOURCES = Object.freeze(['rest', 'ws']);
@@ -31,15 +32,34 @@ function assertTimeframe(timeframe) {
 }
 
 /**
+ * Toleransi jam untuk kline WebSocket (ms) = margin penutupan (CLOSE_MARGIN_MS). Untuk `source: 'ws'`,
+ * `isClosed` berasal dari bendera bursa (k.x === true), bukan tebakan jam worker; jam worker (jam lokal +
+ * offset serverClock) dapat tertinggal dari Binance sebesar galat sinkronisasi (≤ RTT/2) + drift, sementara
+ * kline final tiba hanya puluhan ms setelah closeTime. Kline final WS karena itu sah bila
+ * `now > closeTime − toleransi`, dan openTime WS baru dianggap "di masa depan" bila `openTime > now + toleransi`.
+ * Batasnya sama dengan margin REST: REST hanya menganggap tertutup candle yang tutup > margin sebelum request,
+ * WS tidak diveto jam yang selisihnya ≤ margin. Selisih lebih besar → jam dianggap rusak dan candle ditolak.
+ * Candle REST tetap ketat (`now > closeTime`) karena isClosed-nya dihitung dari jam worker sendiri.
+ */
+export const WS_CLOCK_TOLERANCE_MS = CLOSE_MARGIN_MS;
+
+/**
  * Memvalidasi satu candle kanonik. Seluruh pelanggaran dikumpulkan.
  * Candle bertanda `isClosed: true` hanya sah bila `now > closeTime`; openTime tidak boleh di masa depan.
+ * Untuk `source: 'ws'` keduanya dinilai dengan toleransi `wsClockToleranceMs` (lihat WS_CLOCK_TOLERANCE_MS).
  * @param {import('../market/contracts.js').Candle} candle
- * @param {{ now: number }} options  waktu sekarang (epoch ms), mis. waktu server Binance
+ * @param {{ now: number, wsClockToleranceMs?: number }} options  now = waktu sekarang (epoch ms), mis. waktu
+ *   server Binance; wsClockToleranceMs = bilangan bulat 0..60000 (default WS_CLOCK_TOLERANCE_MS)
  * @returns {{ ok: boolean, errors: string[] }}
  */
-export function validateCandle(candle, { now } = {}) {
+export function validateCandle(candle, { now, wsClockToleranceMs = WS_CLOCK_TOLERANCE_MS } = {}) {
   assertTime(now, 'now');
+  if (!Number.isInteger(wsClockToleranceMs) || wsClockToleranceMs < 0 || wsClockToleranceMs > 60_000) {
+    throw new TypeError('wsClockToleranceMs harus bilangan bulat 0..60000');
+  }
   if (!isObject(candle)) return { ok: false, errors: ['candle harus berupa objek'] };
+  // Kline WS: bendera tertutup dari bursa; jam worker hanya memveto bila selisihnya melebihi toleransi.
+  const tolerance = candle.source === 'ws' ? wsClockToleranceMs : 0;
 
   const errors = [];
   const { symbol, timeframe, openTime, closeTime } = candle;
@@ -54,7 +74,7 @@ export function validateCandle(candle, { now } = {}) {
     errors.push('openTime harus bilangan bulat ms ≥ 0');
   } else {
     if (timeframeOk && !isAlignedOpenTime(openTime, timeframe)) errors.push('openTime tidak sejajar batas interval');
-    if (openTime > now) errors.push('openTime di masa depan');
+    if (openTime > now + tolerance) errors.push('openTime di masa depan');
   }
   if (openTimeOk && timeframeOk && closeTime !== expectedCloseTime(openTime, timeframe)) {
     errors.push('closeTime harus openTime + interval - 1');
@@ -88,7 +108,7 @@ export function validateCandle(candle, { now } = {}) {
 
   if (typeof candle.isClosed !== 'boolean') {
     errors.push('isClosed harus boolean');
-  } else if (candle.isClosed && !(typeof closeTime === 'number' && now > closeTime)) {
+  } else if (candle.isClosed && !(typeof closeTime === 'number' && now + tolerance > closeTime)) {
     errors.push('candle ditandai tertutup sebelum closeTime terlewati');
   }
 

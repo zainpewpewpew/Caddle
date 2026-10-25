@@ -14,6 +14,7 @@ export const MAX_KLINES_PER_REQUEST = 1500;
  * closeTime < (waktu server saat request DIMULAI − margin), dan rencana backfill/gap/sweep berakhir di candle
  * tertutup terakhir pada (waktu server − margin) — snapshot candle yang masih berjalan tidak pernah tersimpan
  * sebagai tertutup; candle terbaru diserahkan ke WS (kline final x=true) atau sweep berikutnya.
+ * Margin yang sama menjadi toleransi jam kline final WS di validator (candleValidator.WS_CLOCK_TOLERANCE_MS).
  */
 export const CLOSE_MARGIN_MS = 2_000;
 

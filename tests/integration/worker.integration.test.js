@@ -1130,7 +1130,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(problems(b.logs)).toEqual([]);
   });
 
-  it('INT-WRK-008 kline final tiba sebelum jam lokal melewati closeTime (clock skew) → ditolak validasi, dicatat, lalu dipulihkan backfill gap tanpa mengubah sinyal', async () => {
+  it('INT-WRK-008 kline final tiba 200 ms sebelum closeTime menurut jam worker (jam tertinggal ≤ toleransi WS 2 d) → bendera x bursa dipercaya: langsung disimpan & dianalisis "live", tanpa error validasi dan tanpa backfill gap', async () => {
     const skewed = (c) => c.symbol === SA && c.timeframe === '5m' && c.openTime === at5m(61);
     const { scanner, repos, binance, driver, analysed, alerts, logs } = await setup({
       delayOf: (c) => (skewed(c) ? -200 : CLOSE_DELAY_MS),
@@ -1138,10 +1138,32 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     await scanner.start();
     await driver.runUntil(END);
 
+    expect((await repos.ingestion.getStatus()).recentErrors).toEqual([]);
+    expect(binance.klineCalls()).toHaveLength(6); // hanya bootstrap
+    const series = analysed.filter((a) => a.symbol === SA && a.timeframe === '5m');
+    expect(series.map((a) => [a.reason, a.candles.map((c) => c.openTime)])).toEqual(range(BOOT, LAST).map((i) => ['live', [at5m(i)]]));
+    expect(await storedSeries(repos, SA, '5m')).toEqual(expectedSeries(SA, '5m', [[0, BOOT - 1, 'rest'], [BOOT, LAST, 'ws']]));
+
+    const reference = referenceReplay(SA, LIQ_SA);
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
+    expect(scanner.status()).toMatchObject({ gaps: 0, errors: 0 });
+    expect(problems(logs)).toEqual([]);
+  });
+
+  it('INT-WRK-023 kline final tiba 2,5 d sebelum closeTime menurut jam worker (melebihi toleransi WS 2 d — jam rusak) → ditolak validasi, dicatat, lalu dipulihkan backfill gap tanpa mengubah sinyal', async () => {
+    const skewed = (c) => c.symbol === SA && c.timeframe === '5m' && c.openTime === at5m(61);
+    const { scanner, repos, binance, driver, analysed, alerts, logs } = await setup({
+      delayOf: (c) => (skewed(c) ? -2_500 : CLOSE_DELAY_MS),
+    });
+    await scanner.start();
+    await driver.runUntil(END);
+
     expect((await repos.ingestion.getStatus()).recentErrors).toEqual([{
-      id: expect.any(Number), at: at5m(62) - 200, source: 'validation',
+      id: expect.any(Number), at: at5m(62) - 2_500, source: 'validation',
       message: `${SA} 5m: 1 candle ditolak: candle ditandai tertutup sebelum closeTime terlewati`,
     }]);
+    // Kline final #62 memicu gap: REST mengambil #61 saja (#62 baru tutup 0,5 d < margin → salinan WS).
     expect(binance.klineCalls().slice(6)).toEqual([klineParams(SA, '5m', at5m(61), 1)]);
     const series = analysed.filter((a) => a.symbol === SA && a.timeframe === '5m');
     expect(series.map((a) => [a.reason, a.candles.map((c) => c.openTime)])).toEqual([

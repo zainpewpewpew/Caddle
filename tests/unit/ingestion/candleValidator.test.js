@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  assessFreshness, floorToInterval, normalizeBatch, validateCandle,
+  WS_CLOCK_TOLERANCE_MS, assessFreshness, floorToInterval, normalizeBatch, validateCandle,
 } from '../../../backend/ingestion/candleValidator.js';
 import { TIMEFRAMES, TIMEFRAME_MS } from '../../../backend/market/contracts.js';
 
@@ -168,6 +168,31 @@ describe('validasi candle', () => {
 
   it('NEG-CVL-016 validateCandle tanpa opsi → TypeError', () => {
     expect(() => validateCandle(candle())).toThrow(TypeError);
+  });
+
+  it('EDGE-CVL-009 kline WS tertutup (bendera x bursa) dengan jam worker tertinggal ≤ 2 d dari closeTime diterima; > 2 d ditolak; candle REST tetap ketat (now > closeTime)', () => {
+    const ws = candle({ source: 'ws' });
+    expect(check(ws, ws.closeTime - 300).ok).toBe(true);
+    expect(check(ws, ws.closeTime - 1_999).ok).toBe(true);
+    const beyond = check(ws, ws.closeTime - 2_000);
+    expect(beyond.ok).toBe(false);
+    expect(beyond.errors.join('|')).toMatch(/ditandai tertutup sebelum closeTime/);
+    const rest = candle({ source: 'rest' });
+    expect(check(rest, rest.closeTime - 300).errors.join('|')).toMatch(/ditandai tertutup sebelum closeTime/);
+    expect(check(rest, rest.closeTime).ok).toBe(false);
+    // Opsi wsClockToleranceMs: 0 → WS seketat REST; nilai tidak valid → TypeError.
+    expect(validateCandle(ws, { now: ws.closeTime - 300, wsClockToleranceMs: 0 }).ok).toBe(false);
+    expect(WS_CLOCK_TOLERANCE_MS).toBe(2_000);
+    for (const wsClockToleranceMs of [-1, 0.5, 60_001, '2000']) {
+      expect(() => validateCandle(ws, { now: NOW, wsClockToleranceMs })).toThrow(TypeError);
+    }
+  });
+
+  it('EDGE-CVL-010 tick provisional WS pertama dengan jam worker tertinggal ≤ 2 d dari openTime tidak dianggap "openTime di masa depan"; REST tetap ketat', () => {
+    const tick = candle({ source: 'ws', isClosed: false });
+    expect(check(tick, tick.openTime - 1_500).ok).toBe(true);
+    expect(check(tick, tick.openTime - 2_001).errors.join('|')).toMatch(/openTime di masa depan/);
+    expect(check(candle({ source: 'rest', isClosed: false }), tick.openTime - 1).errors.join('|')).toMatch(/openTime di masa depan/);
   });
 
   it('EDGE-CVL-001 batas tertutup: now = closeTime + 1 diterima', () => {
