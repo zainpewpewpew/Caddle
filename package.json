@@ -14,6 +14,7 @@
     "worker": "node --env-file-if-exists=.env worker/index.js",
     "migrate": "node --env-file-if-exists=.env scripts/migrate.js",
     "user:create": "node --env-file-if-exists=.env scripts/create-user.js",
+    "user:password": "node --env-file-if-exists=.env scripts/change-password.js",
     "lint": "eslint .",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",

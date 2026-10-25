@@ -390,7 +390,42 @@ selain itu        → { symbol, status: 'ok' | 'insufficient_data', timeframe: '
   // Overview menampilkan trend null sebagai "Trend tidak tersedia" bernada peringatan, tidak pernah badge NEUTRAL.
 ```
 
-## 10. Penyimpangan dari draf awal
+## 10. Administrasi pengguna — `backend/users/`
+
+Dipanggil oleh CLI (`scripts/create-user.js`, `scripts/change-password.js`) dan oleh entry point server (`backend/app/server.js`, setelah `buildApp` menjalankan migrasi). `buildApp` sendiri tidak pernah membuat pengguna, sehingga harness tes & E2E tidak terpengaruh. Kegagalan validasi → `UserAdminError` (pesan Bahasa Indonesia, aman ditampilkan di CLI).
+
+```
+// backend/users/userAdmin.js
+createUser({ users, audit, hasher, maxUsers, clock }, { username, password, role, via = 'cli' }) → id
+  // username ^[A-Za-z0-9_.-]{3,32}$, role ∈ ROLES ('admin'|'analyst'), checkPasswordPolicy, username unik (NOCASE),
+  // count < maxUsers; hash Argon2id; audit user.create success { role, via }  (via: 'cli' | 'default')
+changePassword({ users, sessions, audit, hasher, clock }, { username, password, via = 'cli' })
+  → { userId, revokedSessions }
+  // Pengguna tidak dikenal → 'Pengguna tidak ditemukan'; checkPasswordPolicy (konteks username tersimpan);
+  // sama dengan kata sandi saat ini → ditolak. Sukses: users.updatePassword lalu
+  // sessions.revokeAllForUser(userId, { reason: 'password_change' }) — SEMUA sesi pengguna itu.
+  // Audit user.password_change: success { via, revokedSessions } | failure { reason: 'unknown_user'|'policy'|'unchanged', via }.
+  // Kata sandi tidak pernah masuk audit.
+
+// backend/users/defaultUser.js
+DEFAULT_CREDENTIALS = { username: 'admin', password: 'alphalens-demo', role: 'admin' }   // frozen, lolos checkPasswordPolicy
+isLoopbackHost(host) → boolean            // hanya '127.0.0.1', '::1', 'localhost' (trim, tanpa beda huruf)
+exposureOf(config) → null | { reason, detail }   // null = hanya lokal; urutan cek & reason:
+  // 'production' (NODE_ENV) → 'non_loopback_host' (HOST) → 'non_loopback_origin' (hostname APP_ORIGIN) → 'behind_proxy' (TRUST_PROXY)
+ensureDefaultUser({ users, audit, hasher, maxUsers, clock,
+                    config: { nodeEnv, host, appOrigin, trustProxy, defaultUser }, log: { warn } })
+  → { created: true, id }
+  | { created: false, reason: 'disabled'|'not_development'|'users_exist'|'non_loopback_host'|'non_loopback_origin'|'behind_proxy' }
+  // Urutan: (1) exposureOf ≠ null → DefaultUserError bila 'admin' aktif & masih berkata sandi default (server.js exit 1);
+  // (2) !defaultUser → disabled; (3) nodeEnv ≠ development → not_development (+ warn);
+  // (4) users.count() > 0 → users_exist (tanpa menyentuh akun); (5) exposureOf ≠ null → reason-nya (+ warn);
+  // (6) createUser(..., via: 'default') + satu log.warn berisi username, kata sandi, dan cara menggantinya.
+  // Idempoten lintas restart.
+```
+
+`config.defaultUser` (`loadConfig`): `DEFAULT_USER` kosong → `nodeEnv === 'development'`; `'true'`/`'false'` eksplisit; nilai lain → `ConfigError`; `true` dengan `NODE_ENV=production` → `ConfigError`.
+
+## 11. Penyimpangan dari draf awal
 
 | Draf | Implementasi | Alasan |
 |---|---|---|

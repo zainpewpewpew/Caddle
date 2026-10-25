@@ -83,6 +83,20 @@ function parseOrigin(raw) {
 }
 
 /**
+ * DEFAULT_USER: akun default prototipe lokal (lihat backend/users/defaultUser.js).
+ * Kosong → aktif hanya di development. `true` di produksi ditolak (fail fast) agar kredensial
+ * yang terdokumentasi publik tidak pernah dibuat di server sungguhan.
+ */
+function parseDefaultUser(raw, nodeEnv) {
+  if (raw === undefined) return nodeEnv === 'development';
+  const enabled = parseBoolean('DEFAULT_USER', raw);
+  if (enabled && nodeEnv === 'production') {
+    throw new ConfigError('DEFAULT_USER=true tidak diizinkan di produksi; buat pengguna dengan npm run user:create');
+  }
+  return enabled;
+}
+
+/**
  * Membaca dan memvalidasi konfigurasi.
  * @param {Record<string, string | undefined>} env
  */
@@ -138,5 +152,6 @@ export function loadConfig(env = process.env) {
       lockMs: parseInteger('ACCOUNT_LOCK_MINUTES', read('ACCOUNT_LOCK_MINUTES'), { min: 1, max: 1440 }) * 60_000,
     }),
     maxUsers: parseInteger('MAX_USERS', read('MAX_USERS'), { min: 1, max: 10 }),
+    defaultUser: parseDefaultUser(read('DEFAULT_USER'), nodeEnv),
   });
 }
