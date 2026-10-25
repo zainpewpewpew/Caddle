@@ -1,6 +1,6 @@
 // Tes integrasi end-to-end worker Long Radar.
 //
-// Modul ASLI dirakit seperti worker/index.js: SQLite (:memory:) + migrasi + repositori, klien REST
+// Modul ASLI dirakit oleh worker/assemble.js (perakitan yang sama dengan worker/index.js): SQLite (:memory:) + migrasi + repositori, klien REST
 // Binance, klien WebSocket kline, discovery simbol, scanner, dan pipeline analisis (pola → konteks
 // HTF → skor → state machine → repositori sinyal). Yang dipalsukan HANYA jaringan:
 // - `fetch` palsu melayani bentuk JSON REST Binance USDT-M Futures (/fapi/v1/time, exchangeInfo,
@@ -15,17 +15,13 @@
 // Acuan hasil sinyal adalah replay murni `analyzeAt` atas candle sintetis yang sama ("live = replay").
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { ANALYSIS_LOOKBACK, analyzeAt, createAnalysisPipeline } from '../../backend/analysis/pipeline.js';
+import { ANALYSIS_LOOKBACK, analyzeAt } from '../../backend/analysis/pipeline.js';
 import { openDatabase } from '../../backend/database/connection.js';
 import { migrate } from '../../backend/database/migrate.js';
-import { createRepositories } from '../../backend/database/repositories/index.js';
-import { createBinanceRestClient } from '../../backend/ingestion/binance/restClient.js';
 import { createKlineStream } from '../../backend/ingestion/binance/wsClient.js';
-import { createServerClock } from '../../backend/ingestion/serverClock.js';
-import { discoverSymbols } from '../../backend/ingestion/symbolDiscovery.js';
 import { HIGHER_TIMEFRAMES, TIMEFRAME_MS } from '../../backend/market/contracts.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY, normalizeScannerSettings } from '../../backend/settings/scannerSettings.js';
-import { createScanner } from '../../worker/scanner.js';
+import { assembleWorker } from '../../worker/assemble.js';
 import { downtrendCandles, silentAccumulationCandles, zigzag } from '../fixtures/candles/scenarios.js';
 import { SYNTHETIC_START, generateCandles, withPriceScale } from '../fixtures/candles/synthetic.js';
 
@@ -425,7 +421,7 @@ function createMarketDriver({ timers, hub, from, market = MARKET, skip = () => f
   };
 }
 
-// ---------- perakitan worker (cermin worker/index.js) ----------
+// ---------- perakitan worker (worker/assemble.js, dipakai juga oleh worker/index.js) ----------
 
 const cleanups = [];
 afterEach(async () => {
@@ -444,50 +440,22 @@ const unexpectedSleep = async (ms) => { throw new Error(`klien REST menunggu ${m
 
 async function createWorker({ timers, db, binance, settings, settleMs = 0, restSleep = unexpectedSleep, scannerOptions = {} }) {
   const { logger, entries: logs } = createLogger();
-  // Sama dengan worker/index.js: jam tersinkron server (offset terukur dari /fapi/v1/time) dipakai
-  // repositori, klien REST, dan scanner; jam lokal = jam palsu.
-  const serverClock = createServerClock({ getServerTime: () => rest.getServerTime(), clock: timers.clock, logger });
-  const repos = createRepositories(db, { clock: serverClock.now });
-  if (settings && !(await repos.settings.get(SCANNER_SETTINGS_KEY))) {
-    const saved = await repos.settings.save(SCANNER_SETTINGS_KEY, normalizeScannerSettings(settings), {
-      expectedVersion: 0, userId: null, now: timers.clock(),
-    });
-    if (!saved) throw new Error('gagal menyimpan pengaturan scanner');
-  }
-  // Sama dengan worker/index.js: pengaturan dibaca dari repositori settings, default bila belum ada.
-  const getSettings = async () => (await repos.settings.get(SCANNER_SETTINGS_KEY))?.value ?? DEFAULT_SCANNER_SETTINGS;
   const hub = createFakeWebSocketHub();
-  const rest = createBinanceRestClient({
-    fetch: binance.fetch,
-    clock: serverClock.now,
-    sleep: restSleep,
-    logger,
-    random: () => 0.5,
-  });
-
-  let scanner = null;
   const alerts = [];
   const analysed = [];
   const saves = [];
   const settles = [];
   const stopped = [];
-  const pipeline = createAnalysisPipeline({
-    repos,
-    // Repositori sinyal asli; save() hanya diamati agar snapshot per candle dapat dibandingkan dengan replay.
-    signals: { ...repos.signals, save: async (args) => { saves.push(args); return repos.signals.save(args); } },
-    getLiquidity: (symbol) => scanner?.liquidityOf(symbol),
-    settleMs,
-    sleep: (ms) => new Promise((resolve) => {
-      settles.push({ at: timers.clock(), ms });
-      timers.setTimer(resolve, ms);
-    }),
+  // Perakitan PRODUKSI (worker/assemble.js, sama dengan worker/index.js): jam server (offset terukur dari
+  // /fapi/v1/time) dipakai repositori, klien REST, dan scanner. Yang diinjeksi hanya I/O: jam lokal palsu,
+  // timer palsu, fetch & WebSocket palsu, jitter deterministik.
+  const { repos, rest, pipeline, scanner, serverClock } = assembleWorker({
+    db,
     logger,
-    onAlert: (alert) => alerts.push(alert),
-  });
-  await pipeline.ensureDefinitions();
-
-  scanner = createScanner({
-    rest,
+    clock: timers.clock,
+    fetch: binance.fetch,
+    restSleep,
+    restRandom: () => 0.5,
     streamFactory: (opts) => createKlineStream({
       ...opts,
       WebSocketImpl: hub.FakeWebSocket,
@@ -496,25 +464,31 @@ async function createWorker({ timers, db, binance, settings, settleMs = 0, restS
       clearTimer: timers.clearTimer,
       random: () => 0.5,
     }),
-    repos,
-    getSettings,
-    discoverSymbols,
-    onClosedCandles: async (series) => {
-      const result = await pipeline.onClosedCandles(series);
-      analysed.push({ ...series, result });
-    },
-    // Sama dengan worker/index.js: simbol yang berhenti dipantau → sinyal terbukanya ditutup.
-    onMonitoringStopped: async (e) => {
-      stopped.push(e);
-      await pipeline.closeSymbol(e);
-    },
-    clock: serverClock.now,
-    serverClock,
-    logger,
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
-    options: scannerOptions,
+    scannerOptions,
+    settleMs,
+    pipelineSleep: (ms) => new Promise((resolve) => {
+      settles.push({ at: timers.clock(), ms });
+      timers.setTimer(resolve, ms);
+    }),
+    onAlert: (alert) => alerts.push(alert),
+    onAnalysed: ({ result, ...series }) => analysed.push({ ...series, result }),
+    onMonitoringStopped: (e) => stopped.push(e),
   });
+  // Repositori sinyal asli; save() hanya diamati agar snapshot per candle dapat dibandingkan dengan replay.
+  const save = repos.signals.save;
+  repos.signals.save = async (args) => {
+    saves.push(args);
+    return save.call(repos.signals, args);
+  };
+  if (settings && !(await repos.settings.get(SCANNER_SETTINGS_KEY))) {
+    const saved = await repos.settings.save(SCANNER_SETTINGS_KEY, normalizeScannerSettings(settings), {
+      expectedVersion: 0, userId: null, now: timers.clock(),
+    });
+    if (!saved) throw new Error('gagal menyimpan pengaturan scanner');
+  }
+  await pipeline.ensureDefinitions();
   cleanups.push(() => scanner.stop());
   return { repos, rest, hub, scanner, pipeline, alerts, analysed, saves, settles, logs, serverClock, stopped };
 }
@@ -1176,6 +1150,26 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(serverClock.offsetMs()).toBe(300);
     expect(scanner.status().clockOffsetMs).toBe(300);
     expect(problems(logs)).toEqual(['sinkronisasi jam server gagal, offset terakhir dipakai', 'galat scanner']);
+  });
+
+  it('INT-WRK-017 perakitan produksi (worker/assemble.js), jam server 4 m 54 d di DEPAN jam lokal → candle 5m #48 yang sudah tertutup menurut server (belum menurut jam lokal) ikut di-bootstrap: isClosed REST & validasi repositori memakai serverClock.now; candle #49 yang masih berjalan ditolak repositori', async () => {
+    const SKEW = M5 - 6_000;
+    const { scanner, repos, binance, serverClock, logs } = await setup({ serverSkewMs: SKEW });
+    await scanner.start();
+    expect(serverClock.offsetMs()).toBe(SKEW);
+    // Jam lokal START = T0 + 48×5m + 7 d (candle #48 belum tertutup); jam server = T0 + 49×5m + 1 d (sudah).
+    expect(serverClock.now()).toBe(at5m(BOOT + 1) + 1_000);
+    for (const symbol of [SA, DOWN]) {
+      expect(await storedSeries(repos, symbol, '5m')).toEqual(expectedSeries(symbol, '5m', [[0, BOOT, 'rest']]));
+    }
+    expect((await repos.ingestion.getStatus()).recentErrors).toEqual([]);
+    expect(binance.klineCalls()).toHaveLength(6);
+
+    // Repositori candle produksi memvalidasi "tertutup" dengan jam server: candle #49 ditolak.
+    const running = { ...MARKET.get(seriesKey(SA, '5m'))[BOOT + 1], isClosed: true, source: 'ws' };
+    const result = await repos.candles.upsertClosed([running]);
+    expect(result.rejected).toEqual([{ candle: running, errors: ['candle ditandai tertutup sebelum closeTime terlewati'] }]);
+    expect(problems(logs)).toEqual([]);
   });
 
   it('INT-WRK-009 histori panjang: bootstrap 500 candle penuh, konteks HTF bertrend nyata; candle 15m/1h yang tiba SETELAH candle 5m ditunggu (settleMs seperti worker/index.js) → snapshot per candle = replay murni', async () => {

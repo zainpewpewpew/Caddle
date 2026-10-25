@@ -1,19 +1,12 @@
 // Entry point proses worker scanner (Milestone 2–3): `npm run worker`.
-// Merakit dependensi nyata (REST/WS Binance, SQLite, repositori, pipeline analisis SA/PVA),
-// menjalankan scanner, dan menangani graceful shutdown (SIGTERM/SIGINT).
+// Membuka SQLite + migrasi, merakit dependensi nyata lewat worker/assemble.js (REST/WS Binance, jam
+// server, repositori, pipeline analisis SA/PVA), menjalankan scanner, dan menangani graceful shutdown (SIGTERM/SIGINT).
 // Log terstruktur JSON per baris ke stdout.
 
-import { createAnalysisPipeline } from '../backend/analysis/pipeline.js';
 import { ConfigError, loadConfig } from '../backend/app/config.js';
 import { openDatabase } from '../backend/database/connection.js';
 import { migrate } from '../backend/database/migrate.js';
-import { createRepositories } from '../backend/database/repositories/index.js';
-import { createBinanceRestClient } from '../backend/ingestion/binance/restClient.js';
-import { createKlineStream } from '../backend/ingestion/binance/wsClient.js';
-import { createServerClock } from '../backend/ingestion/serverClock.js';
-import { discoverSymbols } from '../backend/ingestion/symbolDiscovery.js';
-import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY } from '../backend/settings/scannerSettings.js';
-import { createScanner } from './scanner.js';
+import { assembleWorker } from './assemble.js';
 
 const LEVELS = Object.freeze({ trace: 10, debug: 20, info: 30, warn: 40, error: 50, fatal: 60, silent: Infinity });
 const RESERVED = new Set(['time', 'level', 'msg']);
@@ -72,52 +65,18 @@ async function main() {
   const { applied, current } = migrate(db);
   logger.info({ applied, schemaVersion: current }, 'migrasi database selesai');
 
-  // Jam tersinkron waktu server Binance untuk REST, repositori (validasi "tertutup"), dan scanner.
-  // Klien REST butuh jam saat dibuat, jam server butuh klien REST untuk sinkronisasi: keduanya saling
-  // merujuk lewat fungsi yang baru dipanggil kemudian, jadi tidak ada dependensi melingkar saat konstruksi.
-  const serverClock = createServerClock({ getServerTime: () => rest.getServerTime(), clock: Date.now, logger });
-  const repos = createRepositories(db, { clock: serverClock.now });
-
-  const rest = createBinanceRestClient({
-    clock: serverClock.now,
+  // Perakitan jam server, repositori, REST, pipeline, dan scanner ada di worker/assemble.js (tanpa efek
+  // samping) agar tes integrasi menguji perakitan yang sama.
+  const { pipeline, scanner } = assembleWorker({
+    db,
     logger,
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  });
-
-  const getSettings = async () => (await repos.settings.get(SCANNER_SETTINGS_KEY))?.value ?? DEFAULT_SCANNER_SETTINGS;
-
-  // Pipeline analisis per candle tertutup: pola → konteks multi-timeframe → skor → state machine → SQLite.
-  // settleMs: stream per timeframe diproses paralel; beri jeda singkat agar candle 15m/1h yang tutup
-  // bersamaan sudah tersimpan sebelum candle 5m dievaluasi (konteks live = replay).
-  let scanner = null;
-  const pipeline = createAnalysisPipeline({
-    repos,
-    signals: repos.signals,
-    getLiquidity: (symbol) => scanner?.liquidityOf(symbol),
-    settleMs: 3_000,
-    logger,
+    clock: Date.now,
     onAlert: (alert) => logger.info({ symbol: alert.symbol, timeframe: alert.timeframe, state: alert.state, reason: alert.event?.reason }, 'sinyal baru / naik tahap'),
-  });
-  await pipeline.ensureDefinitions();
-
-  scanner = createScanner({
-    rest,
-    streamFactory: (opts) => createKlineStream(opts),
-    repos,
-    getSettings,
-    discoverSymbols,
-    onClosedCandles: async ({ symbol, timeframe, candles, reason }) => {
-      const result = await pipeline.onClosedCandles({ symbol, timeframe, candles, reason });
+    onAnalysed: ({ symbol, timeframe, reason, candles, result }) => {
       logger.debug({ symbol, timeframe, reason, count: candles.length, ...result }, 'candle tertutup dianalisis');
     },
-    // Simbol delisted / keluar dari set pantauan tidak menerima candle lagi → sinyal terbukanya ditutup (EXPIRED).
-    onMonitoringStopped: async ({ symbol, timeframes, reason, at }) => {
-      await pipeline.closeSymbol({ symbol, timeframes, reason, at });
-    },
-    clock: serverClock.now,
-    serverClock,
-    logger,
   });
+  await pipeline.ensureDefinitions();
 
   const statusTimer = setInterval(() => logger.info(scanner.status(), 'status scanner'), STATUS_LOG_INTERVAL_MS);
 

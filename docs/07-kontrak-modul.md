@@ -138,7 +138,20 @@ liquidityOf(symbol) → { quoteVolume24h, spreadBps, thresholds: { minQuoteVolum
     // dari discovery terakhir; thresholds = settings.liquidity yang dipakai discovery tersebut
 ```
 
-Entry point `worker/index.js` (`npm run worker`) merakit jam server, klien REST, stream, scanner, dan pipeline analisis (`onMonitoringStopped` → `pipeline.closeSymbol`); `serverClock.now` menjadi `clock` klien REST, repositori (`createRepositories(db, { clock })` — validasi "tertutup" candle), dan scanner. Heartbeat ditulis tiap 30 detik (memuat `clockOffsetMs`); `SIGINT`/`SIGTERM` → graceful shutdown.
+Entry point `worker/index.js` (`npm run worker`) membuka SQLite + migrasi, lalu merakit dependensi lewat `worker/assemble.js`; heartbeat ditulis tiap 30 detik (memuat `clockOffsetMs`); `SIGINT`/`SIGTERM` → graceful shutdown.
+
+```text
+assembleWorker({ db, logger, clock = Date.now /* jam lokal */, fetch?, restSleep?, restRandom?, streamFactory?,
+  setTimer?, clearTimer?, scannerOptions?, settleMs = WORKER_SETTLE_MS (3000), pipelineSleep?,
+  onAlert?, onAnalysed?, onMonitoringStopped? })
+  → { serverClock, repos, rest, pipeline, scanner, getSettings }
+  // Tanpa efek samping (tidak membuka DB, tidak memasang handler sinyal, tidak memulai timer/jaringan).
+  // Merakit jam server, klien REST, repositori, pipeline analisis, dan scanner (onMonitoringStopped →
+  // pipeline.closeSymbol); serverClock.now menjadi clock klien REST, repositori (createRepositories(db, { clock })
+  // — validasi "tertutup" candle), dan scanner. Pemanggil menjalankan `await pipeline.ensureDefinitions()`
+  // sebelum `scanner.start()`. Dipakai juga oleh tes integrasi worker sehingga perakitan produksi ikut teruji.
+  // onAnalysed / onMonitoringStopped hanya pengamat (log/tes).
+```
 
 ## 5. Indikator — `backend/indicators/`
 
@@ -262,6 +275,7 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 | Scanner tanpa info likuiditas | `liquidityOf(symbol)` | Risk flag `POOR_LIQUIDITY`/`WIDE_SPREAD` butuh data discovery |
 | Sinyal simbol yang delisted/berhenti dipantau tetap terbuka selamanya | `closeOpenForSymbol` + `pipeline.closeSymbol` + `onMonitoringStopped` scanner | Expiry hanya maju saat ada candle baru; tanpa penutupan eksplisit screener terus menampilkan sinyal basi |
 | `upsertFromExchange` → `{ inserted, updated, rejected }` (tak terbatas, diabaikan scanner) | `+ rejectedCount`, `rejected` dibatasi 50; scanner mencatatnya per discovery | Simbol yang tidak lolos pola (kontrak delivery) sebelumnya hilang tanpa jejak |
+| Perakitan worker hanya di `main()` `worker/index.js` (tes integrasi menyalin perakitannya) | `worker/assemble.js` → `assembleWorker` | Regresi perakitan (mis. repositori/REST kembali ke `Date.now`) tidak tertangkap tes |
 | Worker memakai jam lokal (`Date.now`) | `createServerClock` + sinkronisasi `/fapi/v1/time` tiap siklus scanner | Jam lokal yang lebih cepat membuat kline final WS ditolak ("belum tertutup"); yang lebih lambat dapat menganggap candle berjalan tertutup |
 | Risk flag likuiditas selalu dinilai dengan `DEFAULT_VIEW_PARAMS` | `liquidityOf` menyertakan `thresholds` dari `settings.liquidity`; `analyzeAt` menerima `params.view` | Batas pengguna (terutama mode manual) harus sama dengan batas yang ditampilkan di penjelasan; backtest tetap dapat memberi ambangnya sendiri |
 | `createSignalRepository(db)` | `+ { clock }`, `lastEventCandleTime` | Tes deterministik; titik awal replay yang persisten |
