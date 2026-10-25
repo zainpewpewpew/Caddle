@@ -21,6 +21,8 @@ import {
   zigzag,
 } from '../../fixtures/candles/scenarios.js';
 import { generateCandles } from '../../fixtures/candles/synthetic.js';
+import { confirmedAt, findSwings, trailingHigherLows } from '../../../backend/indicators/index.js';
+import { SWING_OPTIONS } from '../../../backend/patterns/conditions.js';
 
 // Semua candle berasal dari generator sintetis — bukan data pasar nyata.
 const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -95,17 +97,53 @@ describe('evaluatePatterns', () => {
     expect(read('conditions.js')).not.toMatch(/silentAccumulation|progressiveVolume/);
   });
 
-  it('UNIT-PEVL-004 anti lookahead: candle masa depan tidak mengubah evaluasi prefix', () => {
+  it('UNIT-PEVL-004 anti lookahead: anchor & higher low pada prefix k = swing low deret PENUH (dengan masa depan) yang confirmedIndex ≤ k−1', () => {
+    // Buffer invalidasi 0 → invalidationPrice = anchor struktur persis, sehingga swing yang dipakai
+    // detektor dapat dibandingkan dengan model acuan. Acuan dihitung dari deret penuh (termasuk
+    // candle masa depan yang mengubah swing di tepi prefix) lalu disaring confirmedAt(k − 1).
+    // Detektor yang memakai swing tepi yang belum terkonfirmasi (repaint) atau mengintip candle
+    // sesudah k akan berbeda dari acuan.
+    const opts = { sa: { invalidationBufferAtr: 0 }, pva: { invalidationBufferAtr: 0 } };
+    const windows = { SA: DEFAULT_SA_PARAMS.priceLookback, PVA: DEFAULT_PVA_PARAMS.subWindows * DEFAULT_PVA_PARAMS.subWindowLength };
+    const minK = Math.max(requiredCandles('SA', DEFAULT_SA_PARAMS), requiredCandles('PVA', DEFAULT_PVA_PARAMS));
+    const expectedStructure = (prefix, lows, window) => {
+      const last = prefix.length - 1;
+      const close = prefix[last].close;
+      const from = Math.max(0, last - window + 1);
+      const lastLow = lows.at(-1);
+      if (lastLow && lastLow.index >= from && close > lastLow.price) return { anchor: lastLow.price, higherLows: trailingHigherLows(lows) };
+      let idx = from;
+      for (let i = from + 1; i <= last; i += 1) if (prefix[i].low < prefix[idx].low) idx = i;
+      return { anchor: prefix[idx].low, higherLows: 0 };
+    };
     const base = bothPatternsCandles(1);
-    const crash = withFuture(base, 11, { bars: 30, drift: -0.01, volume: 5000, wick: 0.01 });
-    const rally = withFuture(base, 12, { bars: 30, drift: 0.01, volume: 200 });
-    for (let k = 1; k <= base.length; k += 1) {
-      const expected = evaluatePatterns(base.slice(0, k));
-      expect(evaluatePatterns(crash.slice(0, k)), `prefix ${k}`).toEqual(expected);
-      expect(evaluatePatterns(rally.slice(0, k)), `prefix ${k}`).toEqual(expected);
+    const futures = [
+      withFuture(base, 11, { bars: 30, drift: -0.01, volume: 5000, wick: 0.01 }),
+      withFuture(base, 12, { bars: 30, drift: 0.01, volume: 200 }),
+      withFuture(base, 13, { bars: 30, cycle: zigzag(2, 0.003, 2, 0.004), wick: 0.002, volume: 800 }),
+    ];
+    let checked = 0;
+    let peekDiffers = 0;
+    for (const full of futures) {
+      const swings = findSwings(full, SWING_OPTIONS);
+      for (let k = minK; k <= full.length; k += 1) {
+        const prefix = full.slice(0, k);
+        const r = evaluatePatterns(prefix, opts);
+        for (const p of [r.sa, r.pva]) {
+          const exp = expectedStructure(prefix, confirmedAt(swings, k - 1).lows, windows[p.pattern]);
+          const at = `${p.pattern} prefix ${k}`;
+          expect(p.conditions.find((c) => c.id === 'higherLows').value, at).toBe(exp.higherLows);
+          expect(p.invalidationPrice, at).toBe(exp.anchor < prefix.at(-1).close ? exp.anchor : null);
+          checked += 1;
+          // Kontrol: acuan yang mengintip `right` candle masa depan memberi anchor berbeda di sini.
+          const peekLows = swings.lows.filter((s) => s.index <= k - 1 && s.confirmedIndex <= k - 1 + SWING_OPTIONS.right);
+          if (expectedStructure(prefix, peekLows, windows[p.pattern]).anchor !== exp.anchor) peekDiffers += 1;
+        }
+      }
     }
-    // Kontrol: masa depan yang berbeda memang menghasilkan evaluasi berbeda di ujung deret.
-    expect(evaluatePatterns(crash)).not.toEqual(evaluatePatterns(rally));
+    expect(checked).toBe(futures.length * 2 * (base.length + 30 - minK + 1));
+    // Skenario memang peka lookahead: ada banyak indeks di mana swing yang belum terkonfirmasi mengubah anchor.
+    expect(peekDiffers).toBeGreaterThan(20);
   });
 
   it('UNIT-PEVL-005 deterministik: input sama → output identik (termasuk serialisasi)', () => {
