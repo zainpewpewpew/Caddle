@@ -74,11 +74,16 @@ export function analyzeAt({ symbol, timeframe, candlesByTimeframe, prev, liquidi
   return { evaluationTime, patterns, context, view, market, ...result };
 }
 
-/** Definisi pola berversi yang dipersistensi (pattern_definitions) — parameter efektif + metadata kondisi. */
-export function patternDefinitions(params = {}) {
+/**
+ * Definisi pola berversi yang dipersistensi (pattern_definitions) — parameter efektif + metadata kondisi.
+ * `maxWarmup` = jumlah candle yang benar-benar dimuat pemanggil (lookback pipeline); parameter yang
+ * warm-up-nya melebihi itu ditolak PatternParamsError alih-alih membuat pola diam-diam selalu insufficientData.
+ */
+export function patternDefinitions(params = {}, { maxWarmup } = {}) {
+  const options = maxWarmup === undefined ? undefined : { maxWarmup };
   return [
-    { key: 'SA', conditions: SA_CONDITIONS, params: resolveParams('SA', params.sa) },
-    { key: 'PVA', conditions: PVA_CONDITIONS, params: resolveParams('PVA', params.pva) },
+    { key: 'SA', conditions: SA_CONDITIONS, params: resolveParams('SA', params.sa, options) },
+    { key: 'PVA', conditions: PVA_CONDITIONS, params: resolveParams('PVA', params.pva, options) },
   ].map(({ key, conditions, params: p }) => ({
     key,
     version: PATTERN_VERSION,
@@ -125,7 +130,7 @@ export function createAnalysisPipeline({
   if (!Number.isInteger(maxReplay) || maxReplay < 1 || maxReplay > 5000) throw new RangeError('maxReplay harus 1..5000');
   if (!Number.isInteger(settleMs) || settleMs < 0 || settleMs > 30_000) throw new RangeError('settleMs harus 0..30000');
   if (!Number.isInteger(yieldEvery) || yieldEvery < 1 || yieldEvery > 5000) throw new RangeError('yieldEvery harus 1..5000');
-  const definitions = patternDefinitions(params);
+  const definitions = patternDefinitions(params, { maxWarmup: lookback });
   let definitionsReady = null;
   const queues = new Map();
   // openTime candle dasar terakhir yang dievaluasi per seri (cache dari kursor analisis persisten, diisi

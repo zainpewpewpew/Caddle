@@ -1177,10 +1177,11 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect((await b.repos.ingestion.getStatus()).lastRun).toMatchObject({ id: 3, startedAt: restartAt, symbols: 2, candles: 12, errors: 0 });
 
     await driverB.runUntil(END);
-    // Candle live pertama setelah restart me-replay dari event terakhir (62) — 63/64 sudah dievaluasi → no-op.
+    // Candle live pertama setelah restart me-replay dari kursor analisis (candle terakhir yang dievaluasi, 64):
+    // hanya 65..68 (tersimpan bootstrap saat restart) + 69 — candle 63/64 tidak dievaluasi ulang.
     const first = b.analysed.find((a) => a.symbol === SA && a.timeframe === '5m');
     expect(first).toMatchObject({ reason: 'live', candles: [expect.objectContaining({ openTime: at5m(69) })] });
-    expect(first.result.evaluated).toBe(69 - 62);
+    expect(first.result.evaluated).toBe(69 - 64);
 
     expect(await storedSeries(b.repos, SA, '5m')).toEqual(expectedSeries(SA, '5m', [
       [0, BOOT - 1, 'rest'], [BOOT, 64, 'ws'], [65, 68, 'rest'], [69, LAST, 'ws'],

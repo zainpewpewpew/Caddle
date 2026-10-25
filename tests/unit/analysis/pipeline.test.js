@@ -4,6 +4,7 @@ import { openDatabase } from '../../../backend/database/connection.js';
 import { migrate } from '../../../backend/database/migrate.js';
 import { createRepositories } from '../../../backend/database/repositories/index.js';
 import { TIMEFRAME_MS } from '../../../backend/market/contracts.js';
+import { PatternParamsError } from '../../../backend/patterns/index.js';
 import { createSignalRepository } from '../../../backend/signals/index.js';
 import { downtrendCandles, silentAccumulationCandles, zigzag } from '../../fixtures/candles/scenarios.js';
 import { generateCandles, withoutCandle, withProvisionalLast } from '../../fixtures/candles/synthetic.js';
@@ -351,6 +352,16 @@ describe('createAnalysisPipeline (SQLite)', () => {
   it('NEG-PIPE-005 parameter pola tidak valid ditolak saat pipeline dibuat', async () => {
     const ctx = await setup();
     expect(() => createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, params: { sa: { minScore: 500 } } })).toThrow(RangeError);
+  });
+
+  it('NEG-PIPE-007 warm-up parameter pola melebihi lookback pipeline ditolak saat pipeline dibuat, bukan diam-diam insufficientData', async () => {
+    const ctx = await setup();
+    // SA: rvolPeriod 200 + rvolWindow 5 = 205 candle > lookback 150 (masih ≤ batas global 300).
+    expect(() => createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, lookback: 150, params: { sa: { rvolPeriod: 200 } } }))
+      .toThrow(PatternParamsError);
+    expect(() => createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, lookback: 300, params: { sa: { rvolPeriod: 200 } } }))
+      .not.toThrow();
+    expect(() => patternDefinitions({ pva: { rvolPeriod: 200 } }, { maxWarmup: 200 })).toThrow(PatternParamsError);
   });
 
   it('EDGE-PIPE-005 backfill beberapa candle sekaligus di-replay berurutan: event identik dengan pemrosesan per candle', async () => {
