@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBinanceRestClient } from '../../../backend/ingestion/binance/restClient.js';
 import { createKlineStream } from '../../../backend/ingestion/binance/wsClient.js';
 import { TIMEFRAME_MS } from '../../../backend/market/contracts.js';
+import { discoverSymbols } from '../../../backend/ingestion/symbolDiscovery.js';
 import { DEFAULT_SCANNER_SETTINGS } from '../../../backend/settings/scannerSettings.js';
 import { createScanner } from '../../../worker/scanner.js';
 
@@ -240,6 +241,7 @@ function setup({
   localClock,
   listOpenSeries,
   wrapGetSettings,
+  discover = fakeDiscover,
 } = {}) {
   const log = [];
   const timers = createFakeTimers();
@@ -264,7 +266,7 @@ function setup({
     }),
     clock: timers.clock,
     logger,
-    discoverSymbols: fakeDiscover,
+    discoverSymbols: discover,
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
     options,
@@ -1056,6 +1058,106 @@ describe('rediscovery & delisting', () => {
     expect(empty.repos.symbols.setMonitored).toHaveBeenCalledWith([], START);
     expect(empty.scanner.status()).toMatchObject({ symbols: 0, streams: 0 });
     await empty.scanner.stop();
+  });
+
+  it('EDGE-SCN-009 satu-satunya simbol terpantau (AAAUSDT) menjadi SETTLING → 0 simbol terpilih dijelaskan exchangeInfo, bukan anomali: markDelisted + SYMBOL_DELISTED, stream dilepas, setMonitored([]), tanpa error "discovery"', async () => {
+    const stops = [];
+    const { scanner, repos, rest, streams, timers } = setup({ symbols: ['AAAUSDT'], onMonitoringStopped: async (e) => { stops.push(e); } });
+    await scanner.start();
+    const first = streams.current();
+    expect(first.keys()).toEqual(['AAAUSDT:5m', 'AAAUSDT:15m', 'AAAUSDT:1h']);
+
+    rest.exchange = [{ ...rest.exchange[0], status: 'SETTLING' }];
+    await timers.advance(3_600_000);
+    expect(repos.symbols.markDelisted).toHaveBeenCalledWith(['AAAUSDT'], START + 3_600_000);
+    expect(repos.symbols.setMonitored).toHaveBeenLastCalledWith([], START + 3_600_000);
+    expect(stops).toEqual([{ symbol: 'AAAUSDT', timeframes: null, reason: 'SYMBOL_DELISTED', at: START + 3_600_000 }]);
+    expect(first.stopped).toBe(true);
+    expect(scanner.status()).toMatchObject({ symbols: 0, streams: 0 });
+    expect(recordedErrors(repos)).toEqual([]);
+
+    await timers.advance(3_600_000); // rediscovery berikutnya: set kosong + 0 simbol → normal, tanpa laporan ulang
+    expect(stops).toHaveLength(1);
+    expect(recordedErrors(repos)).toEqual([]);
+    await scanner.stop();
+  });
+
+  it('POS-SCN-005 pengaturan sah yang memilih 0 simbol (discoverSymbols asli) diterapkan, bukan anomali: (a) filter auto maxSpreadBps 0 → WIDE_SPREAD; (b) mode manual [XYZUSDT] yang tidak terdaftar → simbol lama MONITORING_STOPPED, stream dilepas, perubahan timeframe ikut diterapkan, tanpa error', async () => {
+    const run = async (change) => {
+      const stops = [];
+      const ctx = setup({ discover: discoverSymbols, onMonitoringStopped: async (e) => { stops.push(e); } });
+      await ctx.scanner.start();
+      const first = ctx.streams.current();
+      expect(ctx.scanner.status()).toMatchObject({ symbols: 2, streams: 6 });
+      change(ctx.settings);
+      await ctx.timers.advance(3_600_000);
+      return { ...ctx, first, stops };
+    };
+    const released = (at) => [
+      { symbol: 'BTCUSDT', timeframes: null, reason: 'MONITORING_STOPPED', at },
+      { symbol: 'ETHUSDT', timeframes: null, reason: 'MONITORING_STOPPED', at },
+    ];
+
+    const a = await run((settings) => { settings.liquidity = { ...settings.liquidity, maxSpreadBps: 0 }; });
+    expect(a.stops).toEqual(released(START + 3_600_000));
+    expect(a.repos.symbols.markDelisted).not.toHaveBeenCalled();
+    expect(a.repos.symbols.setMonitored).toHaveBeenLastCalledWith([], START + 3_600_000);
+    expect(a.first.stopped).toBe(true);
+    expect(a.scanner.status()).toMatchObject({ symbols: 0, streams: 0 });
+    expect(recordedErrors(a.repos)).toEqual([]);
+    await a.scanner.stop();
+
+    const b = await run((settings) => {
+      settings.symbols = { ...settings.symbols, mode: 'manual', manual: ['XYZUSDT'] };
+      settings.timeframes = ['15m'];
+    });
+    expect(b.stops).toEqual(released(START + 3_600_000));
+    expect(b.repos.symbols.setMonitored).toHaveBeenLastCalledWith([], START + 3_600_000);
+    expect(b.scanner.status()).toMatchObject({ symbols: 0, streams: 0 });
+    expect(recordedErrors(b.repos)).toEqual([]);
+    // Pengaturan baru dipakai siklus berikutnya: simbol manual yang kemudian terdaftar dipantau dengan timeframe 15m (+ HTF 1h).
+    b.rest.exchange = [...b.rest.exchange, { ...b.rest.exchange[0], symbol: 'XYZUSDT', baseAsset: 'XYZ' }];
+    await b.timers.advance(3_600_000);
+    expect(b.streams.current().keys()).toEqual(['XYZUSDT:15m', 'XYZUSDT:1h']);
+    await b.scanner.stop();
+  });
+
+  it('NEG-SCN-010 mode auto: ticker 24 jam kosong (anomali) bersamaan dengan ETHUSDT menjadi SETTLING → error "discovery", BTCUSDT & stream-nya dipertahankan, tetapi ETHUSDT tetap dilepas: markDelisted + SYMBOL_DELISTED, setMonitored([BTCUSDT]); tanpa rekonsiliasi atas hasil anomali', async () => {
+    const stops = [];
+    // Seri bersinyal terbuka (repositori sinyal palsu): sinyal yatim OLDUSDT tertutup setelah dilaporkan.
+    const open = new Set(['BTCUSDT', 'OLDUSDT']);
+    const { scanner, repos, rest, streams, timers } = setup({
+      discover: discoverSymbols,
+      onMonitoringStopped: async (e) => { stops.push(e); open.delete(e.symbol); },
+      listOpenSeries: async () => [...open].map((symbol) => ({ symbol, timeframe: '5m' })),
+    });
+    await scanner.start();
+    expect(stops).toEqual([{ symbol: 'OLDUSDT', timeframes: null, reason: 'SYMBOL_DELISTED', at: START }]);
+    stops.length = 0;
+    open.add('ZZZUSDT'); // sinyal yatim baru: hanya boleh ditutup oleh rekonsiliasi discovery yang berhasil
+
+    const tickers = rest.get24hTickers;
+    rest.get24hTickers = async () => [];
+    rest.exchange = [rest.exchange[0], { ...rest.exchange[1], status: 'SETTLING' }];
+    await timers.advance(3_600_000);
+    const at = START + 3_600_000;
+    expect(recordedErrors(repos)).toEqual([{
+      at, source: 'discovery',
+      message: 'discovery anomali: 0 simbol terpilih (mode auto) padahal 2 simbol sedang dipantau; 1 simbol dipertahankan, hanya 1 simbol delisted yang dilepas',
+    }]);
+    expect(repos.symbols.markDelisted).toHaveBeenCalledWith(['ETHUSDT'], at);
+    expect(repos.symbols.setMonitored).toHaveBeenLastCalledWith(['BTCUSDT'], at);
+    expect(stops).toEqual([{ symbol: 'ETHUSDT', timeframes: null, reason: 'SYMBOL_DELISTED', at }]);
+    expect(streams.current().keys()).toEqual(['BTCUSDT:5m', 'BTCUSDT:15m', 'BTCUSDT:1h']);
+    expect(scanner.status()).toMatchObject({ symbols: 1, streams: 3 });
+    expect(scanner.liquidityOf('BTCUSDT')).not.toBeNull();
+
+    rest.get24hTickers = tickers;
+    await timers.advance(60_000); // percobaan ulang normal → rekonsiliasi berjalan lagi
+    expect(repos.symbols.setMonitored).toHaveBeenLastCalledWith(['BTCUSDT'], at + 60_000);
+    expect(stops.slice(1)).toEqual([{ symbol: 'ZZZUSDT', timeframes: null, reason: 'SYMBOL_DELISTED', at: at + 60_000 }]);
+    expect(recordedErrors(repos)).toHaveLength(1);
+    await scanner.stop();
   });
 
   it('EDGE-SCN-004 rediscovery tanpa perubahan tidak membuat ulang stream', async () => {

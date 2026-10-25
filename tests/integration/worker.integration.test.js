@@ -1054,6 +1054,35 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(problems(logs)).toEqual(['discovery memilih 0 simbol padahal set pantauan tidak kosong; set pantauan dipertahankan', 'galat scanner']);
   });
 
+  it('INT-WRK-027 mode manual [SYNUSDT] dengan sinyal SA terbuka, simbol menjadi SETTLING → 0 simbol terpilih dijelaskan exchangeInfo (bukan anomali): simbol delisted, stream dilepas, sinyal EXPIRED reason SYMBOL_DELISTED tersimpan; tanpa error "discovery"', async () => {
+    const REDISCOVERY = 20 * 60_000;
+    const { scanner, repos, binance, driver, hub, stopped, logs } = await setup({
+      settings: withSettings({ symbols: { mode: 'manual', manual: [SA] } }),
+      scannerOptions: { rediscoveryMs: REDISCOVERY },
+    });
+    await scanner.start();
+    const delistAt = START + 4 * REDISCOVERY;
+    await driver.runUntil(delistAt - 1_000);
+    expect((await repos.signals.listActive()).map((s) => s.symbol)).toEqual([SA]);
+    expect(scanner.status()).toMatchObject({ symbols: 1, streams: 3 });
+
+    binance.listing.get(SA).status = 'SETTLING';
+    await driver.runUntil(delistAt + 1_000);
+    expect(stopped).toEqual([{ symbol: SA, timeframes: null, reason: 'SYMBOL_DELISTED', at: delistAt }]);
+    expect(await repos.signals.listActive()).toEqual([]);
+    const [closed] = await repos.signals.history({ symbol: SA, limit: 10 });
+    expect(closed).toMatchObject({ state: 'EXPIRED', closedAt: delistAt });
+    expect(closed.events.at(-1)).toMatchObject({ toState: 'EXPIRED', occurredAt: delistAt, detail: expect.objectContaining({ reason: 'SYMBOL_DELISTED' }) });
+    expect(await repos.symbols.listMonitored()).toEqual([]);
+    expect(scanner.status()).toMatchObject({ symbols: 0, streams: 0 });
+    expect(hub.sockets.every((s) => s.readyState === 3)).toBe(true);
+
+    await driver.runUntil(END);
+    expect(stopped).toHaveLength(1);
+    expect((await repos.ingestion.getStatus()).recentErrors).toEqual([]);
+    expect(problems(logs)).toEqual(['simbol delisted, stream dihentikan']);
+  });
+
   it('INT-WRK-021 penutupan sinyal simbol delisted gagal sekali (SQLITE_BUSY) → error "monitoring" tercatat, sinyal masih terbuka; rediscovery berikutnya mencoba lagi (level-triggered) → EXPIRED reason SYMBOL_DELISTED', async () => {
     const REDISCOVERY = 20 * 60_000;
     const { scanner, repos, binance, driver, stopped, alerts } = await setup({ scannerOptions: { rediscoveryMs: REDISCOVERY } });

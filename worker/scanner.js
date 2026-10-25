@@ -7,7 +7,9 @@
 //   ikut diingesti sebagai seri konteks saja (disimpan, tidak pernah memicu analisis) walau tidak dipilih;
 // - duplikat/out-of-order tetap disimpan (idempoten) tetapi tidak memicu analisis ulang;
 // - sweep berkala menambal stream yang tertinggal (fallback bila WS diam);
-// - discovery yang memilih 0 simbol padahal set pantauan tidak kosong dianggap anomali (seperti discovery gagal);
+// - discovery yang memilih 0 simbol padahal set pantauan tidak kosong dianggap anomali (seperti discovery gagal)
+//   KECUALI data discovery menjelaskannya (simbol lama delisted / ditolak filter pengaturan dengan alasan sah);
+//   simbol lama yang delisted menurut exchangeInfo tidak kosong tetap dilepas walau discovery anomali;
 // - rediscovery periodik menangani simbol baru & delisting; simbol/timeframe yang berhenti dipantau
 //   dilaporkan lewat onMonitoringStopped (worker menutup sinyal terbukanya) SETELAH stream-nya dilepas;
 //   dengan `listOpenSeries`, setiap discovery yang berhasil juga merekonsiliasi seri bersinyal terbuka yang
@@ -23,6 +25,7 @@
 
 import { HIGHER_TIMEFRAMES, TIMEFRAMES, TIMEFRAME_MS, expectedCloseTime } from '../backend/market/contracts.js';
 import { CLOSE_MARGIN_MS, MAX_KLINES_PER_REQUEST, lastClosedOpenTime, planBackfill, planGapFill } from '../backend/ingestion/backfill.js';
+import { REJECT_REASONS } from '../backend/ingestion/symbolDiscovery.js';
 
 export const SCANNER_DEFAULTS = Object.freeze({
   heartbeatMs: 30_000,
@@ -57,13 +60,38 @@ class ScannerStopped extends Error {
   }
 }
 
-/** Discovery memilih 0 simbol padahal set pantauan sebelumnya tidak kosong — diperlakukan sebagai discovery gagal. */
+/**
+ * Discovery memilih 0 simbol padahal set pantauan sebelumnya tidak kosong dan data discovery tidak
+ * menjelaskannya — diperlakukan sebagai discovery gagal. `kept` = simbol lama yang dipertahankan; `released`
+ * = simbol lama yang delisted menurut exchangeInfo yang tidak kosong (tetap dilepas, SYMBOL_DELISTED).
+ */
 class AnomalousDiscovery extends Error {
-  constructor(mode, previousCount) {
+  constructor(mode, previousCount, { exchange = [], kept = [], released = [] } = {}) {
     super(`discovery anomali: 0 simbol terpilih (mode ${mode}) padahal ${previousCount} simbol sedang dipantau; `
-      + 'set pantauan & stream dipertahankan, tidak ada sinyal yang ditutup');
+      + (released.length === 0
+        ? 'set pantauan & stream dipertahankan, tidak ada sinyal yang ditutup'
+        : `${kept.length} simbol dipertahankan, hanya ${released.length} simbol delisted yang dilepas`));
     this.name = 'AnomalousDiscovery';
+    this.exchange = exchange;
+    this.kept = kept;
+    this.released = released;
   }
+}
+
+/**
+ * Simbol lama yang 0-terpilihnya TIDAK dijelaskan data discovery, atau null bila input discovery sendiri rusak
+ * (exchangeInfo tanpa simbol; mode auto dengan ticker 24 jam / book ticker kosong). Sebuah simbol lama dijelaskan
+ * bila exchangeInfo (tidak kosong) tidak lagi mencantumkannya sebagai TRADING (delisted), atau discovery
+ * menolaknya dengan alasan selain NO_TICKER (mis. NOT_IN_MANUAL_LIST, WIDE_SPREAD, LOW_VOLUME — pengaturan sah).
+ * NO_TICKER / tanpa alasan pada simbol yang masih TRADING = data ticker/hasil discovery tidak lengkap.
+ */
+function unexplainedZero(previous, { exchange, tickers, bookTickers, result, auto }) {
+  if (exchange.length === 0) return null;
+  if (auto && (!Array.isArray(tickers) || tickers.length === 0 || !Array.isArray(bookTickers) || bookTickers.length === 0)) return null;
+  const status = new Map(exchange.map((s) => [s?.symbol, s?.status]));
+  const reasons = new Map((Array.isArray(result?.rejected) ? result.rejected : []).map((r) => [r?.symbol, r?.reason]));
+  return previous.filter((s) => status.get(s) === 'TRADING'
+    && (typeof reasons.get(s) !== 'string' || reasons.get(s) === REJECT_REASONS.NO_TICKER));
 }
 
 function errorMessage(err) {
@@ -608,16 +636,26 @@ export function createScanner({
     ]);
     const result = await discoverSymbols({ symbols, tickers, bookTickers, settings: settings.raw });
     const chosen = (result?.selected ?? []).filter((s) => typeof s?.symbol === 'string');
+    const exchange = Array.isArray(symbols) ? symbols : [];
     // Penjaga anomali: 0 simbol terpilih (mode auto atau manual) padahal set pantauan sebelumnya (memori, atau
-    // daftar DB di siklus pertama) tidak kosong → hampir pasti data discovery rusak/kosong sementara. Ditolak
-    // SEBELUM likuiditas/simbol/stream disentuh; runCycle menanganinya seperti discovery gagal (error
-    // 'discovery', coba ulang dengan jeda, fallback daftar DB, tanpa pelepasan/penutupan sinyal).
+    // daftar DB di siklus pertama) tidak kosong, DAN data discovery tidak menjelaskannya (unexplainedZero) →
+    // hampir pasti data discovery rusak/kosong sementara. Ditolak SEBELUM likuiditas/simbol/stream disentuh;
+    // runCycle menanganinya seperti discovery gagal (error 'discovery', coba ulang dengan jeda, fallback daftar
+    // DB, tanpa rekonsiliasi). Simbol lama yang delisted menurut exchangeInfo tidak kosong tetap dilepas.
+    // 0 simbol yang dijelaskan (simbol lama delisted, atau ditolak filter pengaturan yang sah — mis. mode manual
+    // dengan simbol tak terdaftar, filter likuiditas yang menolak semua) diterapkan seperti discovery biasa.
     if (chosen.length === 0) {
       const previous = monitored.length > 0 ? monitored : (dbMonitoredChecked ? [] : await repos.symbols.listMonitored());
-      if (previous.length > 0) {
+      const auto = settings.raw?.symbols?.mode === 'auto';
+      const unexplained = previous.length > 0 ? unexplainedZero(previous, { exchange, tickers, bookTickers, result, auto }) : [];
+      if (unexplained === null || unexplained.length > 0) {
         const mode = settings.raw?.symbols?.mode ?? 'tidak diketahui';
-        logger.warn({ mode, previous: previous.length }, 'discovery memilih 0 simbol padahal set pantauan tidak kosong; set pantauan dipertahankan');
-        throw new AnomalousDiscovery(mode, previous.length);
+        const status = new Map(exchange.map((s) => [s?.symbol, s?.status]));
+        const released = exchange.length === 0 ? [] : previous.filter((s) => status.get(s) !== 'TRADING');
+        const kept = previous.filter((s) => !released.includes(s));
+        logger.warn({ mode, previous: previous.length, released: released.length },
+          'discovery memilih 0 simbol padahal set pantauan tidak kosong; set pantauan dipertahankan');
+        throw new AnomalousDiscovery(mode, previous.length, { exchange, kept, released });
       }
     }
     // Likuiditas terakhir per simbol (quote volume 24 jam, spread) untuk risk flag di pipeline analisis,
@@ -628,7 +666,7 @@ export function createScanner({
     liquidity = new Map(chosen.map((s) => [s.symbol, {
       quoteVolume24h: s.quoteVolume24h ?? null, spreadBps: s.spreadBps ?? null, thresholds,
     }]));
-    return { symbols: Array.isArray(symbols) ? symbols : [], selected: chosen.map((s) => s.symbol) };
+    return { symbols: exchange, selected: chosen.map((s) => s.symbol) };
   }
 
   /**
@@ -826,8 +864,17 @@ export function createScanner({
         discoveryFailures += 1;
         await report('discovery', err);
         nextDelay = Math.min(cfg.rediscoveryMs, cfg.discoveryRetryMs * 2 ** (discoveryFailures - 1));
-        // Tanpa set simbol aktif → pakai simbol yang terakhir dipantau di database.
-        if (monitored.length === 0) target = await repos.symbols.listMonitored();
+        if (err instanceof AnomalousDiscovery && err.released.length > 0) {
+          // Discovery anomali, tetapi exchangeInfo (tidak kosong) menyatakan sebagian simbol lama delisted:
+          // simbol itu tetap dilepas (markDelisted, SYMBOL_DELISTED); sisanya dipertahankan. Tanpa rekonsiliasi
+          // sinyal terbuka (statusBySymbol null) karena hasil discovery ini tidak dipercaya.
+          checkStopping();
+          stopped = await syncSymbols(err.exchange, err.kept, at);
+          target = err.kept;
+        } else if (monitored.length === 0) {
+          // Tanpa set simbol aktif → pakai simbol yang terakhir dipantau di database.
+          target = await repos.symbols.listMonitored();
+        }
       }
       checkStopping();
       if (target !== null) stats.candles += await applyTarget(target, stopped, at, statusBySymbol);
