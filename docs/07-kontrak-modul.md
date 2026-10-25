@@ -117,7 +117,8 @@ createScanner({ rest, streamFactory, repos, getSettings, onClosedCandles, discov
 status() = { state, lastIngestionAt, candleLagMs, reconnects, errors, scanDurationMs, queue,
              symbols, streams, staleStreams, ws, gaps, duplicates }
 onClosedCandles({ symbol, timeframe, candles, reason })   // reason: 'stream' | 'sweep' | 'gap' | …
-liquidityOf(symbol) → { quoteVolume24h, spreadBps } | null   // dari discovery terakhir
+liquidityOf(symbol) → { quoteVolume24h, spreadBps, thresholds: { minQuoteVolume24h, maxSpreadBps } | null } | null
+    // dari discovery terakhir; thresholds = settings.liquidity yang dipakai discovery tersebut
 ```
 
 Entry point `worker/index.js` (`npm run worker`) merakit klien REST, stream, scanner, dan pipeline analisis; heartbeat ditulis tiap 30 detik; `SIGINT`/`SIGTERM` → graceful shutdown.
@@ -198,6 +199,8 @@ ANALYSIS_LOOKBACK = 300
 assessSeriesQuality(candles, timeframe) → { ok, issues: ['UNCLOSED_CANDLE'|'MIXED_SERIES'|'GAP:n', …] }
 analyzeAt({ symbol, timeframe, candlesByTimeframe, prev, liquidity, dataQuality, params })   // MURNI
   → { evaluationTime, patterns, context, view, market, next, event, alert }
+  // params = { sa?, pva?, signals?, view?: { minQuoteVolume24h?, maxSpreadBps? } }
+  // params.view diteruskan ke buildSignalView (ambang risk flag likuiditas; default DEFAULT_VIEW_PARAMS)
 patternDefinitions(params) → [{ key: 'SA'|'PVA', version, name, definition: { params, conditions, requiredCandles } }]
 createAnalysisPipeline({ repos, signals, getLiquidity, logger, params, lookback = 300,
   maxReplay = 288, settleMs = 0, sleep, onAlert })
@@ -211,6 +214,7 @@ createAnalysisPipeline({ repos, signals, getLiquidity, logger, params, lookback 
 3. Candle baru diputar ulang berurutan (maks `maxReplay`; pemotongan dicatat di log). Tanpa riwayat → hanya candle terakhir.
 4. Bila `settleMs > 0`, menunggu sekali agar candle HTF yang tutup pada waktu yang sama sempat tersimpan (worker memakai 3 detik).
 5. Setiap candle: `getOpen` → `analyzeAt` → `save` bila ada event/perubahan. **Alert hanya untuk candle terakhir** batch, sehingga backfill tidak membanjiri alert historis.
+6. `getLiquidity(symbol)` (worker: `scanner.liquidityOf`) memberi ukuran likuiditas; bila menyertakan `thresholds`, ambang itu menggantikan `params.view`, sehingga `POOR_LIQUIDITY`/`WIDE_SPREAD` dan baris penjelasan `CONTEXT:LIQUIDITY` memakai batas pengaturan pengguna (penting di mode manual, yang tidak memfilter likuiditas saat discovery).
 
 ## 9. API — `backend/api/signalRoutes.js`, `backend/api/systemRoutes.js`
 
@@ -231,6 +235,7 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 |---|---|---|
 | `heartbeat({ at, state })` dengan metrik terpisah | `state` = snapshot `status()` lengkap | Metrik sempat hilang karena kontrak tidak cocok; satu objek menghindari drift |
 | Scanner tanpa info likuiditas | `liquidityOf(symbol)` | Risk flag `POOR_LIQUIDITY`/`WIDE_SPREAD` butuh data discovery |
+| Risk flag likuiditas selalu dinilai dengan `DEFAULT_VIEW_PARAMS` | `liquidityOf` menyertakan `thresholds` dari `settings.liquidity`; `analyzeAt` menerima `params.view` | Batas pengguna (terutama mode manual) harus sama dengan batas yang ditampilkan di penjelasan; backtest tetap dapat memberi ambangnya sendiri |
 | `createSignalRepository(db)` | `+ { clock }`, `lastEventCandleTime` | Tes deterministik; titik awal replay yang persisten |
 | Kolom tracking (`barsInState`, `peakPrice`, `lastCandleTime`) di tabel `signals` | Disimpan di `explanation_json.tracking` | Menghindari migrasi skema saat M3; kandidat migrasi `004` (lihat `docs/05-database.md`) |
 | `classifyTrend` selalu mengembalikan trend | `trend: null` bila data kurang/HTF basi | Tidak memalsukan konteks saat data tidak cukup |

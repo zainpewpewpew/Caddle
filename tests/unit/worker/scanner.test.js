@@ -232,6 +232,7 @@ function setup({
   options = {},
   streamFactory,
   onClosedCandles,
+  liquidity = DEFAULT_SCANNER_SETTINGS.liquidity,
 } = {}) {
   const log = [];
   const timers = createFakeTimers();
@@ -242,6 +243,7 @@ function setup({
   const settings = {
     ...DEFAULT_SCANNER_SETTINGS,
     timeframes,
+    liquidity,
     refresh: { bootstrapCandles, restBackfillIntervalSec },
   };
   const scanner = createScanner({
@@ -618,6 +620,22 @@ describe('rediscovery & delisting', () => {
     expect(ot(btc[0].candles)[0]).toBe(LAST_CLOSED + M5);
     // SOLUSDT baru = bootstrap murni → tidak dianalisis
     expect(analysed.some((a) => a.symbol === 'SOLUSDT')).toBe(false);
+    await scanner.stop();
+  });
+
+  it('UNIT-SCN-012 liquidityOf → ukuran discovery + ambang settings.liquidity yang dipakai discovery itu; perubahan pengaturan berlaku pada rediscovery berikutnya', async () => {
+    const { scanner, timers, settings } = setup({ symbols: ['BTCUSDT'], liquidity: { minQuoteVolume24h: 2_000_000, maxSpreadBps: 40 } });
+    await scanner.start();
+    expect(scanner.liquidityOf('BTCUSDT')).toEqual({ quoteVolume24h: 1e9, spreadBps: 1, thresholds: { minQuoteVolume24h: 2_000_000, maxSpreadBps: 40 } });
+    expect(scanner.liquidityOf('ETHUSDT')).toBeNull();
+    settings.liquidity = { minQuoteVolume24h: 7_000_000, maxSpreadBps: 3 };
+    expect(scanner.liquidityOf('BTCUSDT').thresholds).toEqual({ minQuoteVolume24h: 2_000_000, maxSpreadBps: 40 });
+    await timers.advance(3_600_000);
+    expect(scanner.liquidityOf('BTCUSDT').thresholds).toEqual({ minQuoteVolume24h: 7_000_000, maxSpreadBps: 3 });
+    // Ambang tidak valid (mis. discoverSymbols palsu tidak memvalidasi) → null, pipeline memakai default.
+    settings.liquidity = { minQuoteVolume24h: -1, maxSpreadBps: 3 };
+    await timers.advance(3_600_000);
+    expect(scanner.liquidityOf('BTCUSDT')).toEqual({ quoteVolume24h: 1e9, spreadBps: 1, thresholds: null });
     await scanner.stop();
   });
 

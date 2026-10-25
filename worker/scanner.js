@@ -110,6 +110,14 @@ function normalizeSettings(raw) {
   };
 }
 
+const isLimit = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+/** Ambang likuiditas dari pengaturan (settings.liquidity) atau null bila tidak lengkap/tidak valid. */
+function liquidityThresholds(raw) {
+  const { minQuoteVolume24h, maxSpreadBps } = raw?.liquidity ?? {};
+  return isLimit(minQuoteVolume24h) && isLimit(maxSpreadBps) ? Object.freeze({ minQuoteVolume24h, maxSpreadBps }) : null;
+}
+
 /**
  * Membuat scanner ingesti.
  * @param {{
@@ -150,7 +158,7 @@ export function createScanner({
   const streams = new Map();
   const symbolInfo = new Map();
   let monitored = [];
-  /** @type {Map<string, { quoteVolume24h: number|null, spreadBps: number|null }>} */
+  /** @type {Map<string, { quoteVolume24h: number|null, spreadBps: number|null, thresholds: { minQuoteVolume24h: number, maxSpreadBps: number } | null }>} */
   let liquidity = new Map();
   let dbMonitoredChecked = false;
   let stream = null;
@@ -504,8 +512,14 @@ export function createScanner({
     ]);
     const result = await discoverSymbols({ symbols, tickers, bookTickers, settings: settings.raw });
     const chosen = (result?.selected ?? []).filter((s) => typeof s?.symbol === 'string');
-    // Likuiditas terakhir per simbol (quote volume 24 jam, spread) untuk risk flag di pipeline analisis.
-    liquidity = new Map(chosen.map((s) => [s.symbol, { quoteVolume24h: s.quoteVolume24h ?? null, spreadBps: s.spreadBps ?? null }]));
+    // Likuiditas terakhir per simbol (quote volume 24 jam, spread) untuk risk flag di pipeline analisis,
+    // beserta ambang pengaturan yang dipakai discovery ini — sehingga risk flag dinilai dengan batas
+    // pengguna, termasuk mode manual yang tidak memfilter likuiditas. Ambang tidak valid → null
+    // (pipeline memakai default DEFAULT_VIEW_PARAMS).
+    const thresholds = liquidityThresholds(settings.raw);
+    liquidity = new Map(chosen.map((s) => [s.symbol, {
+      quoteVolume24h: s.quoteVolume24h ?? null, spreadBps: s.spreadBps ?? null, thresholds,
+    }]));
     return { symbols: Array.isArray(symbols) ? symbols : [], selected: chosen.map((s) => s.symbol) };
   }
 
@@ -648,7 +662,11 @@ export function createScanner({
   }
 
   return {
-    /** Likuiditas dari discovery terakhir (null bila belum ada / memakai fallback daftar DB). */
+    /**
+     * Likuiditas dari discovery terakhir + ambang pengaturan yang dipakai discovery tersebut
+     * (null bila belum ada / memakai fallback daftar DB).
+     * @returns {{ quoteVolume24h: number|null, spreadBps: number|null, thresholds: { minQuoteVolume24h: number, maxSpreadBps: number } | null } | null}
+     */
     liquidityOf(symbol) {
       return liquidity.get(symbol) ?? null;
     },

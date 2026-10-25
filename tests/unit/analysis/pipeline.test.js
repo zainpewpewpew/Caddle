@@ -291,4 +291,49 @@ describe('createAnalysisPipeline (SQLite)', () => {
       liquidity: { quoteVolume24h: 1_000, spreadBps: 80 } });
     expect(r.view.riskFlags).toEqual(expect.arrayContaining(['POOR_LIQUIDITY', 'WIDE_SPREAD']));
   });
+
+  it('UNIT-PIPE-006 analyzeAt params.view (ambang pengguna 2 jt / 50 bps) → quote volume 2,5 jt & spread 40 bps tidak ditandai; penjelasan memuat batas yang dipakai', () => {
+    const all = silentAccumulationCandles(1);
+    const input = { symbol: SYMBOL, timeframe: '5m', candlesByTimeframe: byTimeframe(all.slice(0, 63)), prev: null,
+      liquidity: { quoteVolume24h: 2_500_000, spreadBps: 40 } };
+    // Default (50 jt / 10 bps) → kedua flag; ambang pengguna yang longgar → tanpa flag likuiditas.
+    expect(analyzeAt(input).view.riskFlags).toEqual(expect.arrayContaining(['POOR_LIQUIDITY', 'WIDE_SPREAD']));
+    const loose = analyzeAt({ ...input, params: { view: { minQuoteVolume24h: 2_000_000, maxSpreadBps: 50 } } });
+    expect(loose.view.riskFlags).not.toContain('POOR_LIQUIDITY');
+    expect(loose.view.riskFlags).not.toContain('WIDE_SPREAD');
+    expect(loose.view.explanation.find((e) => e.factor === 'CONTEXT:LIQUIDITY').detail)
+      .toBe('Quote volume 24 jam 2500000 (batas 2000000), spread 40 bps (batas 50)');
+    // Ambang lebih ketat dari default → flag dengan batas pengguna di penjelasan.
+    const strict = analyzeAt({ ...input, liquidity: { quoteVolume24h: 60_000_000, spreadBps: 8 }, params: { view: { minQuoteVolume24h: 80_000_000, maxSpreadBps: 5 } } });
+    expect(strict.view.explanation.find((e) => e.factor === 'RISK:POOR_LIQUIDITY').detail).toBe('Quote volume 24 jam 60000000 < batas 80000000');
+    expect(strict.view.explanation.find((e) => e.factor === 'RISK:WIDE_SPREAD').detail).toBe('Spread 8 bps > batas 5 bps');
+    expect(() => analyzeAt({ ...input, params: { view: { maxSpreadBps: -1 } } })).toThrow(RangeError);
+  });
+
+  it('POS-PIPE-004 getLiquidity menyertakan thresholds (pengaturan pengguna) → sinyal tersimpan & alert memakai batas tersebut, bukan default', async () => {
+    const all = silentAccumulationCandles(1);
+    const liquidity = { quoteVolume24h: 2_500_000, spreadBps: 40 };
+    const run = async (thresholds) => {
+      const ctx = await setup();
+      const alerts = [];
+      const pipeline = createAnalysisPipeline({
+        repos: ctx.repos, signals: ctx.signals, onAlert: (a) => alerts.push(a),
+        getLiquidity: () => (thresholds ? { ...liquidity, thresholds } : liquidity),
+      });
+      for (let k = 1; k <= 64; k += 1) await feed({ ...ctx, pipeline }, all, k);
+      const [signal] = await ctx.signals.history({ symbol: SYMBOL, limit: 10 });
+      return { signal, alerts };
+    };
+    const byDefault = await run(null);
+    expect(byDefault.signal.riskFlags).toEqual(expect.arrayContaining(['POOR_LIQUIDITY', 'WIDE_SPREAD']));
+
+    const user = await run({ minQuoteVolume24h: 5_000_000, maxSpreadBps: 50 });
+    expect(user.signal.riskFlags).toContain('POOR_LIQUIDITY');
+    expect(user.signal.riskFlags).not.toContain('WIDE_SPREAD');
+    expect(user.signal.explanation).toEqual(expect.arrayContaining([
+      { factor: 'RISK:POOR_LIQUIDITY', contribution: 0, detail: 'Quote volume 24 jam 2500000 < batas 5000000' },
+      { factor: 'CONTEXT:LIQUIDITY', contribution: 0, detail: 'Quote volume 24 jam 2500000 (batas 5000000), spread 40 bps (batas 50)' },
+    ]));
+    expect(user.alerts[0].view.riskFlags).not.toContain('WIDE_SPREAD');
+  });
 });

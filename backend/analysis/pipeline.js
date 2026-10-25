@@ -43,7 +43,9 @@ export function assessSeriesQuality(candles, timeframe) {
  *   candlesByTimeframe: Record<string, import('../market/contracts.js').Candle[]>,
  *   prev: object|null, liquidity?: { quoteVolume24h?: number, spreadBps?: number },
  *   dataQuality?: { ok: boolean, issues?: string[] },
- *   params?: { sa?: object, pva?: object, signals?: object } }} input
+ *   params?: { sa?: object, pva?: object, signals?: object, view?: { minQuoteVolume24h?: number, maxSpreadBps?: number } } }} input
+ *   `params.view`: ambang risk flag likuiditas/spread (default DEFAULT_VIEW_PARAMS). Worker live mengisinya
+ *   dengan ambang pengaturan scanner yang dipakai discovery; backtest dapat memberikan ambangnya sendiri.
  * @returns {null | { evaluationTime: number, patterns: object, context: object, view: object,
  *   market: object, next: object, event: object|null, alert: boolean }}
  */
@@ -57,7 +59,7 @@ export function analyzeAt({ symbol, timeframe, candlesByTimeframe, prev, liquidi
   const quality = dataQuality ?? assessSeriesQuality(base, timeframe);
   const patterns = evaluatePatterns(base, { sa: params.sa, pva: params.pva });
   const context = buildTimeframeContext({ baseTimeframe: timeframe, evaluationTime, candlesByTimeframe });
-  const view = buildSignalView({ symbol, timeframe, patterns, context, liquidity, dataQuality: quality });
+  const view = buildSignalView({ symbol, timeframe, patterns, context, liquidity, dataQuality: quality, params: params.view });
   const market = deriveMarketInputs(base);
   const result = transition(prev ?? null, { candle: last, patterns, context, market, view }, params.signals);
   return { evaluationTime, patterns, context, view, market, ...result };
@@ -85,12 +87,16 @@ export function patternDefinitions(params = {}) {
  * Alert hanya untuk candle terbaru; transisi historis hasil replay disimpan tanpa alert.
  * Evaluasi pertama sebuah seri tanpa riwayat event hanya memakai candle terakhir (bootstrap = histori).
  *
- * @param {{ repos: { candles: any }, signals: any, getLiquidity?: (symbol: string) => object|null|undefined,
+ * @param {{ repos: { candles: any }, signals: any,
+ *   getLiquidity?: (symbol: string) => { quoteVolume24h: number|null, spreadBps: number|null,
+ *     thresholds?: { minQuoteVolume24h: number, maxSpreadBps: number } } | null | undefined,
  *   logger?: any, params?: object, lookback?: number, maxReplay?: number, settleMs?: number,
  *   sleep?: (ms: number) => Promise<void>,
  *   onAlert?: (alert: { symbol: string, timeframe: string, state: string, event: object, view: object }) => void }} deps
  *   settleMs: bila candle timeframe lebih tinggi yang tutup bersamaan belum tersimpan, tunggu sekali
  *   selama ini agar konteks live sama dengan replay (stream per timeframe diproses paralel).
+ *   getLiquidity: ukuran likuiditas dari discovery terakhir; `thresholds` (ambang pengaturan yang dipakai
+ *   discovery yang sama) menggantikan `params.view` agar risk flag & penjelasan memakai batas pengguna.
  */
 export function createAnalysisPipeline({
   repos, signals, getLiquidity = () => undefined, logger, params = {}, lookback = ANALYSIS_LOOKBACK,
@@ -132,6 +138,14 @@ export function createAnalysisPipeline({
     }
   }
 
+  /** Pisahkan ukuran likuiditas dari ambang yang menyertainya; ambang → params.view untuk analyzeAt. */
+  function liquidityInputs(info) {
+    if (info === null || info === undefined) return { liquidity: undefined, params };
+    const { thresholds, ...liquidity } = info;
+    if (thresholds === null || thresholds === undefined) return { liquidity, params };
+    return { liquidity, params: { ...params, view: { ...params.view, ...thresholds } } };
+  }
+
   async function evaluate({ symbol, timeframe }) {
     if (!TIMEFRAMES.includes(timeframe)) throw new RangeError(`Timeframe tidak didukung: ${timeframe}`);
     await ensureDefinitions();
@@ -156,13 +170,13 @@ export function createAnalysisPipeline({
       higher[tf] = await repos.candles.getLatest({ symbol, timeframe: tf, limit: Math.min(10_000, lookback + Math.ceil(span / TIMEFRAME_MS[tf]) + 2) });
     }
 
-    const liquidity = getLiquidity(symbol) ?? undefined;
+    const { liquidity, params: runParams } = liquidityInputs(getLiquidity(symbol));
     let result = null;
     for (const index of pending) {
       const candle = base[index];
       const window = base.slice(Math.max(0, index + 1 - lookback), index + 1);
       const prev = await signals.getOpen({ symbol, timeframe });
-      result = analyzeAt({ symbol, timeframe, candlesByTimeframe: { [timeframe]: window, ...higher }, prev, liquidity, params });
+      result = analyzeAt({ symbol, timeframe, candlesByTimeframe: { [timeframe]: window, ...higher }, prev, liquidity, params: runParams });
       if (result.event || (prev && result.next !== prev)) {
         await signals.save({ symbol, timeframe, snapshot: result.next, event: result.event, explanation: result.view.explanation });
       }

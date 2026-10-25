@@ -521,11 +521,14 @@ async function setup({ settings, configure, skip, delayOf, market = MARKET, sett
   return { timers, db, binance, driver, ...worker };
 }
 
-const withSettings = ({ symbols, refresh } = {}) => ({
+const withSettings = ({ symbols, refresh, liquidity } = {}) => ({
   ...DEFAULT_SCANNER_SETTINGS,
   symbols: { ...DEFAULT_SCANNER_SETTINGS.symbols, ...symbols },
   refresh: { ...DEFAULT_SCANNER_SETTINGS.refresh, ...refresh },
+  liquidity: { ...DEFAULT_SCANNER_SETTINGS.liquidity, ...liquidity },
 });
+// Ambang likuiditas default yang ikut dikirim scanner bersama ukuran likuiditas (liquidityOf).
+const DEFAULT_THRESHOLDS = DEFAULT_SCANNER_SETTINGS.liquidity;
 
 // ---------- acuan "live = replay" ----------
 
@@ -535,7 +538,7 @@ const LIQ_SA = { quoteVolume24h: 900_000_000, spreadBps: spreadOf('99.9900', '10
  * Replay murni `analyzeAt` candle demi candle atas data sintetis yang sama dengan yang dilayani jaringan
  * palsu. `prev` = sinyal terbuka (seperti signals.getOpen); langkah "disimpan" mengikuti aturan pipeline.
  */
-function referenceReplay(symbol, liquidity, { market = MARKET, timeframe = '5m', from = BOOT, to = LAST } = {}) {
+function referenceReplay(symbol, liquidity, { market = MARKET, timeframe = '5m', from = BOOT, to = LAST, params } = {}) {
   const ms = TIMEFRAME_MS[timeframe];
   const all = market.get(seriesKey(symbol, '5m'));
   const steps = [];
@@ -546,7 +549,7 @@ function referenceReplay(symbol, liquidity, { market = MARKET, timeframe = '5m',
     const base = timeframe === '5m' ? m5 : aggregate(m5, timeframe);
     const candlesByTimeframe = { [timeframe]: base.slice(-ANALYSIS_LOOKBACK) };
     for (const tf of HIGHER_TIMEFRAMES[timeframe]) candlesByTimeframe[tf] = aggregate(m5, tf);
-    const r = analyzeAt({ symbol, timeframe, prev: open, liquidity, candlesByTimeframe });
+    const r = analyzeAt({ symbol, timeframe, prev: open, liquidity, candlesByTimeframe, params });
     steps.push({ index: i, saved: Boolean(r.event || open), ...r });
     open = OPEN_STATES.includes(r.next.state) ? r.next : null;
   }
@@ -675,7 +678,9 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     ]);
 
     // Likuiditas hasil parse ticker/bookTicker → discovery → scanner (dipakai pipeline untuk risk flag).
-    expect(scanner.liquidityOf(SA)).toEqual({ quoteVolume24h: 900_000_000, spreadBps: expect.closeTo(LIQ_SA.spreadBps, 9) });
+    expect(scanner.liquidityOf(SA)).toEqual({
+      quoteVolume24h: 900_000_000, spreadBps: expect.closeTo(LIQ_SA.spreadBps, 9), thresholds: DEFAULT_THRESHOLDS,
+    });
     expect(scanner.liquidityOf('THINUSDT')).toBeNull();
 
     // Bootstrap = histori murni: tidak dianalisis; definisi pola sudah terdaftar.
@@ -835,7 +840,9 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     });
     await scanner.start();
     const liquidity = { quoteVolume24h: 2_500_000, spreadBps: spreadOf('99.8000', '100.2000') };
-    expect(scanner.liquidityOf(SA)).toEqual({ quoteVolume24h: 2_500_000, spreadBps: expect.closeTo(liquidity.spreadBps, 9) });
+    expect(scanner.liquidityOf(SA)).toEqual({
+      quoteVolume24h: 2_500_000, spreadBps: expect.closeTo(liquidity.spreadBps, 9), thresholds: DEFAULT_THRESHOLDS,
+    });
     expect(await repos.symbols.listMonitored()).toEqual([SA]);
     expect(scanner.status()).toMatchObject({ symbols: 1, streams: 3 });
 
@@ -856,6 +863,38 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(alerts.every((a) => a.view.riskFlags.includes('WIDE_SPREAD'))).toBe(true);
     expect(db.prepare('SELECT is_monitored FROM symbols WHERE symbol = ?').get(DOWN)).toEqual({ is_monitored: 0 });
     expect((await repos.ingestion.getStatus()).recentErrors).toEqual([]);
+    expect(problems(logs)).toEqual([]);
+  });
+
+  it('INT-WRK-013 ambang likuiditas pengguna (mode manual, min 5 jt / maks 50 bps) → risk flag & penjelasan memakai batas pengguna: POOR_LIQUIDITY tetap, WIDE_SPREAD hilang', async () => {
+    const user = { minQuoteVolume24h: 5_000_000, maxSpreadBps: 50 };
+    const { scanner, repos, driver, alerts, logs } = await setup({
+      settings: withSettings({ symbols: { mode: 'manual', manual: [SA] }, liquidity: user }),
+      configure: (binance) => Object.assign(binance.listing.get(SA), { quoteVolume: '2500000.00', bid: '99.8000', ask: '100.2000' }),
+    });
+    await scanner.start();
+    const liquidity = { quoteVolume24h: 2_500_000, spreadBps: spreadOf('99.8000', '100.2000') };
+    expect(scanner.liquidityOf(SA)).toEqual({ quoteVolume24h: 2_500_000, spreadBps: expect.closeTo(liquidity.spreadBps, 9), thresholds: user });
+
+    await driver.runUntil(END);
+
+    // Acuan replay dengan ambang yang sama (params.view) — dan berbeda dari acuan ambang default.
+    const reference = referenceReplay(SA, liquidity, { params: { view: user } });
+    const expected = expectedHistory(SA, reference);
+    assertReferenceShape(expected);
+    expect(expectedHistory(SA, referenceReplay(SA, liquidity))[0].riskFlags).toEqual(['POOR_LIQUIDITY', 'WIDE_SPREAD']);
+    const history = await repos.signals.history({ symbol: SA, limit: 10 });
+    expect(withoutIds(history)).toEqual(expected);
+    const [signal] = history;
+    expect(signal.riskFlags).toEqual(['POOR_LIQUIDITY']);
+    expect(signal.explanation).toEqual(expect.arrayContaining([
+      expect.objectContaining({ factor: 'RISK:POOR_LIQUIDITY', detail: 'Quote volume 24 jam 2500000 < batas 5000000' }),
+      expect.objectContaining({ factor: 'CONTEXT:LIQUIDITY', detail: 'Quote volume 24 jam 2500000 (batas 5000000), spread 40 bps (batas 50)' }),
+    ]));
+    expect(signal.explanation.some((e) => e.factor === 'RISK:WIDE_SPREAD')).toBe(false);
+    expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
+    expect(alerts.length).toBeGreaterThan(0);
+    expect(alerts.every((a) => a.view.riskFlags.includes('POOR_LIQUIDITY') && !a.view.riskFlags.includes('WIDE_SPREAD'))).toBe(true);
     expect(problems(logs)).toEqual([]);
   });
 

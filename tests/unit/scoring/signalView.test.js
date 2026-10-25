@@ -103,6 +103,17 @@ describe('signal view & penjelasan skor', () => {
     expect(strict.riskFlags).toEqual(['POOR_LIQUIDITY', 'WIDE_SPREAD']);
   });
 
+  it('UNIT-SVW-005 params (ambang pengguna 1 jt / 30 bps) → flag dinilai dengan batas itu dan penjelasan menampilkan batas yang dipakai', () => {
+    const v = view({ liquidity: { quoteVolume24h: 900_000, spreadBps: 25 }, params: { minQuoteVolume24h: 1_000_000, maxSpreadBps: 30 } });
+    expect(v.riskFlags).toEqual(['POOR_LIQUIDITY']);
+    expect(v.explanation.find((e) => e.factor === 'RISK:POOR_LIQUIDITY').detail).toBe('Quote volume 24 jam 900000 < batas 1000000');
+    expect(v.explanation.find((e) => e.factor === 'CONTEXT:LIQUIDITY').detail).toBe('Quote volume 24 jam 900000 (batas 1000000), spread 25 bps (batas 30)');
+    // Override sebagian: kunci lain tetap default.
+    const partial = view({ liquidity: { quoteVolume24h: 900_000, spreadBps: 25 }, params: { maxSpreadBps: 30 } });
+    expect(partial.explanation.find((e) => e.factor === 'CONTEXT:LIQUIDITY').detail)
+      .toBe(`Quote volume 24 jam 900000 (batas ${DEFAULT_VIEW_PARAMS.minQuoteVolume24h}), spread 25 bps (batas 30)`);
+  });
+
   it('EDGE-SVW-002 likuiditas/konteks/kualitas data tidak tersedia → tanpa flag, dijelaskan', () => {
     const v = view({ liquidity: undefined, context: undefined, dataQuality: undefined });
     expect(v.riskFlags).toEqual([]);
