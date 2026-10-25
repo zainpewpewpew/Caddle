@@ -31,6 +31,13 @@ Detail: [docs/03-rencana-implementasi.md](docs/03-rencana-implementasi.md).
 Prasyarat: Node.js 22.12+ (LTS).
 
 ```bash
+git clone https://github.com/zainpewpewpew/Caddle.git
+cd Caddle
+```
+
+> **macOS:** `.npmrc` memakai `ignore-scripts=true`, sehingga modul native memakai binary prebuilt bawaan paket. Di Mac Apple Silicon (M1/M2/M3/M4) semuanya langsung jalan. Di Mac Intel, `argon2` belum menyertakan binary `darwin-x64`; setelah `npm ci` jalankan sekali `npm rebuild argon2 --ignore-scripts=false` (butuh Xcode Command Line Tools: `xcode-select --install`).
+
+```bash
 npm ci
 cp config/.env.example .env          # sesuaikan bila perlu
 npm run migrate                      # membuat/memperbarui skema database
