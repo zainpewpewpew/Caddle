@@ -337,6 +337,24 @@ describe('repositori sinyal', () => {
     expect(await repo.closeOpenForSymbol({ symbol: 'SOLUSDT', reason: 'MONITORING_STOPPED', at: T0 })).toEqual({ closed: [] });
   });
 
+  it('UNIT-SREP-007 listOpenSeries → pasangan simbol×timeframe bersinyal terbuka (tanpa duplikat, urut simbol lalu timeframe); sinyal terminal & yang ditutup closeOpenForSymbol tidak ikut; DB kosong → []', async () => {
+    const { db, repo } = setup();
+    expect(await repo.listOpenSeries()).toEqual([]);
+    db.prepare(`INSERT INTO symbols (symbol, base_asset, quote_asset, contract_type, status, first_seen_at, last_seen_at)
+      VALUES ('SOLUSDT', 'SOL', 'USDT', 'PERPETUAL', 'TRADING', 0, 0)`).run();
+    await repo.ensurePatternDefinition(SA_V1);
+    await drive(repo, LIFECYCLE, { symbol: 'SOLUSDT' }); // berakhir EXPIRED (terminal)
+    await drive(repo, [input(0, 100)], { symbol: 'ETHUSDT' });
+    await drive(repo, LIFECYCLE.slice(0, 4));
+    await drive(repo, [input(0, 100, { timeframe: '1h' })], { timeframe: '1h' });
+    expect(await repo.getOpen({ symbol: 'SOLUSDT', timeframe: '5m' })).toBeNull();
+    expect(await repo.listOpenSeries()).toEqual([
+      { symbol: 'BTCUSDT', timeframe: '1h' }, { symbol: 'BTCUSDT', timeframe: '5m' }, { symbol: 'ETHUSDT', timeframe: '5m' },
+    ]);
+    await repo.closeOpenForSymbol({ symbol: 'BTCUSDT', reason: 'MONITORING_STOPPED', at: T0 + 9 * TF_MS['5m'] });
+    expect(await repo.listOpenSeries()).toEqual([{ symbol: 'ETHUSDT', timeframe: '5m' }]);
+  });
+
   it('NEG-SREP-004 closeOpenForSymbol menolak reason di luar MONITORING_STOP_REASONS, waktu/timeframe/simbol tidak valid — tanpa perubahan', async () => {
     const { db, repo } = setup();
     await repo.ensurePatternDefinition(SA_V1);

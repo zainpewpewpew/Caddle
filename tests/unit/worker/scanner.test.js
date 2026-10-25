@@ -237,6 +237,7 @@ function setup({
   onMonitoringStopped,
   logger = silentLogger,
   localClock,
+  listOpenSeries,
 } = {}) {
   const log = [];
   const timers = createFakeTimers();
@@ -268,6 +269,7 @@ function setup({
     serverClock,
     onMonitoringStopped,
     ...(localClock ? { localClock: localClock(timers) } : {}),
+    ...(listOpenSeries ? { listOpenSeries } : {}),
   });
   return { scanner, rest, repos, streams, timers, analysed, log, settings };
 }
@@ -694,6 +696,95 @@ describe('rediscovery & delisting', () => {
     await scanner.stop();
     const base = { rest, repos, streamFactory: ctx.streams.factory, getSettings: async () => ({}), discoverSymbols: fakeDiscover };
     expect(() => createScanner({ ...base, onMonitoringStopped: 'tutup' })).toThrow(TypeError);
+  });
+
+  it('UNIT-SCN-018 listOpenSeries (level-triggered): seri bersinyal terbuka yang tidak dipantau dilaporkan tiap discovery berhasil — timeframe di luar pengaturan → MONITORING_STOPPED [tf], TRADING tak terpilih → MONITORING_STOPPED, hilang dari exchangeInfo → SYMBOL_DELISTED; callback gagal dicoba lagi siklus berikutnya; discovery gagal → tidak ada pelepasan', async () => {
+    // Sinyal terbuka palsu (SINTETIS): 'SIMBOL:timeframe'; penutupan yang berhasil menghapusnya.
+    const open = new Set(['BTCUSDT:1h', 'BTCUSDT:5m', 'ETHUSDT:5m', 'IDLEUSDT:5m', 'OLDUSDT:15m']);
+    const stops = [];
+    let failures = 1;
+    const ctx = setup({
+      symbols: ['BTCUSDT', 'ETHUSDT'],
+      listOpenSeries: async () => [...open].sort().map((k) => ({ symbol: k.split(':')[0], timeframe: k.split(':')[1] })),
+      onMonitoringStopped: async (e) => {
+        stops.push(e);
+        if (failures > 0) {
+          failures -= 1;
+          throw new Error('database is locked');
+        }
+        for (const k of [...open]) {
+          const [symbol, tf] = k.split(':');
+          if (symbol === e.symbol && (e.timeframes === null || e.timeframes.includes(tf))) open.delete(k);
+        }
+      },
+    });
+    const { scanner, rest, repos, timers } = ctx;
+    rest.exchange = [...rest.exchange, { ...symbolInfo('IDLEUSDT'), contractType: 'CURRENT_QUARTER' }];
+    await scanner.start();
+    expect(stops).toEqual([
+      { symbol: 'BTCUSDT', timeframes: ['1h'], reason: 'MONITORING_STOPPED', at: START },
+      { symbol: 'IDLEUSDT', timeframes: null, reason: 'MONITORING_STOPPED', at: START },
+      { symbol: 'OLDUSDT', timeframes: null, reason: 'SYMBOL_DELISTED', at: START },
+    ]);
+    expect(recordedErrors(repos)).toEqual([{ at: START, source: 'monitoring', message: 'database is locked' }]);
+    expect([...open].sort()).toEqual(['BTCUSDT:1h', 'BTCUSDT:5m', 'ETHUSDT:5m']);
+
+    // Discovery gagal → fallback tanpa pelepasan, walau masih ada seri terbuka yang tidak dipantau.
+    rest.failDiscovery = true;
+    await timers.advance(3_600_000);
+    expect(stops).toHaveLength(3);
+
+    rest.failDiscovery = false;
+    await timers.advance(60_000); // percobaan ulang discovery berhasil → penutupan yang gagal dicoba lagi
+    expect(stops.slice(3)).toEqual([{ symbol: 'BTCUSDT', timeframes: ['1h'], reason: 'MONITORING_STOPPED', at: START + 3_660_000 }]);
+    expect([...open].sort()).toEqual(['BTCUSDT:5m', 'ETHUSDT:5m']);
+    await timers.advance(3_600_000);
+    expect(stops).toHaveLength(4);
+    await scanner.stop();
+
+    const base = { rest, repos, streamFactory: ctx.streams.factory, getSettings: async () => ({}), discoverSymbols: fakeDiscover };
+    expect(() => createScanner({ ...base, listOpenSeries: [] })).toThrow(TypeError);
+  });
+
+  it('UNIT-SCN-019 stop() saat setMonitored rediscovery (simbol delisted) → tidak ada pelepasan di siklus itu; scanner berikutnya di atas DB yang sama menutupnya saat start lewat listOpenSeries; listOpenSeries gagal → error "monitoring"', async () => {
+    const open = [{ symbol: 'ETHUSDT', timeframe: '5m' }];
+    const stops = [];
+    const ctx = setup({ symbols: ['BTCUSDT', 'ETHUSDT'], listOpenSeries: async () => open, onMonitoringStopped: async (e) => { stops.push(e); } });
+    const { scanner, rest, repos, timers } = ctx;
+    await scanner.start();
+    expect(stops).toEqual([]);
+
+    rest.exchange = [symbolInfo('BTCUSDT'), symbolInfo('ETHUSDT', 'SETTLING')];
+    let release;
+    repos.symbols.setMonitored.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    await timers.advance(3_600_000);
+    expect(release).toBeTypeOf('function');
+    const stopping = scanner.stop();
+    release();
+    await stopping;
+    expect(stops).toEqual([]);
+
+    // Restart: DB sudah tidak memantau ETHUSDT (setMonitored terlanjur commit), sinyalnya masih terbuka.
+    const restartAt = timers.clock();
+    const second = createScanner({
+      rest, repos, streamFactory: ctx.streams.factory, getSettings: async () => ctx.settings, discoverSymbols: fakeDiscover,
+      clock: timers.clock, setTimer: timers.setTimer, clearTimer: timers.clearTimer,
+      listOpenSeries: async () => open, onMonitoringStopped: async (e) => { stops.push(e); },
+    });
+    await second.start();
+    expect(stops).toEqual([{ symbol: 'ETHUSDT', timeframes: null, reason: 'SYMBOL_DELISTED', at: restartAt }]);
+    await second.stop();
+
+    const third = createScanner({
+      rest, repos, streamFactory: ctx.streams.factory, getSettings: async () => ctx.settings, discoverSymbols: fakeDiscover,
+      clock: timers.clock, setTimer: timers.setTimer, clearTimer: timers.clearTimer,
+      listOpenSeries: async () => { throw new Error('SQLITE_IOERR'); },
+    });
+    repos.ingestion.recordError.mockClear();
+    await third.start();
+    expect(recordedErrors(repos)).toEqual([{ at: timers.clock(), source: 'monitoring', message: 'SQLITE_IOERR' }]);
+    expect(third.status()).toMatchObject({ state: 'running', symbols: 1 });
+    await third.stop();
   });
 
   it('UNIT-SCN-016 simbol exchangeInfo yang ditolak repositori dicatat sekali per discovery: delivery saja → debug, bentuk lain → info; bukan error ingesti', async () => {

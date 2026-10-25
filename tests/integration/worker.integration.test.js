@@ -1012,6 +1012,72 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(problems(logs)).toEqual(['simbol delisted, stream dihentikan']);
   });
 
+  it('INT-WRK-021 penutupan sinyal simbol delisted gagal sekali (SQLITE_BUSY) → error "monitoring" tercatat, sinyal masih terbuka; rediscovery berikutnya mencoba lagi (level-triggered) → EXPIRED reason SYMBOL_DELISTED', async () => {
+    const REDISCOVERY = 20 * 60_000;
+    const { scanner, repos, binance, driver, stopped, alerts } = await setup({ scannerOptions: { rediscoveryMs: REDISCOVERY } });
+    await scanner.start();
+    const delistAt = START + 4 * REDISCOVERY;
+    await driver.runUntil(delistAt - 1_000);
+    expect((await repos.signals.listActive()).map((s) => [s.symbol, s.timeframe, s.state])).toEqual([[SA, '5m', 'EARLY_BULLISH']]);
+    const alertsBefore = alerts.length;
+
+    const close = repos.signals.closeOpenForSymbol;
+    let busy = 1;
+    repos.signals.closeOpenForSymbol = async (args) => {
+      if (busy > 0) {
+        busy -= 1;
+        throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+      }
+      return close.call(repos.signals, args);
+    };
+    binance.listing.get(SA).status = 'SETTLING';
+    await driver.runUntil(delistAt + 1_000);
+    expect(stopped).toEqual([{ symbol: SA, timeframes: null, reason: 'SYMBOL_DELISTED', at: delistAt }]);
+    expect((await repos.signals.listActive()).map((s) => s.symbol)).toEqual([SA]);
+    expect((await repos.ingestion.getStatus()).recentErrors).toEqual([
+      expect.objectContaining({ at: delistAt, source: 'monitoring', message: 'database is locked' }),
+    ]);
+
+    await driver.runUntil(delistAt + REDISCOVERY + 1_000);
+    expect(stopped).toEqual([
+      { symbol: SA, timeframes: null, reason: 'SYMBOL_DELISTED', at: delistAt },
+      { symbol: SA, timeframes: null, reason: 'SYMBOL_DELISTED', at: delistAt + REDISCOVERY },
+    ]);
+    expect(await repos.signals.listActive()).toEqual([]);
+    const [closed] = await repos.signals.history({ symbol: SA, limit: 10 });
+    expect(closed).toMatchObject({ state: 'EXPIRED', finalOutcome: 'EXPIRED:EARLY_BULLISH', closedAt: delistAt + REDISCOVERY });
+    expect(closed.events.at(-1)).toMatchObject({ toState: 'EXPIRED', candleTime: at5m(63), detail: { reason: 'SYMBOL_DELISTED' } });
+    expect(alerts.length).toBe(alertsBefore);
+
+    // Sudah tertutup → rediscovery berikutnya tidak melaporkan lagi.
+    await driver.runUntil(delistAt + 2 * REDISCOVERY + 1_000);
+    expect(stopped).toHaveLength(2);
+  });
+
+  it('INT-WRK-022 restart di atas database dengan sinyal yatim (simbol is_monitored=0 — DB lama / stop() di tengah siklus) yang kini SETTLING → start pertama menutupnya EXPIRED SYMBOL_DELISTED; simbol lain tidak tersentuh', async () => {
+    const ctx = await setup();
+    const { timers, db, binance } = ctx;
+    await ctx.scanner.start();
+    await ctx.driver.runUntil(at5m(65) + 1_000);
+    expect((await ctx.repos.signals.listActive()).map((s) => [s.symbol, s.state])).toEqual([[SA, 'EARLY_BULLISH']]);
+    await ctx.scanner.stop();
+    // Status pantauan sudah dilepas di DB tanpa sinyal ditutup (mis. DB sebelum perbaikan ini).
+    db.prepare('UPDATE symbols SET is_monitored = 0 WHERE symbol = ?').run(SA);
+    binance.listing.get(SA).status = 'SETTLING';
+
+    const restartAt = at5m(69) + 7_000;
+    await timers.advance(restartAt - timers.clock());
+    const b = await createWorker({ timers, db, binance });
+    await b.scanner.start();
+    expect(b.stopped).toEqual([{ symbol: SA, timeframes: null, reason: 'SYMBOL_DELISTED', at: restartAt }]);
+    expect(await b.repos.signals.listActive()).toEqual([]);
+    const [closed] = await b.repos.signals.history({ symbol: SA, limit: 10 });
+    expect(closed).toMatchObject({ state: 'EXPIRED', closedAt: restartAt });
+    expect(closed.events.at(-1).detail.reason).toBe('SYMBOL_DELISTED');
+    expect(b.scanner.status()).toMatchObject({ symbols: 1, streams: 3 });
+    expect((await b.repos.ingestion.getStatus()).recentErrors).toEqual([]);
+  });
+
   it('INT-WRK-007 restart worker di atas database yang sama: bootstrap hanya mengambil candle setelah lastOpenTime, sinyal terbuka dilanjutkan tanpa sinyal/event ganda', async () => {
     const ctx = await setup();
     const { timers, db, binance } = ctx;

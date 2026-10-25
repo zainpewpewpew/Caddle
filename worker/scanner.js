@@ -7,6 +7,8 @@
 // - sweep berkala menambal stream yang tertinggal (fallback bila WS diam);
 // - rediscovery periodik menangani simbol baru & delisting; simbol/timeframe yang berhenti dipantau
 //   dilaporkan lewat onMonitoringStopped (worker menutup sinyal terbukanya) SETELAH stream-nya dilepas;
+//   dengan `listOpenSeries`, setiap discovery yang berhasil juga merekonsiliasi seri bersinyal terbuka yang
+//   tidak lagi dipantau (level-triggered: callback gagal, stop() di tengah siklus, DB lama → dicoba lagi);
 // - semua error dicatat (dengan throttle) dan tidak menghentikan proses;
 // - bila `serverClock` diberikan, jam disinkronkan dengan waktu server Binance di awal setiap siklus
 //   (start, rediscovery, dan percobaan ulang discovery); `clock` sebaiknya = serverClock.now.
@@ -144,6 +146,7 @@ function liquidityThresholds(raw) {
  *   onClosedCandles?: (e: { symbol: string, timeframe: string, candles: object[], reason: string }) => Promise<void>|void,
  *   onMonitoringStopped?: (e: { symbol: string, timeframes: string[]|null, reason: 'SYMBOL_DELISTED'|'MONITORING_STOPPED',
  *     at: number }) => Promise<void>|void,
+ *   listOpenSeries?: () => Promise<Array<{ symbol: string, timeframe: string }>>,
  *   discoverSymbols: (args: { symbols: object[], tickers: object[], bookTickers: object[], settings: object })
  *     => { selected: Array<{ symbol: string }>, rejected: object[] } | Promise<object>,
  *   clock?: () => number, localClock?: () => number, logger?: object, setTimer?: Function, clearTimer?: Function, options?: object,
@@ -158,6 +161,12 @@ function liquidityThresholds(raw) {
  *   MONITORING_STOPPED, timeframes null (= semua); (b) simbol yang tetap dipantau tetapi timeframe-nya dilepas
  *   dari pengaturan — MONITORING_STOPPED dengan timeframes tersebut. Error dicatat (sumber 'monitoring').
  *   Hanya setelah discovery berhasil; fallback daftar DB tidak pernah melepas simbol.
+ *   listOpenSeries: seri simbol×timeframe yang masih punya sinyal terbuka (worker: repos.signals.listOpenSeries).
+ *   Setelah setiap discovery berhasil dan pelaporan di atas, seri terbuka yang tidak dipantau (simbol tidak
+ *   terpilih → timeframes null, reason SYMBOL_DELISTED bila simbol tidak TRADING/hilang dari exchangeInfo, selain itu
+ *   MONITORING_STOPPED; simbol terpilih dengan timeframe di luar pengaturan → MONITORING_STOPPED + timeframe itu)
+ *   juga dilaporkan, kecuali yang sudah dilaporkan di siklus yang sama. Penutupan yang gagal atau terlewat
+ *   (stop() di tengah siklus, timeframe dilepas saat worker mati, sinyal yatim dari DB lama) dicoba lagi tiap siklus.
  * @returns {{ start(): Promise<void>, stop(): Promise<void>, status(): object, liquidityOf(symbol: string): object|null }}
  */
 export function createScanner({
@@ -167,6 +176,7 @@ export function createScanner({
   getSettings,
   onClosedCandles = async () => {},
   onMonitoringStopped = async () => {},
+  listOpenSeries = null,
   discoverSymbols,
   clock = Date.now,
   localClock = clock,
@@ -178,6 +188,7 @@ export function createScanner({
 }) {
   assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, serverClock });
   if (typeof clock !== 'function' || typeof localClock !== 'function') throw new TypeError('clock dan localClock wajib berupa fungsi');
+  if (listOpenSeries !== null && typeof listOpenSeries !== 'function') throw new TypeError('listOpenSeries harus fungsi atau null');
   const cfg = { ...SCANNER_DEFAULTS, ...options };
   const limiter = createLimiter(cfg.restConcurrency);
 
@@ -604,6 +615,12 @@ export function createScanner({
       byTimeframe.get(symbol).push(timeframe);
     }
     for (const [symbol, timeframes] of byTimeframe) events.push({ symbol, timeframes, reason: 'MONITORING_STOPPED' });
+    await emitStopped(events, at);
+    // Seri yang sudah dilaporkan siklus ini (berhasil atau tidak): simbol (semua timeframe) atau simbol:timeframe.
+    return new Set(events.flatMap((e) => (e.timeframes === null ? [e.symbol] : e.timeframes.map((tf) => streamKey(e.symbol, tf)))));
+  }
+
+  async function emitStopped(events, at) {
     for (const e of events) {
       try {
         await onMonitoringStopped({ ...e, at });
@@ -614,10 +631,42 @@ export function createScanner({
   }
 
   /**
+   * Rekonsiliasi level-triggered setelah discovery berhasil: seri yang masih punya sinyal terbuka tetapi tidak
+   * dipantau lagi dilaporkan (kecuali `covered` — sudah dilaporkan siklus ini; kegagalannya dicoba siklus berikut).
+   */
+  async function reconcileOpenSignals(target, statusBySymbol, covered, at) {
+    if (!listOpenSeries || isStopping()) return;
+    let open;
+    try {
+      open = await listOpenSeries();
+      if (!Array.isArray(open)) throw new TypeError('listOpenSeries harus mengembalikan array');
+    } catch (err) {
+      await report('monitoring', err);
+      return;
+    }
+    const kept = new Set(target);
+    const wanted = new Set(settings.timeframes);
+    const bySymbol = new Map();
+    for (const s of open) {
+      if (typeof s?.symbol !== 'string' || !TIMEFRAMES.includes(s?.timeframe)) continue;
+      if (kept.has(s.symbol) && wanted.has(s.timeframe)) continue;
+      if (covered.has(s.symbol) || covered.has(streamKey(s.symbol, s.timeframe))) continue;
+      if (!bySymbol.has(s.symbol)) bySymbol.set(s.symbol, new Set());
+      bySymbol.get(s.symbol).add(s.timeframe);
+    }
+    const events = [...bySymbol].map(([symbol, timeframes]) => (kept.has(symbol)
+      ? { symbol, timeframes: TIMEFRAMES.filter((tf) => timeframes.has(tf)), reason: 'MONITORING_STOPPED' }
+      : { symbol, timeframes: null, reason: statusBySymbol.get(symbol) === 'TRADING' ? 'MONITORING_STOPPED' : 'SYMBOL_DELISTED' }));
+    if (events.length > 0) logger.info({ series: events.map((e) => e.symbol) }, 'sinyal terbuka pada seri yang tidak dipantau, dilaporkan untuk ditutup');
+    await emitStopped(events, at);
+  }
+
+  /**
    * Menyesuaikan set stream dengan target; stream baru di-bootstrap. Mengembalikan jumlah candle.
    * `stopped` (dari syncSymbols) + stream yang dilepas → onMonitoringStopped setelah stream lama berhenti.
+   * `statusBySymbol` (status exchangeInfo discovery ini; null pada fallback DB) → rekonsiliasi sinyal terbuka.
    */
-  async function applyTarget(target, stopped = new Map(), at = clock()) {
+  async function applyTarget(target, stopped = new Map(), at = clock(), statusBySymbol = null) {
     const desired = new Map();
     for (const symbol of target) {
       for (const timeframe of settings.timeframes) desired.set(streamKey(symbol, timeframe), { symbol, timeframe });
@@ -640,7 +689,9 @@ export function createScanner({
       let n = 0;
       return enqueue(st, async () => { n = await bootstrapStream(st); }).then(() => n);
     }));
-    await notified;
+    const covered = await notified;
+    // Hanya setelah discovery berhasil (statusBySymbol ada); fallback daftar DB tidak pernah melepas apa pun.
+    if (statusBySymbol) await reconcileOpenSignals(target, statusBySymbol, covered, at);
     return counts.reduce((a, b) => a + b, 0);
   }
 
@@ -668,11 +719,13 @@ export function createScanner({
       await loadSettings();
       let target = null;
       let stopped = new Map();
+      let statusBySymbol = null;
       try {
         const found = await discover();
         checkStopping();
         stopped = await syncSymbols(found.symbols, found.selected, at);
         target = found.selected;
+        statusBySymbol = new Map(found.symbols.map((s) => [s?.symbol, s?.status]));
         discoveryFailures = 0;
       } catch (err) {
         if (err instanceof ScannerStopped) throw err;
@@ -683,7 +736,7 @@ export function createScanner({
         if (monitored.length === 0) target = await repos.symbols.listMonitored();
       }
       checkStopping();
-      if (target !== null) stats.candles += await applyTarget(target, stopped, at);
+      if (target !== null) stats.candles += await applyTarget(target, stopped, at, statusBySymbol);
       logger.info({ kind, symbols: monitored.length, streams: streams.size, candles: stats.candles }, 'siklus scanner selesai');
     } catch (err) {
       if (!(err instanceof ScannerStopped)) {

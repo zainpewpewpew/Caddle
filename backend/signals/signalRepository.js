@@ -201,6 +201,10 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       WHERE s.symbol_id = @symbolId AND s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT')
         AND s.timeframe IN (SELECT value FROM json_each(@timeframes))
       ORDER BY s.timeframe, s.id`),
+    openSeries: db.prepare(`SELECT DISTINCT sym.symbol, s.timeframe
+      FROM signals s JOIN symbols sym ON sym.id = s.symbol_id
+      WHERE s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT')
+      ORDER BY sym.symbol, s.timeframe`),
     lastStoredClose: db.prepare(`SELECT open_time, close FROM candles
       WHERE symbol_id = ? AND timeframe = ? ORDER BY open_time DESC LIMIT 1`),
     expireSignal: db.prepare(`UPDATE signals SET state = 'EXPIRED', final_outcome = @finalOutcome,
@@ -393,6 +397,16 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
         list = [...new Set(timeframes)];
       }
       return { closed: closeForSymbolTx({ symbol, timeframes: list, reason, at }) };
+    },
+
+    /**
+     * Pasangan simbol × timeframe yang masih punya sinyal terbuka (QUIET/EARLY_BULLISH/MOMENTUM_BUILDING/BREAKOUT),
+     * tanpa duplikat, urut simbol lalu timeframe. Dipakai scanner untuk menutup sinyal seri yang tidak lagi
+     * dipantau secara level-triggered (lihat createScanner `listOpenSeries`).
+     * @returns {Promise<Array<{ symbol: string, timeframe: string }>>}
+     */
+    async listOpenSeries() {
+      return stmt.openSeries.all().map((r) => ({ symbol: r.symbol, timeframe: r.timeframe }));
     },
 
     /**

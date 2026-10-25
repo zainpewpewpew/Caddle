@@ -100,6 +100,8 @@ export function assembleWorker({
       onMonitoringStopped?.(e);
       await pipeline.closeSymbol(e);
     },
+    // Rekonsiliasi level-triggered: sinyal terbuka untuk seri yang tidak dipantau ditutup tiap discovery berhasil.
+    listOpenSeries: () => repos.signals.listOpenSeries(),
     // Waktu pasar (closeTime, backfill, sweep) = jam server; stempel operasional yang dibandingkan
     // /api/system/status dengan Date.now proses API (heartbeat, run, error, lastIngestionAt) = jam lokal.
     clock: serverClock.now,

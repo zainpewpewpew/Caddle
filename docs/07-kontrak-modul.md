@@ -128,7 +128,7 @@ createServerClock({ getServerTime, clock = Date.now, logger, maxOffsetMs = 600_0
   // sehingga klien REST boleh memakai serverClock.now. Percobaan gagal retryable / RTT terlalu panjang → sampel BARU
   // (maks maxAttempts per sync); error retryable:false (mis. HTTP 400) dan BAD_RESPONSE tidak diulang.
 
-createScanner({ rest, streamFactory, repos, getSettings, onClosedCandles, onMonitoringStopped?, discoverSymbols,
+createScanner({ rest, streamFactory, repos, getSettings, onClosedCandles, onMonitoringStopped?, listOpenSeries?, discoverSymbols,
   clock, localClock? = clock, logger, setTimer, clearTimer, options /* SCANNER_DEFAULTS */, serverClock? })
   → { start(), stop(), status(), liquidityOf(symbol) }
   // clock = waktu server (worker: serverClock.now) untuk semua perbandingan dengan closeTime (rencana backfill/gap,
@@ -145,6 +145,14 @@ onMonitoringStopped({ symbol, timeframes: string[] | null, reason: 'SYMBOL_DELIS
   // setelah discovery berhasil & stream lama dilepas: simbol yang sebelumnya dipantau (termasuk daftar DB di siklus
   // pertama) dan tidak terpilih lagi → timeframes null (semua); timeframe yang dilepas dari pengaturan untuk simbol
   // yang tetap dipantau → MONITORING_STOPPED dengan timeframes itu. Error dicatat (sumber 'monitoring').
+listOpenSeries?() → Promise<Array<{ symbol, timeframe }>>   // worker: repos.signals.listOpenSeries
+  // Rekonsiliasi LEVEL-TRIGGERED setelah setiap discovery berhasil (sesudah pelaporan di atas): seri bersinyal
+  // terbuka yang tidak dipantau → onMonitoringStopped — simbol tidak terpilih → timeframes null, reason
+  // SYMBOL_DELISTED bila tidak TRADING / hilang dari exchangeInfo, selain itu MONITORING_STOPPED; simbol terpilih
+  // dengan timeframe di luar pengaturan → MONITORING_STOPPED + timeframe itu. Seri yang sudah dilaporkan di siklus
+  // yang sama dilewati. Menutup ulang penutupan yang gagal (callback error), stop() di tengah siklus (setMonitored
+  // sudah commit), timeframe dilepas saat worker mati, dan sinyal yatim dari DB lama. Fallback daftar DB (discovery
+  // gagal) tidak pernah merekonsiliasi. Error listOpenSeries dicatat (sumber 'monitoring').
 liquidityOf(symbol) → { quoteVolume24h, spreadBps, thresholds: { minQuoteVolume24h, maxSpreadBps } | null } | null
     // dari discovery terakhir; thresholds = settings.liquidity yang dipakai discovery tersebut
 ```
@@ -158,7 +166,7 @@ assembleWorker({ db, logger, clock = Date.now /* jam lokal */, fetch?, restSleep
   → { serverClock, repos, rest, pipeline, scanner, getSettings }
   // Tanpa efek samping (tidak membuka DB, tidak memasang handler sinyal, tidak memulai timer/jaringan).
   // Merakit jam server, klien REST, repositori, pipeline analisis, dan scanner (onMonitoringStopped →
-  // pipeline.closeSymbol); serverClock.now menjadi clock klien REST, repositori (createRepositories(db, { clock })
+  // pipeline.closeSymbol, listOpenSeries → repos.signals.listOpenSeries); serverClock.now menjadi clock klien REST, repositori (createRepositories(db, { clock })
   // — validasi "tertutup" candle), dan scanner. Pemanggil menjalankan `await pipeline.ensureDefinitions()`
   // sebelum `scanner.start()`. Dipakai juga oleh tes integrasi worker sehingga perakitan produksi ikut teruji.
   // onAnalysed / onMonitoringStopped hanya pengamat (log/tes).
@@ -230,6 +238,9 @@ createSignalRepository(db, { clock }) → {
       // Satu transaksi: state → EXPIRED, closed_at = updated_at = at, final_outcome 'EXPIRED:<peakState>',
       // event { occurredAt: at, candleTime: candle terakhir yang dievaluasi, price: close candle tersimpan
       // terakhir | null, detail: { reason, barsInPrevState, firstDetectedPrice, invalidationPrice, priceCandleTime } }.
+  listOpenSeries(): Promise<Array<{ symbol, timeframe }>>,
+      // pasangan simbol × timeframe yang masih punya sinyal terbuka, tanpa duplikat, urut simbol lalu timeframe
+      // (rekonsiliasi level-triggered scanner)
   listActive({ timeframe?, classification?, state?, minScore?, limit = 200 (maks 500) }),
   history({ symbol?, limit = 50 }),                                   // termasuk events[]
 }
@@ -285,6 +296,7 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 | `heartbeat({ at, state })` dengan metrik terpisah | `state` = snapshot `status()` lengkap | Metrik sempat hilang karena kontrak tidak cocok; satu objek menghindari drift |
 | Scanner tanpa info likuiditas | `liquidityOf(symbol)` | Risk flag `POOR_LIQUIDITY`/`WIDE_SPREAD` butuh data discovery |
 | Sinyal simbol yang delisted/berhenti dipantau tetap terbuka selamanya | `closeOpenForSymbol` + `pipeline.closeSymbol` + `onMonitoringStopped` scanner | Expiry hanya maju saat ada candle baru; tanpa penutupan eksplisit screener terus menampilkan sinyal basi |
+| Penutupan hanya saat simbol/timeframe berubah (edge-triggered) | `+ listOpenSeries` (scanner & `signalRepository`): rekonsiliasi tiap discovery berhasil | Callback yang gagal, stop() di tengah siklus, perubahan saat worker mati, dan sinyal yatim DB lama tidak pernah dicoba ulang |
 | `upsertFromExchange` → `{ inserted, updated, rejected }` (tak terbatas, diabaikan scanner) | `+ rejectedCount`, `rejected` dibatasi 50; scanner mencatatnya per discovery | Simbol yang tidak lolos pola (kontrak delivery) sebelumnya hilang tanpa jejak |
 | Perakitan worker hanya di `main()` `worker/index.js` (tes integrasi menyalin perakitannya) | `worker/assemble.js` → `assembleWorker` | Regresi perakitan (mis. repositori/REST kembali ke `Date.now`) tidak tertangkap tes |
 | Semua stempel scanner memakai `clock` = waktu server | `localClock` (jam host) untuk heartbeat/run/error/lastIngestionAt | API membandingkan heartbeat dengan `Date.now` lokal; dengan waktu server, host yang > 60 detik lebih cepat tampil `stale` dan worker mati tersembunyi selama offset bila host lebih lambat |
