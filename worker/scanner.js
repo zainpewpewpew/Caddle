@@ -426,13 +426,16 @@ export function createScanner({
     }
   }
 
-  /** Mengganti stream WS dengan set stream terbaru (buat yang baru dulu, baru hentikan yang lama). */
+  /**
+   * Mengganti stream WS dengan set stream terbaru (buat yang baru dulu, baru hentikan yang lama).
+   * Pada penggantian, open pertama stream baru diperlakukan seperti reconnect → sweep catch-up.
+   */
   function replaceStream() {
     const old = stream;
     stream = null;
     const list = [...streams.values()].map(({ symbol, timeframe }) => ({ symbol, timeframe }));
     if (list.length > 0) {
-      const meta = { opened: false, down: false };
+      const meta = { opened: false, down: old !== null };
       let handle = null;
       handle = streamFactory({
         streams: list,

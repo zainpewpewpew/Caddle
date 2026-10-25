@@ -607,6 +607,20 @@ describe('rediscovery & delisting', () => {
     await scanner.stop();
   });
 
+  it('EDGE-SCN-005 stream pengganti (rediscovery) memicu catch-up candle yang terlewat saat open', async () => {
+    const { scanner, rest, streams, timers, analysed } = setup({ symbols: ['BTCUSDT'], restBackfillIntervalSec: 3600 });
+    await scanner.start();
+    rest.exchange = [symbolInfo('BTCUSDT'), symbolInfo('SOLUSDT')];
+    await timers.advance(3_600_000);
+    expect(streams.created).toHaveLength(2);
+    const btc = analysed.filter((a) => a.symbol === 'BTCUSDT');
+    expect(btc.map((a) => a.reason)).toEqual(['reconnect']);
+    expect(ot(btc[0].candles)[0]).toBe(LAST_CLOSED + M5);
+    // SOLUSDT baru = bootstrap murni → tidak dianalisis
+    expect(analysed.some((a) => a.symbol === 'SOLUSDT')).toBe(false);
+    await scanner.stop();
+  });
+
   it('EDGE-SCN-004 rediscovery tanpa perubahan tidak membuat ulang stream', async () => {
     const { scanner, streams, timers, repos } = setup();
     await scanner.start();
@@ -645,7 +659,7 @@ describe('heartbeat, status, stop', () => {
     await scanner.stop(); // idempoten
   });
 
-  it('EDGE-SCN-005 stop() saat bootstrap berjalan menunggu tugas aktif dan tidak memulai REST baru', async () => {
+  it('EDGE-SCN-006 stop() saat bootstrap berjalan menunggu tugas aktif dan tidak memulai REST baru', async () => {
     const symbols = ['AAAUSDT', 'BBBUSDT', 'CCCUSDT', 'DDDUSDT', 'EEEUSDT'];
     const ctx = setup({ symbols });
     const { scanner, rest, timers } = ctx;
