@@ -236,6 +236,7 @@ function setup({
   serverClock,
   onMonitoringStopped,
   logger = silentLogger,
+  localClock,
 } = {}) {
   const log = [];
   const timers = createFakeTimers();
@@ -266,6 +267,7 @@ function setup({
     options,
     serverClock,
     onMonitoringStopped,
+    ...(localClock ? { localClock: localClock(timers) } : {}),
   });
   return { scanner, rest, repos, streams, timers, analysed, log, settings };
 }
@@ -821,6 +823,28 @@ describe('heartbeat, status, stop', () => {
     await scanner.stop();
     const base = { rest, repos, streamFactory: streams.factory, getSettings: async () => ({}), discoverSymbols: fakeDiscover };
     expect(() => createScanner({ ...base, serverClock: { sync: async () => ({ ok: true }) } })).toThrow(TypeError);
+  });
+
+  it('UNIT-SCN-017 localClock (jam host 2 menit di depan clock/waktu server) → heartbeat at, recordRun, recordError, lastIngestionAt memakai localClock; rencana bootstrap, candleLagMs, dan stempel simbol memakai clock', async () => {
+    const AHEAD = 120_000;
+    const { scanner, repos, rest, timers } = setup({ symbols: ['BTCUSDT'], localClock: (t) => () => t.clock() + AHEAD });
+    rest.failKlines.add('BTCUSDT');
+    await scanner.start();
+    expect(repos.ingestion.heartbeat.mock.calls.map(([b]) => b.at)).toEqual([START + AHEAD, START + AHEAD]);
+    expect(repos.ingestion.recordRun).toHaveBeenCalledWith(expect.objectContaining({ startedAt: START + AHEAD, finishedAt: START + AHEAD }));
+    expect(recordedErrors(repos)).toEqual([expect.objectContaining({ at: START + AHEAD, source: 'bootstrap' })]);
+    // Waktu pasar tetap jam server: bootstrap berakhir di candle tertutup terakhir menurut clock (bukan +2 menit).
+    expect(rest.klineCalls().map((r) => r.endTime)).toEqual([LAST_CLOSED + M5 - 1]);
+    expect(repos.symbols.setMonitored).toHaveBeenCalledWith(['BTCUSDT'], START);
+
+    rest.failKlines.clear();
+    await timers.advance(300_000); // sweep REST mengisi candle
+    expect(scanner.status()).toMatchObject({ lastIngestionAt: START + 300_000 + AHEAD, candleLagMs: 7_001 });
+    await scanner.stop();
+    expect(repos.ingestion.heartbeat.mock.calls.at(-1)[0].at).toBe(START + 300_000 + AHEAD);
+    expect(() => createScanner({
+      rest, repos, streamFactory: () => ({}), getSettings: async () => ({}), discoverSymbols: fakeDiscover, localClock: 5,
+    })).toThrow(TypeError);
   });
 
   it('NEG-SCN-006 dependensi wajib tidak lengkap ditolak', () => {

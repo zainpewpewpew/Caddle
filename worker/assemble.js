@@ -35,7 +35,8 @@ const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {}
  *   onMonitoringStopped?: (e: { symbol: string, timeframes: string[]|null, reason: string, at: number }) => void,
  * }} deps
  *   clock: jam LOKAL host (default Date.now). Jam server (`serverClock.now` = jam lokal + offset terukur)
- *   dibuat di sini dan menjadi jam repositori, klien REST, dan scanner.
+ *   dibuat di sini dan menjadi jam repositori, klien REST, dan scanner (`clock`); jam lokal menjadi
+ *   `localClock` scanner untuk stempel operasional (heartbeat, run, error, lastIngestionAt).
  *   fetch/restSleep/restRandom/streamFactory/setTimer/clearTimer/pipelineSleep: injeksi I/O (default produksi).
  *   onAnalysed/onMonitoringStopped: pengamat (log/tes) — dipanggil SETELAH analisis / SEBELUM penutupan sinyal.
  * @returns {{ serverClock: object, repos: object, rest: object, pipeline: object, scanner: object,
@@ -99,7 +100,10 @@ export function assembleWorker({
       onMonitoringStopped?.(e);
       await pipeline.closeSymbol(e);
     },
+    // Waktu pasar (closeTime, backfill, sweep) = jam server; stempel operasional yang dibandingkan
+    // /api/system/status dengan Date.now proses API (heartbeat, run, error, lastIngestionAt) = jam lokal.
     clock: serverClock.now,
+    localClock: clock,
     serverClock,
     logger,
     setTimer,

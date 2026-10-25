@@ -129,8 +129,13 @@ createServerClock({ getServerTime, clock = Date.now, logger, maxOffsetMs = 600_0
   // (maks maxAttempts per sync); error retryable:false (mis. HTTP 400) dan BAD_RESPONSE tidak diulang.
 
 createScanner({ rest, streamFactory, repos, getSettings, onClosedCandles, onMonitoringStopped?, discoverSymbols,
-  clock, logger, setTimer, clearTimer, options /* SCANNER_DEFAULTS */, serverClock? })
+  clock, localClock? = clock, logger, setTimer, clearTimer, options /* SCANNER_DEFAULTS */, serverClock? })
   → { start(), stop(), status(), liquidityOf(symbol) }
+  // clock = waktu server (worker: serverClock.now) untuk semua perbandingan dengan closeTime (rencana backfill/gap,
+  // sweep, staleStreams, candleLagMs) serta stempel simbol & penutupan sinyal (`at`). localClock = jam host (worker:
+  // Date.now) untuk stempel yang dibandingkan API/UI dengan jamnya sendiri: heartbeat `at`, recordRun
+  // startedAt/finishedAt (scanDurationMs), recordError `at`, lastIngestionAt. Mencampur keduanya membuat
+  // summarizeWorker salah menilai umur heartbeat sebesar offset jam.
   // serverClock: sync() di awal setiap siklus (start, rediscovery, percobaan ulang discovery) sebelum discovery;
   // hasil ok:false dicatat sebagai error ingesti sumber 'clock' (tidak menghentikan worker).
 status() = { state, lastIngestionAt, candleLagMs, reconnects, errors, scanDurationMs, queue,
@@ -144,7 +149,7 @@ liquidityOf(symbol) → { quoteVolume24h, spreadBps, thresholds: { minQuoteVolum
     // dari discovery terakhir; thresholds = settings.liquidity yang dipakai discovery tersebut
 ```
 
-Entry point `worker/index.js` (`npm run worker`) membuka SQLite + migrasi, lalu merakit dependensi lewat `worker/assemble.js`; heartbeat ditulis tiap 30 detik (memuat `clockOffsetMs`); `SIGINT`/`SIGTERM` → graceful shutdown.
+Entry point `worker/index.js` (`npm run worker`) membuka SQLite + migrasi, lalu merakit dependensi lewat `worker/assemble.js`; heartbeat ditulis tiap 30 detik (memuat `clockOffsetMs`; `at` = jam lokal); `SIGINT`/`SIGTERM` → graceful shutdown.
 
 ```text
 assembleWorker({ db, logger, clock = Date.now /* jam lokal */, fetch?, restSleep?, restRandom?, streamFactory?,
@@ -271,7 +276,7 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 | `GET /api/system/status` | — | status proses API + `scanner`, `binance`, `ingestion` dari `summarizeWorker` |
 | `GET /api/overview` | — | ringkasan + `alignedSignals`, `scanner`, `binance`, `marketContext` (BTC/ETH 1h) |
 
-`backend/system/workerStatus.js` — `summarizeWorker(ingestion, now)` membaca heartbeat di database. Heartbeat lebih tua dari 90 detik → `stale`; tanpa heartbeat → `not_running` (tidak pernah angka palsu). `backend/system/marketContext.js` — `buildMarketContext(candles, symbols)` → `classifyTrend` pada 120 candle 1h; tanpa data → `{ status: 'no_data' }`.
+`backend/system/workerStatus.js` — `summarizeWorker(ingestion, now)` membaca heartbeat di database; `now` = `Date.now()` proses API, sehingga `heartbeat.at` (dan `lastIngestionAt`, `lastRun`, `recentErrors[].at`) wajib distempel jam lokal host oleh worker (`localClock` scanner), bukan waktu server Binance. Heartbeat lebih tua dari 90 detik → `stale`; tanpa heartbeat → `not_running` (tidak pernah angka palsu). `backend/system/marketContext.js` — `buildMarketContext(candles, symbols)` → `classifyTrend` pada 120 candle 1h; tanpa data → `{ status: 'no_data' }`.
 
 ## 10. Penyimpangan dari draf awal
 
@@ -282,6 +287,7 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 | Sinyal simbol yang delisted/berhenti dipantau tetap terbuka selamanya | `closeOpenForSymbol` + `pipeline.closeSymbol` + `onMonitoringStopped` scanner | Expiry hanya maju saat ada candle baru; tanpa penutupan eksplisit screener terus menampilkan sinyal basi |
 | `upsertFromExchange` → `{ inserted, updated, rejected }` (tak terbatas, diabaikan scanner) | `+ rejectedCount`, `rejected` dibatasi 50; scanner mencatatnya per discovery | Simbol yang tidak lolos pola (kontrak delivery) sebelumnya hilang tanpa jejak |
 | Perakitan worker hanya di `main()` `worker/index.js` (tes integrasi menyalin perakitannya) | `worker/assemble.js` → `assembleWorker` | Regresi perakitan (mis. repositori/REST kembali ke `Date.now`) tidak tertangkap tes |
+| Semua stempel scanner memakai `clock` = waktu server | `localClock` (jam host) untuk heartbeat/run/error/lastIngestionAt | API membandingkan heartbeat dengan `Date.now` lokal; dengan waktu server, host yang > 60 detik lebih cepat tampil `stale` dan worker mati tersembunyi selama offset bila host lebih lambat |
 | Worker memakai jam lokal (`Date.now`) | `createServerClock` + sinkronisasi `/fapi/v1/time` tiap siklus scanner (sampel satu percobaan `rest.sampleServerTime`, RTT ≤ 1 detik) | Jam lokal yang lebih cepat membuat kline final WS ditolak ("belum tertutup"); yang lebih lambat dapat menganggap candle berjalan tertutup |
 | Risk flag likuiditas selalu dinilai dengan `DEFAULT_VIEW_PARAMS` | `liquidityOf` menyertakan `thresholds` dari `settings.liquidity`; `analyzeAt` menerima `params.view` | Batas pengguna (terutama mode manual) harus sama dengan batas yang ditampilkan di penjelasan; backtest tetap dapat memberi ambangnya sendiri |
 | `createSignalRepository(db)` | `+ { clock }`, `lastEventCandleTime` | Tes deterministik; titik awal replay yang persisten |

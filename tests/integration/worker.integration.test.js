@@ -21,6 +21,7 @@ import { migrate } from '../../backend/database/migrate.js';
 import { createKlineStream } from '../../backend/ingestion/binance/wsClient.js';
 import { HIGHER_TIMEFRAMES, TIMEFRAME_MS } from '../../backend/market/contracts.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY, normalizeScannerSettings } from '../../backend/settings/scannerSettings.js';
+import { HEARTBEAT_STALE_MS, summarizeWorker } from '../../backend/system/workerStatus.js';
 import { assembleWorker } from '../../worker/assemble.js';
 import { downtrendCandles, silentAccumulationCandles, zigzag } from '../fixtures/candles/scenarios.js';
 import { SYNTHETIC_START, generateCandles, withPriceScale } from '../fixtures/candles/synthetic.js';
@@ -1102,7 +1103,8 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     await scanner.start();
     expect(serverClock.offsetMs()).toBe(SKEW);
     expect(scanner.status()).toMatchObject({ clockOffsetMs: SKEW, errors: 0 });
-    expect((await repos.ingestion.getStatus()).lastRun).toMatchObject({ startedAt: START + SKEW, errors: 0 });
+    // Stempel run = jam lokal host (dibandingkan API dengan jamnya sendiri), bukan waktu server.
+    expect((await repos.ingestion.getStatus()).lastRun).toMatchObject({ startedAt: START, errors: 0 });
 
     await driver.runUntil(END);
 
@@ -1184,6 +1186,45 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(binance.calls.filter((c) => c.path === '/fapi/v1/time')).toHaveLength(2); // dua percobaan yang dijawab sukses
     expect((await repos.ingestion.getStatus()).recentErrors).toEqual([]);
     expect(problems(logs)).toEqual([]);
+  });
+
+  it('INT-WRK-019 jam host 2 menit di DEPAN server (offset −120000): heartbeat, run, error, dan lastIngestionAt distempel jam LOKAL → summarizeWorker dengan jam lokal API melaporkan scanner "ok" (umur 0), bukan "stale"; candleLagMs tetap memakai jam server', async () => {
+    const SKEW = -120_000;
+    const { scanner, repos, serverClock, timers, driver } = await setup({ serverSkewMs: SKEW });
+    await scanner.start();
+    expect(serverClock.offsetMs()).toBe(SKEW);
+    const status = await repos.ingestion.getStatus();
+    expect(status.heartbeat.at).toBe(START);
+    expect(status.heartbeat.state).toMatchObject({ lastIngestionAt: START, clockOffsetMs: SKEW });
+    expect(status.lastRun).toMatchObject({ startedAt: START, finishedAt: START });
+    // Lag candle = waktu server − closeTime candle terakhir (candle 5m #46 tutup T0 + 47×5m − 1).
+    expect(status.heartbeat.state.candleLagMs).toBe(serverClock.now() - (at5m(BOOT - 1) - 1));
+
+    // /api/system/status memanggil summarizeWorker(status, Date.now()) di proses API = jam lokal host.
+    const worker = summarizeWorker(status, timers.clock() + 1_000);
+    expect(worker.scanner).toMatchObject({ status: 'ok', heartbeatAt: START, heartbeatAgeMs: 1_000 });
+    expect(worker.scanner.candleLagMs).not.toBeNull();
+    expect(worker.binance).toEqual({ status: 'ok', ws: 'open' });
+
+    await driver.runUntil(START + 5 * 60_000);
+    const later = await repos.ingestion.getStatus();
+    expect(summarizeWorker(later, timers.clock()).scanner).toMatchObject({ status: 'ok' });
+    expect(later.heartbeat.at).toBe(timers.clock() - (timers.clock() - START) % 30_000);
+    // Error ingesti juga distempel jam lokal (driver palsu mengirim kline final menurut jam lokal, sehingga
+    // menurut server kline itu tiba 2 menit terlalu awal dan ditolak validasi — yang diuji di sini stempelnya).
+    expect(later.recentErrors.find((e) => e.source === 'validation')).toMatchObject({ at: at5m(BOOT + 1) + CLOSE_DELAY_MS });
+  });
+
+  it('INT-WRK-020 jam host 5 menit di BELAKANG server (offset +300000): heartbeat distempel jam lokal → worker yang berhenti menulis heartbeat terdeteksi "stale" setelah 90 detik, bukan 90 detik + offset', async () => {
+    const SKEW = 300_000;
+    const { scanner, repos, serverClock, timers } = await setup({ serverSkewMs: SKEW });
+    await scanner.start();
+    expect(serverClock.offsetMs()).toBe(SKEW);
+    const status = await repos.ingestion.getStatus();
+    expect(status.heartbeat.at).toBe(START);
+    expect(summarizeWorker(status, timers.clock() + HEARTBEAT_STALE_MS).scanner.status).toBe('ok');
+    // Worker mati setelah heartbeat terakhir: 4 menit kemudian (jam lokal API) harus "stale".
+    expect(summarizeWorker(status, timers.clock() + 240_000).scanner).toMatchObject({ status: 'stale', heartbeatAgeMs: 240_000, candleLagMs: null });
   });
 
   it('INT-WRK-017 perakitan produksi (worker/assemble.js), jam server 4 m 54 d di DEPAN jam lokal → candle 5m #48 yang sudah tertutup menurut server (belum menurut jam lokal) ikut di-bootstrap: isClosed REST & validasi repositori memakai serverClock.now; candle #49 yang masih berjalan ditolak repositori', async () => {

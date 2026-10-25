@@ -10,7 +10,11 @@
 // - semua error dicatat (dengan throttle) dan tidak menghentikan proses;
 // - bila `serverClock` diberikan, jam disinkronkan dengan waktu server Binance di awal setiap siklus
 //   (start, rediscovery, dan percobaan ulang discovery); `clock` sebaiknya = serverClock.now.
-// Semua waktu lewat `clock` dan semua timer lewat setTimer/clearTimer injeksi.
+// Dua jam injeksi: `clock` (waktu pasar/server Binance) untuk semua perbandingan dengan closeTime —
+// rencana backfill/gap, sweep, staleStreams, candleLagMs — serta stempel simbol & penutupan sinyal;
+// `localClock` (jam host, default = clock) untuk stempel operasional yang dibandingkan API/UI dengan
+// jamnya sendiri — heartbeat `at`, recordRun, recordError, lastIngestionAt — dan throttle internal.
+// Semua timer lewat setTimer/clearTimer injeksi.
 
 import { TIMEFRAMES, TIMEFRAME_MS, expectedCloseTime } from '../backend/market/contracts.js';
 import { MAX_KLINES_PER_REQUEST, lastClosedOpenTime, planBackfill, planGapFill } from '../backend/ingestion/backfill.js';
@@ -142,9 +146,11 @@ function liquidityThresholds(raw) {
  *     at: number }) => Promise<void>|void,
  *   discoverSymbols: (args: { symbols: object[], tickers: object[], bookTickers: object[], settings: object })
  *     => { selected: Array<{ symbol: string }>, rejected: object[] } | Promise<object>,
- *   clock?: () => number, logger?: object, setTimer?: Function, clearTimer?: Function, options?: object,
+ *   clock?: () => number, localClock?: () => number, logger?: object, setTimer?: Function, clearTimer?: Function, options?: object,
  *   serverClock?: { sync(): Promise<{ ok: boolean, message?: string }>, offsetMs(): number },
  * }} deps
+ *   clock: waktu server (worker: serverClock.now); localClock: jam host (worker: Date.now; default = clock) untuk
+ *   stempel yang dibandingkan /api/system/status dengan Date.now proses API (heartbeat, run, error, lastIngestionAt).
  *   serverClock: jam tersinkron server (backend/ingestion/serverClock.js); sync() dipanggil tiap siklus,
  *   kegagalan dicatat sebagai error ingesti sumber 'clock' (offset terakhir tetap dipakai).
  *   onMonitoringStopped: dipanggil setelah stream dilepas untuk (a) simbol yang sebelumnya dipantau (termasuk
@@ -163,6 +169,7 @@ export function createScanner({
   onMonitoringStopped = async () => {},
   discoverSymbols,
   clock = Date.now,
+  localClock = clock,
   logger = noopLogger,
   setTimer = globalThis.setTimeout,
   clearTimer = globalThis.clearTimeout,
@@ -170,6 +177,7 @@ export function createScanner({
   serverClock = null,
 }) {
   assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, serverClock });
+  if (typeof clock !== 'function' || typeof localClock !== 'function') throw new TypeError('clock dan localClock wajib berupa fungsi');
   const cfg = { ...SCANNER_DEFAULTS, ...options };
   const limiter = createLimiter(cfg.restConcurrency);
 
@@ -239,7 +247,7 @@ export function createScanner({
     const detail = errorMessage(err);
     const message = `${st ? `${st.symbol} ${st.timeframe}: ` : ''}${detail}`.slice(0, MESSAGE_MAX);
     logger.warn({ source, symbol: st?.symbol, timeframe: st?.timeframe, err: detail }, 'galat scanner');
-    const now = clock();
+    const now = localClock();
     const key = `${source}|${detail}`;
     const last = errorSeen.get(key);
     if (last !== undefined && now - last < cfg.errorThrottleMs) return;
@@ -295,7 +303,7 @@ export function createScanner({
   async function upsertClosed(st, candles) {
     if (candles.length === 0) return [];
     const result = await repos.candles.upsertClosed(candles);
-    lastIngestionAt = clock();
+    lastIngestionAt = localClock();
     const rejected = Array.isArray(result?.rejected) ? result.rejected : [];
     if (rejected.length === 0) return candles;
     const bad = new Set(rejected.map((r) => r?.candle?.openTime));
@@ -424,13 +432,13 @@ export function createScanner({
   function handleProvisional(st, candle) {
     if (st.lastOpenTime !== null && candle.openTime <= st.lastOpenTime) return; // sudah tertutup
     if (st.provisionalOpenTime !== null && candle.openTime < st.provisionalOpenTime) return;
-    const now = clock();
+    const now = localClock();
     if (candle.openTime === st.provisionalOpenTime && now - st.provisionalAt < cfg.provisionalThrottleMs) return;
     st.provisionalAt = now;
     st.provisionalOpenTime = candle.openTime;
     track(Promise.resolve()
       .then(() => repos.candles.upsertProvisional(candle))
-      .then(() => { lastIngestionAt = clock(); }, (err) => report('provisional', err, st)));
+      .then(() => { lastIngestionAt = localClock(); }, (err) => report('provisional', err, st)));
   }
 
   function handleWsCandle(handle, candle) {
@@ -652,7 +660,9 @@ export function createScanner({
     cycleStats = stats;
     // Jam disinkronkan dulu agar waktu siklus, validasi "tertutup", dan rencana backfill memakai waktu server.
     await syncClock();
-    const startedAt = clock();
+    // startedAt/finishedAt (recordRun, scanDurationMs) = jam host; `at` = waktu server untuk stempel simbol & sinyal.
+    const startedAt = localClock();
+    const at = clock();
     let nextDelay = cfg.rediscoveryMs;
     try {
       await loadSettings();
@@ -661,7 +671,7 @@ export function createScanner({
       try {
         const found = await discover();
         checkStopping();
-        stopped = await syncSymbols(found.symbols, found.selected, startedAt);
+        stopped = await syncSymbols(found.symbols, found.selected, at);
         target = found.selected;
         discoveryFailures = 0;
       } catch (err) {
@@ -673,7 +683,7 @@ export function createScanner({
         if (monitored.length === 0) target = await repos.symbols.listMonitored();
       }
       checkStopping();
-      if (target !== null) stats.candles += await applyTarget(target, stopped, startedAt);
+      if (target !== null) stats.candles += await applyTarget(target, stopped, at);
       logger.info({ kind, symbols: monitored.length, streams: streams.size, candles: stats.candles }, 'siklus scanner selesai');
     } catch (err) {
       if (!(err instanceof ScannerStopped)) {
@@ -682,7 +692,7 @@ export function createScanner({
       }
     } finally {
       cycleStats = null;
-      const finishedAt = clock();
+      const finishedAt = localClock();
       scanDurationMs = finishedAt - startedAt;
       try {
         await repos.ingestion.recordRun({ startedAt, finishedAt, symbols: monitored.length, candles: stats.candles, errors: stats.errors });
@@ -730,7 +740,7 @@ export function createScanner({
     try {
       // `state` = snapshot status() lengkap (memuat field `state`); disimpan apa adanya sebagai JSON
       // dan dibaca kembali oleh /api/system/status.
-      await repos.ingestion.heartbeat({ at: clock(), state: status() });
+      await repos.ingestion.heartbeat({ at: localClock(), state: status() });
     } catch (err) {
       logger.error({ err: errorMessage(err) }, 'heartbeat ingesti gagal');
     }
