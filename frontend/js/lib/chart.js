@@ -38,6 +38,17 @@ const MARKER_STYLES = Object.freeze({
   BREAKDOWN: { shape: 'arrowDown', position: 'aboveBar', token: '--lr-bear', text: 'Breakdown' },
   INVALIDATED: { shape: 'square', position: 'aboveBar', token: '--lr-bear', text: 'Invalid' },
   EXPIRED: { shape: 'square', position: 'aboveBar', token: '--lr-text-3', text: 'Expired' },
+  // Reversal Radar (docs/19 §2 MARKER_KINDS + event riwayat): bukti di bawah candle, pemicu/pembatalan di atasnya.
+  BOTTOM: { shape: 'circle', position: 'belowBar', token: '--lr-bear', text: 'Bottom' },
+  LOWER_LOW: { shape: 'circle', position: 'belowBar', token: '--lr-text-3', text: 'LL' },
+  HIGHER_LOW: { shape: 'circle', position: 'belowBar', token: '--lr-bull', text: 'HL' },
+  SPRING: { shape: 'arrowUp', position: 'belowBar', token: '--lr-accent', text: 'Spring' },
+  CHOCH: { shape: 'circle', position: 'aboveBar', token: '--lr-accent', text: 'CHoCH' },
+  DIVERGENCE: { shape: 'circle', position: 'belowBar', token: '--lr-neural-violet', text: 'Divergensi' },
+  TRIGGER: { shape: 'square', position: 'aboveBar', token: '--lr-warn', text: 'Trigger' },
+  STAGE_UP: { shape: 'arrowUp', position: 'belowBar', token: '--lr-bull', text: 'Naik tahap' },
+  CANCELLED: { shape: 'square', position: 'aboveBar', token: '--lr-bear', text: 'Batal' },
+  PROVISIONAL: { shape: 'circle', position: 'aboveBar', token: '--lr-text-3', text: 'Provisional' },
 });
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);

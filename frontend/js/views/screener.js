@@ -181,7 +181,7 @@ const snapshotOf = (rows) => new Map(rows.map((r) => [rowKey(r), { earlyScore: r
  * Urutan kolom yang sedang dipilih pengguna pada tabel lama (dari aria-sort header), agar penyegaran latar tidak
  * mengembalikan urutan ke default. null bila tidak ada tabel/urutan.
  */
-function currentSort(host, columns) {
+export function currentSort(host, columns) {
   const ths = [...host.querySelectorAll('thead th')];
   const idx = ths.findIndex((th) => th.getAttribute('aria-sort') === 'ascending' || th.getAttribute('aria-sort') === 'descending');
   if (idx < 0 || !columns[idx]) return null;
@@ -189,10 +189,22 @@ function currentSort(host, columns) {
 }
 
 /**
+ * Kunci baris tabel kandidat dari teks sel Symbol + TF (tbody dibuat ulang saat header diurutkan).
+ * Sel Symbol selalu sel pertama (dapat memuat chip "SM ×N" setelah simbol: dibaca teks .mono-nya saja);
+ * sel TF pada indeks `tfIndex` (2 pada tabel SA/PVA, 1 pada tabel Reversal Radar).
+ */
+export function rowTextKey(tr, tfIndex = 2) {
+  const cells = tr.children;
+  const symbolText = cells[0]?.querySelector('.mono')?.textContent ?? cells[0]?.textContent;
+  return `${symbolText}|${cells[tfIndex]?.textContent}`;
+}
+
+/**
  * Stagger masuk (--i) dan sorotan diff (data-flash) pada baris yang baru dirender. Teks sel tidak diubah.
  * `lastFlashAt` (Map kunci → Date.now()) membatasi sorotan ulang tiap baris ke ≤ 1×/detik.
+ * `keyOf(tr)` membaca kunci teks baris (default rowTextKey tabel SA/PVA); `flashKeyOf(row)` = kunci di `flashes`.
  */
-function decorateRows(table, rows, flashes, animate, lastFlashAt) {
+export function decorateRows(table, rows, flashes, animate, lastFlashAt, { keyOf = rowTextKey, flashKeyOf = rowKey } = {}) {
   const now = Date.now();
   const trs = table.querySelectorAll('tbody tr');
   // dataTable merender baris sesuai urutan; tbody dibuat ulang saat header diurutkan, jadi petakan lewat sel Symbol+TF.
@@ -203,8 +215,8 @@ function decorateRows(table, rows, flashes, animate, lastFlashAt) {
       tr.style.setProperty('--i', String(Math.min(i, STAGGER_MAX)));
     }
     if (flashes.size === 0) return;
-    const row = byText.get(rowTextKey(tr));
-    const key = row ? rowKey(row) : null;
+    const row = byText.get(keyOf(tr));
+    const key = row ? flashKeyOf(row) : null;
     const flash = key ? flashes.get(key) : undefined;
     if (!flash || now - (lastFlashAt.get(key) ?? 0) < FLASH_MIN_GAP_MS) return;
     lastFlashAt.set(key, now);
@@ -217,34 +229,29 @@ function decorateRows(table, rows, flashes, animate, lastFlashAt) {
   }
 }
 
-/** Kunci baris tabel kandidat dari teks sel Symbol + TF (tbody dibuat ulang saat header diurutkan). */
-function rowTextKey(tr) {
-  const cells = tr.children;
-  // Sel Symbol dapat memuat chip "SM ×N" setelah simbol: baca teks simbolnya saja.
-  const symbolText = cells[0]?.querySelector('.mono')?.textContent ?? cells[0]?.textContent;
-  return `${symbolText}|${cells[2]?.textContent}`;
-}
-
 /** Baris yang sedang memegang fokus keyboard di dalam `host` (atau berisi elemen yang fokus); null bila tidak ada. */
-function focusedRowKey(host) {
+export function focusedRowKey(host, keyOf = rowTextKey) {
   const active = document.activeElement;
   if (!active || active === document.body || !host.contains(active)) return null;
   const tr = active.closest('tbody tr');
-  return tr && host.contains(tr) ? rowTextKey(tr) : null;
+  return tr && host.contains(tr) ? keyOf(tr) : null;
 }
 
-/** Mengembalikan fokus ke baris yang sama setelah tabel dibuat ulang (penyegaran latar tidak boleh menghilangkan fokus). */
-function restoreRowFocus(host, key) {
+/**
+ * Mengembalikan fokus ke baris yang sama setelah tabel dibuat ulang (penyegaran latar tidak boleh menghilangkan fokus).
+ * Tab stop hanya diatur ulang di tbody baris tujuan, sehingga tabel lain di `host` yang sama tidak kehilangan tab stop-nya.
+ */
+export function restoreRowFocus(host, key, keyOf = rowTextKey) {
   if (key === null) return;
   const rows = [...host.querySelectorAll('tbody tr')];
-  const target = rows.find((tr) => rowTextKey(tr) === key);
+  const target = rows.find((tr) => keyOf(tr) === key);
   if (!target) return;
-  for (const tr of rows) tr.tabIndex = tr === target ? 0 : -1;
+  for (const tr of target.parentNode.children) tr.tabIndex = tr === target ? 0 : -1;
   target.focus({ preventScroll: true });
 }
 
 /** Radar header dekoratif: berputar hanya saat scanner benar-benar berjalan (state supervisor dari API). */
-function scanRadar(dir) {
+export function scanRadar(dir) {
   const label = h('span', { class: 'scan-radar__label' }, 'Scanner: memeriksa…');
   const el = h('div', { class: 'scan-radar', 'data-direction': dir, 'data-active': 'false', 'data-testid': 'scan-radar' },
     h('span', { class: 'scan-radar__dish', 'aria-hidden': 'true' },
@@ -309,12 +316,18 @@ function emptyResult(filtered, cfg) {
 }
 
 /**
- * Halaman scanner satu arah (LONG atau SHORT): filter server, tabel kandidat dengan side panel grafik koin, dan
- * kontrol scanner persisten. Mengembalikan { el, cleanup } agar grafik dihancurkan saat pindah halaman.
+ * Bagian kandidat SA/PVA (LONG) atau SD/PVD (SHORT) tanpa kerangka halaman: filter server, tabel kandidat dengan
+ * side panel grafik koin, penyegaran latar 30 s saat scanner berjalan (diff → sorotan baris, fokus dipertahankan),
+ * dan ticker kolom "Update". Dipakai halaman SHORT Scanner (scannerPage) dan sebagai panel sekunder
+ * "Pola SA/PVA 15m (mesin lama)" di LONG Scanner Reversal Radar (reversalRadar.js) — perilaku tabel lama tidak berubah.
+ * Muatan pertama dimulai segera (`ready`); timer latar baru berjalan setelah `start()` dipanggil pemilik halaman.
  * @param {{ user?: { role: string } }|undefined} ctx
  * @param {'LONG'|'SHORT'} direction
+ * @param {{ onLoaded?: (info: { rows: object[], count: number, limitReached: boolean, filtered: boolean }) => void }} [options]
+ * @returns {{ el: HTMLElement, ready: Promise<void>, load: (options?: { background?: boolean }) => Promise<void>,
+ *   setWorkerActive: (active: boolean) => void, start: () => void, cleanup: () => void }}
  */
-async function scannerPage(ctx, direction) {
+export function createScannerSection(ctx, direction, { onLoaded } = {}) {
   const dir = directionOf(direction);
   const cfg = SCANNERS[dir];
   // Kolom ditentukan per muatan (kolom konfluensi hanya bila data membawanya); yang terakhir dipakai membaca urutan.
@@ -322,8 +335,6 @@ async function scannerPage(ctx, direction) {
   // Filter tier hanya tampil bila setidaknya satu baris membawa confidenceTier (atau filter sedang dipakai).
   const tierField = selectField({ label: 'Tier minimum', name: 'minTier', options: MIN_TIER_OPTIONS });
   tierField.hidden = true;
-  // Status kontrol scanner bersifat pelengkap: kegagalannya tidak boleh menggagalkan halaman.
-  const workerStatus = api('/api/system/worker').catch(() => null);
   // Ringkasan smart money untuk chip "SM ×N" — hanya LONG, sekali per render halaman; gagal = tanpa chip (diam).
   // Dibatasi SMART_LINKS_TIMEOUT_MS agar endpoint yang lambat tidak pernah menahan tabel kandidat.
   // Hasil: { items, simulated } — meta.simulated dibawa agar chip dari data simulasi selalu bertanda SIMULASI.
@@ -353,7 +364,6 @@ async function scannerPage(ctx, direction) {
   // Klik / Enter pada baris kandidat → grafik koin di sebelah tabel (layar sempit: di bawahnya) untuk arah halaman ini,
   // dengan tombol "Buka detail" ke Symbol Intelligence. Pilihan bertahan saat tabel dibuat ulang oleh filter.
   const chartSide = attachChartSidePanel({ layoutHost: host, direction: dir });
-  const radar = scanRadar(dir);
   let request = 0;
   // Muatan terakhir yang berhasil: kunci query + snapshot skor, untuk diff antarpolling pada filter yang sama.
   let lastQuery = null;
@@ -361,7 +371,9 @@ async function scannerPage(ctx, direction) {
   let workerActive = false;
   let refreshTimer = null;
   let clockTimer = null;
+  let disposed = false;
   const lastFlashAt = new Map();
+  const el = panel({ title: cfg.panelTitle, actions: count, flush: true, footer: cfg.footer }, filters, chartSide.el);
 
   /**
    * @param {{ background?: boolean }} [options] background: penyegaran latar (tidak memperpanjang idle timeout,
@@ -421,33 +433,34 @@ async function scannerPage(ctx, direction) {
       ? [callout(`Batas ${SCREENER_LIMIT} kandidat tercapai (urut Pattern Score); hasil mungkin terpotong. Persempit filter agar tidak ada kandidat yang terlewat.`, 'warn'), table]
       : [table]));
     restoreRowFocus(host, keepFocus);
+    onLoaded?.({ rows, count: data.count, limitReached, filtered });
   }
 
   filters.addEventListener('change', () => { load(); });
   filters.addEventListener('submit', (e) => e.preventDefault());
-  await load();
+  const ready = load();
 
-  let el = null;
   /**
    * Penyegaran latar tiap REFRESH_MS selama scanner berjalan (data dapat berubah) dan halaman terlihat. Baris yang
    * sedang fokus (mis. setelah diklik untuk membuka grafik) mendapat fokusnya kembali setelah tabel dibuat ulang —
    * dulu penyegaran dilewati selama fokus di tabel, sehingga kolom "Update" membeku berjam-jam. Berhenti sendiri saat
-   * halaman dilepas.
+   * bagian ini dilepas dari halaman.
    */
   function scheduleRefresh() {
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(async () => {
       refreshTimer = null;
-      if (el && !el.isConnected) return;
+      if (disposed || !el.isConnected) return;
       if (workerActive && !document.hidden) await load({ background: true });
-      if (!el || el.isConnected) scheduleRefresh();
+      if (!disposed && el.isConnected) scheduleRefresh();
     }, REFRESH_MS);
   }
 
   /** "x menit lalu" + penanda Basi dihitung ulang terhadap jam sekarang, juga saat scanner berhenti. */
   function startClock() {
+    clearInterval(clockTimer);
     clockTimer = setInterval(() => {
-      if (el && !el.isConnected) {
+      if (disposed || !el.isConnected) {
         clearInterval(clockTimer);
         clockTimer = null;
         return;
@@ -456,29 +469,20 @@ async function scannerPage(ctx, direction) {
     }, CLOCK_TICK_MS);
   }
 
-  const status = await workerStatus;
-  radar.set(status);
-  workerActive = isWorkerActive(status);
-  // Dibuat setelah semua await: kontrol menghentikan polling-nya sendiri bila tidak terpasang di halaman.
-  const control = workerControlBar({
-    user: ctx?.user,
-    status,
-    onState: (s) => {
-      radar.set(s);
-      workerActive = isWorkerActive(s);
-    },
-  });
-
-  el = page({ title: cfg.title, subtitle: cfg.subtitle, actions: radar.el },
-    control,
-    panel({ title: cfg.panelTitle, actions: count, flush: true, footer: cfg.footer }, filters, chartSide.el));
-  el.classList.add('page--scanner');
-  el.dataset.direction = dir;
-  scheduleRefresh();
-  startClock();
   return {
     el,
-    cleanup: () => {
+    ready,
+    load,
+    setWorkerActive(active) {
+      workerActive = Boolean(active);
+    },
+    start() {
+      if (disposed) return;
+      scheduleRefresh();
+      startClock();
+    },
+    cleanup() {
+      disposed = true;
       clearTimeout(refreshTimer);
       refreshTimer = null;
       clearInterval(clockTimer);
@@ -488,12 +492,50 @@ async function scannerPage(ctx, direction) {
   };
 }
 
-/** LONG Scanner (route /screener). Tetap dapat dipanggil tanpa argumen seperti sebelumnya. */
-export function screenerView(ctx) {
-  return scannerPage(ctx, 'LONG');
+/**
+ * Halaman scanner satu arah: kontrol scanner persisten + bagian kandidat (createScannerSection).
+ * Mengembalikan { el, cleanup } agar grafik dihancurkan saat pindah halaman.
+ * @param {{ user?: { role: string } }|undefined} ctx
+ * @param {'LONG'|'SHORT'} direction
+ */
+export async function scannerPage(ctx, direction) {
+  const dir = directionOf(direction);
+  const cfg = SCANNERS[dir];
+  // Status kontrol scanner bersifat pelengkap: kegagalannya tidak boleh menggagalkan halaman.
+  const workerStatus = api('/api/system/worker').catch(() => null);
+  const section = createScannerSection(ctx, dir);
+  const radar = scanRadar(dir);
+  await section.ready;
+
+  const status = await workerStatus;
+  radar.set(status);
+  section.setWorkerActive(isWorkerActive(status));
+  // Dibuat setelah semua await: kontrol menghentikan polling-nya sendiri bila tidak terpasang di halaman.
+  const control = workerControlBar({
+    user: ctx?.user,
+    status,
+    onState: (s) => {
+      radar.set(s);
+      section.setWorkerActive(isWorkerActive(s));
+    },
+  });
+
+  const el = page({ title: cfg.title, subtitle: cfg.subtitle, actions: radar.el }, control, section.el);
+  el.classList.add('page--scanner');
+  el.dataset.direction = dir;
+  section.start();
+  return { el, cleanup: section.cleanup };
 }
 
 /** SHORT Scanner (route /short-scanner): GET /api/signals/active?direction=SHORT. */
 export function shortScannerView(ctx) {
   return scannerPage(ctx, 'SHORT');
+}
+
+/**
+ * Tabel SA/PVA LONG lama sebagai halaman utuh (tanpa Reversal Radar). Route /screener kini memakai screenerView di
+ * reversalRadar.js; fungsi ini dipertahankan untuk pemakaian langsung / pembanding.
+ */
+export function legacyLongScannerView(ctx) {
+  return scannerPage(ctx, 'LONG');
 }

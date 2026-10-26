@@ -63,6 +63,22 @@ if (seeded) {
     throw new Error(`Seeding smart money E2E gagal: ${JSON.stringify({ status: summary.status, alerts: summary.alerts, errors: summary.errors })}`);
   }
 }
+// Rute Reversal Radar (backend/api/reversalRoutes.js, docs/19 §7) dikembangkan paralel dengan UI-nya. Selama rute asli
+// belum terdaftar di buildApp, server E2E menyediakan pengganti KOSONG (tanpa kandidat, bentuk respons sesuai kontrak)
+// agar LONG Scanner tidak menghasilkan error konsol 404 pada tes layar umum (app.spec, signals.spec). Dilewati
+// otomatis begitu rute asli ada (hasRoute), sehingga tes seeded selalu memakai rute sebenarnya. Tes UI Reversal Radar
+// (reversal.spec.js) tidak bergantung padanya: respons dimock di browser lewat page.route.
+if (!app.hasRoute({ method: 'GET', url: '/api/reversal/candidates' })) {
+  app.get('/api/reversal/candidates', async () => ({
+    items: [],
+    count: 0,
+    meta: {
+      timeframes: ['5m', '15m', '1h'],
+      sensitivity: 'MEDIUM',
+      filters: { LOW: { minScore: 60, minEvidence: 4 }, MEDIUM: { minScore: 45, minEvidence: 3 }, HIGH: { minScore: 0, minEvidence: 0 } },
+    },
+  }));
+}
 await app.listen({ host: config.host, port: config.port });
 
 // Playwright menghentikan server di akhir suite: worker tiruan ikut dihentikan (tidak menjadi yatim).
