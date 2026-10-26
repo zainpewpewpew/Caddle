@@ -1,6 +1,20 @@
-/* AlphaLens — komponen. Hanya merujuk token dari tokens.css. */
+/*
+ * AlphaLens — komponen, gaya "Neural Aurora".
+ * Panel kaca gelap di atas canvas jaringan saraf, border gradien halus, glow lembut, gerak bermakna.
+ * Hanya merujuk token --lr-* dari tokens.css. Token Neural Aurora selalu diberi fallback agar komponen tetap
+ * benar bila token belum dimuat. Satu-satunya warna heksadesimal di berkas ini adalah atribusi TradingView
+ * (disalin apa adanya dari lightweight-charts, syarat lisensi).
+ *
+ * Gerak:
+ *  - Dekoratif (kilau tombol, denyut BREAKOUT/BREAKDOWN, node empty state, stagger baris, isi meter skor,
+ *    garis pindai) dimatikan bila :root[data-motion="off"|"reduced"] atau prefers-reduced-motion: reduce.
+ *  - Fungsional (bar progres indeterminate, cincin langkah sync, shimmer skeleton) tetap berjalan bila
+ *    pengguna hanya mematikan "Animasi latar", dan menjadi statis pada prefers-reduced-motion: reduce.
+ */
 
-/* ---- Brand ---- */
+/* ======================================================================
+ * Brand
+ * ==================================================================== */
 .brand {
   display: flex;
   align-items: center;
@@ -19,6 +33,12 @@
   flex: none;
   width: 26px;
   height: 26px;
+  filter: drop-shadow(0 0 6px var(--lr-neural-glow, rgb(56 225 255 / 0.35)));
+  transition: filter var(--lr-dur) var(--lr-ease);
+}
+
+.brand:hover .brand__mark {
+  filter: drop-shadow(0 0 10px var(--lr-neural-glow, rgb(56 225 255 / 0.35)));
 }
 
 .brand__name {
@@ -36,33 +56,183 @@
   font-weight: var(--lr-weight-medium);
 }
 
-/* ---- Panel ---- */
+/* ======================================================================
+ * Utilitas Neural Aurora (dipakai lintas view)
+ * ==================================================================== */
+
+/* Permukaan kaca generik untuk elemen di luar .panel/.stat. */
+.glass {
+  position: relative;
+  background: var(--lr-glass, rgb(10 15 25 / 0.74));
+  border: 1px solid var(--lr-glass-border, rgb(148 178 220 / 0.12));
+  border-radius: var(--lr-radius-md);
+  -webkit-backdrop-filter: var(--lr-blur, blur(14px) saturate(140%));
+  backdrop-filter: var(--lr-blur, blur(14px) saturate(140%));
+  box-shadow: var(--lr-shadow-1);
+}
+
+/* Teks bergradien cyan → violet (judul/aksen). Kontras ujung tergelap (violet) 5,2:1 terhadap --lr-bg. */
+.gradient-text {
+  background: var(--lr-gradient-brand, linear-gradient(135deg, rgb(56 225 255) 0%, rgb(124 108 255) 100%));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (forced-colors: active) {
+  .gradient-text {
+    background: none;
+    color: CanvasText;
+  }
+}
+
+/* Garis pindai: elemen dengan [data-scanning="true"] (atau .is-scanning) mendapat garis cahaya yang bergerak di
+   tepi atas. Hanya dipasang saat scanner NYATA sedang berjalan (state dari API). */
+.lr-scanline {
+  position: relative;
+  overflow: hidden;
+}
+
+.lr-scanline[data-scanning="true"]::after,
+.lr-scanline.is-scanning::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 40%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--lr-neural-cyan, rgb(56 225 255)), var(--lr-neural-violet, rgb(124 108 255)), transparent);
+  box-shadow: 0 0 8px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
+  pointer-events: none;
+  animation: lr-scanline 2.6s linear infinite;
+}
+
+@keyframes lr-scanline {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+/* Penanda "live" kecil (titik berdenyut) untuk label yang menunjukkan data mengalir NYATA. */
+.live-dot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lr-live-color, var(--lr-bull));
+  box-shadow: 0 0 8px var(--lr-live-color, var(--lr-bull));
+}
+
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--lr-live-color, var(--lr-bull));
+  opacity: 0;
+  animation: lr-pulse 2.4s var(--lr-ease) infinite;
+}
+
+.live-dot[data-tone="bear"] { --lr-live-color: var(--lr-bear); }
+.live-dot[data-tone="accent"] { --lr-live-color: var(--lr-neural-cyan, var(--lr-accent)); }
+
+/* ======================================================================
+ * Panel kaca
+ * ==================================================================== */
 .panel {
   position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--lr-surface);
-  border: 1px solid var(--lr-border-subtle);
+  background: var(--lr-glass, rgb(10 15 25 / 0.74));
+  border: 1px solid var(--lr-glass-border, rgb(148 178 220 / 0.12));
   border-radius: var(--lr-radius-md);
+  -webkit-backdrop-filter: var(--lr-blur, blur(14px) saturate(140%));
+  backdrop-filter: var(--lr-blur, blur(14px) saturate(140%));
   box-shadow: var(--lr-shadow-1);
+  transition: border-color var(--lr-dur) var(--lr-ease), box-shadow var(--lr-dur-slow) var(--lr-ease);
+}
+
+/* Border gradien halus (cyan → violet) via mask: hanya cincin 1px yang terlihat. */
+.panel::before,
+.stat::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  padding: 1px;
+  border-radius: inherit;
+  background: var(--lr-gradient-border, linear-gradient(135deg, rgb(56 225 255 / 0.35), rgb(124 108 255 / 0.12) 40%, rgb(148 178 220 / 0.06) 70%, rgb(124 108 255 / 0.25)));
+  -webkit-mask: linear-gradient(rgb(0 0 0) 0 0) content-box, linear-gradient(rgb(0 0 0) 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(rgb(0 0 0) 0 0) content-box exclude, linear-gradient(rgb(0 0 0) 0 0);
+  opacity: 0.55;
+  pointer-events: none;
+  transition: opacity var(--lr-dur-slow) var(--lr-ease);
+}
+
+/* Highlight atas tipis: kesan lembar kaca. */
+.panel::after,
+.stat::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--lr-space-4);
+  right: var(--lr-space-4);
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--lr-glass-highlight-strong, rgb(255 255 255 / 0.14)), transparent);
+  pointer-events: none;
+}
+
+.panel:hover {
+  box-shadow: var(--lr-shadow-1), 0 0 24px -8px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
+}
+
+.panel:hover::before,
+.stat:hover::before {
+  opacity: 1;
+}
+
+/* Browser tanpa backdrop-filter: kaca dibuat lebih pekat agar teks tetap ≥ AA di atas canvas latar. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .panel,
+  .stat,
+  .glass,
+  .toast,
+  .table thead th {
+    background: var(--lr-glass-strong, rgb(8 12 21 / 0.88));
+  }
 }
 
 .panel__header {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--lr-space-3);
   min-height: 44px;
   padding: var(--lr-space-2) var(--lr-space-4);
-  border-bottom: 1px solid var(--lr-border-subtle);
+  border-bottom: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
 }
 
 .panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-2);
   font-size: var(--lr-text-xs);
   font-weight: var(--lr-weight-semibold);
   color: var(--lr-text-2);
   text-transform: uppercase;
   letter-spacing: var(--lr-tracking-caps);
+}
+
+/* Penanda node kecil di depan judul panel. */
+.panel__title::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--lr-neural-cyan, var(--lr-accent));
+  box-shadow: 0 0 6px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
 }
 
 .panel__actions {
@@ -83,26 +253,40 @@
 
 .panel__footer {
   padding: var(--lr-space-2) var(--lr-space-4);
-  border-top: 1px solid var(--lr-border-subtle);
+  border-top: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
   color: var(--lr-text-3);
   font-size: var(--lr-text-xs);
 }
 
-/* ---- KPI / statistik ---- */
+/* Nada panel opsional: border gradien bernada LONG/SHORT. */
+.panel--bull::before {
+  background: linear-gradient(135deg, var(--lr-bull-line), rgb(33 197 142 / 0.08) 50%, var(--lr-bull-line));
+}
+
+.panel--bear::before {
+  background: linear-gradient(135deg, var(--lr-bear-line), rgb(241 107 117 / 0.08) 50%, var(--lr-bear-line));
+}
+
+/* ======================================================================
+ * KPI / statistik
+ * ==================================================================== */
 .stat {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--lr-space-2);
   padding: var(--lr-space-3) var(--lr-space-4);
-  background: var(--lr-surface);
-  border: 1px solid var(--lr-border-subtle);
+  background: var(--lr-glass, rgb(10 15 25 / 0.74));
+  border: 1px solid var(--lr-glass-border, rgb(148 178 220 / 0.12));
   border-radius: var(--lr-radius-md);
-  transition: border-color var(--lr-dur) var(--lr-ease), background-color var(--lr-dur) var(--lr-ease);
+  -webkit-backdrop-filter: var(--lr-blur, blur(14px) saturate(140%));
+  backdrop-filter: var(--lr-blur, blur(14px) saturate(140%));
+  transition: border-color var(--lr-dur) var(--lr-ease), box-shadow var(--lr-dur-slow) var(--lr-ease), transform var(--lr-dur) var(--lr-ease);
 }
 
 .stat:hover {
-  border-color: var(--lr-border);
-  background: var(--lr-surface-hover);
+  border-color: var(--lr-glass-border-strong, var(--lr-border));
+  box-shadow: 0 0 22px -8px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
 }
 
 .stat__label {
@@ -122,6 +306,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* animateNumber() menandai nilai yang sedang dihitung naik menuju nilai nyata. */
+.stat__value[data-counting] {
+  text-shadow: 0 0 14px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
+}
+
 .stat__value--muted {
   color: var(--lr-text-3);
 }
@@ -131,27 +320,69 @@
   font-size: var(--lr-text-2xs);
 }
 
-/* ---- Tombol ---- */
+/* Varian nada (opsional, data-tone pada .stat): garis aksen bawah bercahaya. */
+.stat[data-tone] {
+  border-bottom-color: transparent;
+}
+
+.stat[data-tone]::after {
+  top: auto;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--lr-stat-tone), transparent);
+  opacity: 0.8;
+}
+
+.stat[data-tone="bull"] { --lr-stat-tone: var(--lr-bull); }
+.stat[data-tone="bear"] { --lr-stat-tone: var(--lr-bear); }
+.stat[data-tone="warn"] { --lr-stat-tone: var(--lr-warn); }
+.stat[data-tone="accent"] { --lr-stat-tone: var(--lr-neural-cyan, var(--lr-accent)); }
+
+/* ======================================================================
+ * Tombol
+ * ==================================================================== */
 .btn {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--lr-space-2);
   height: 32px;
   padding: 0 var(--lr-space-3);
-  border: 1px solid var(--lr-border);
+  border: 1px solid var(--lr-glass-border-strong, var(--lr-border));
   border-radius: var(--lr-radius-sm);
-  background: var(--lr-surface-2);
+  background: var(--lr-glass-soft, var(--lr-surface-2));
   color: var(--lr-text);
   font-size: var(--lr-text-sm);
   font-weight: var(--lr-weight-medium);
   white-space: nowrap;
-  transition: background-color var(--lr-dur-fast) var(--lr-ease), border-color var(--lr-dur-fast) var(--lr-ease), color var(--lr-dur-fast) var(--lr-ease);
+  transition: background-color var(--lr-dur-fast) var(--lr-ease), border-color var(--lr-dur-fast) var(--lr-ease), color var(--lr-dur-fast) var(--lr-ease), box-shadow var(--lr-dur) var(--lr-ease), filter var(--lr-dur-fast) var(--lr-ease);
+}
+
+/* Kilau menyapu saat hover (dekoratif). */
+.btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(105deg, transparent 30%, rgb(255 255 255 / 0.16) 50%, transparent 70%);
+  transform: translateX(-120%);
+  pointer-events: none;
+}
+
+.btn:hover::after {
+  transform: translateX(120%);
+  transition: transform 700ms var(--lr-ease-out-expo, var(--lr-ease));
 }
 
 .btn:hover {
   background: var(--lr-surface-3);
   border-color: var(--lr-border-strong);
+  box-shadow: 0 0 16px -6px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
 }
 
 .btn:active {
@@ -164,15 +395,41 @@
   cursor: not-allowed;
 }
 
+.btn:disabled::after,
+.btn[aria-disabled="true"]::after {
+  display: none;
+}
+
+/* Primer = aksi bullish/positif (Jalankan scanner, Simpan): gradien emerald. Teks gelap 5,9:1 di ujung tergelap. */
 .btn--primary {
-  background: var(--lr-bull);
+  background: var(--lr-gradient-bull, linear-gradient(135deg, rgb(79 224 174) 0%, rgb(33 197 142) 55%, rgb(20 158 112) 100%));
   border-color: var(--lr-bull);
   color: var(--lr-text-inverse);
+  font-weight: var(--lr-weight-semibold);
+  box-shadow: 0 0 0 0 transparent, 0 6px 18px -10px var(--lr-bull);
 }
 
 .btn--primary:hover {
-  background: #2ad69c;
-  border-color: #2ad69c;
+  background: var(--lr-gradient-bull, linear-gradient(135deg, rgb(79 224 174) 0%, rgb(33 197 142) 55%, rgb(20 158 112) 100%));
+  border-color: var(--lr-stage-breakout);
+  filter: brightness(1.08);
+  box-shadow: var(--lr-glow-bull, 0 0 0 1px rgb(33 197 142 / 0.3), 0 0 18px rgb(33 197 142 / 0.25));
+}
+
+/* Neural = aksi utama netral (bukan arah pasar): gradien cyan → violet. Teks gelap ≥ 5,2:1. */
+.btn--neural {
+  background: var(--lr-gradient-brand, linear-gradient(135deg, rgb(56 225 255) 0%, rgb(124 108 255) 100%));
+  border-color: transparent;
+  color: var(--lr-text-inverse);
+  font-weight: var(--lr-weight-semibold);
+  box-shadow: 0 6px 18px -10px var(--lr-neural-cyan, rgb(56 225 255));
+}
+
+.btn--neural:hover {
+  background: var(--lr-gradient-brand, linear-gradient(135deg, rgb(56 225 255) 0%, rgb(124 108 255) 100%));
+  border-color: transparent;
+  filter: brightness(1.08);
+  box-shadow: var(--lr-glow-accent, 0 0 0 1px rgb(56 225 255 / 0.25), 0 0 18px rgb(56 225 255 / 0.22));
 }
 
 .btn--ghost {
@@ -182,9 +439,10 @@
 }
 
 .btn--ghost:hover {
-  background: var(--lr-surface-2);
+  background: var(--lr-neural-cyan-soft, var(--lr-surface-2));
   border-color: transparent;
   color: var(--lr-text);
+  box-shadow: none;
 }
 
 .btn--danger {
@@ -196,17 +454,25 @@
 .btn--danger:hover {
   background: var(--lr-bear-soft);
   border-color: var(--lr-bear);
+  box-shadow: var(--lr-glow-bear, 0 0 0 1px rgb(241 107 117 / 0.3), 0 0 18px rgb(241 107 117 / 0.25));
 }
 
 /* aria-disabled: tombol tetap dapat difokus (fokus tidak hilang saat state berubah) tetapi tidak bereaksi. */
 .btn[aria-disabled="true"]:hover {
-  background: var(--lr-surface-2);
-  border-color: var(--lr-border);
+  background: var(--lr-glass-soft, var(--lr-surface-2));
+  border-color: var(--lr-glass-border-strong, var(--lr-border));
+  box-shadow: none;
+  filter: none;
 }
 
 .btn--primary[aria-disabled="true"]:hover {
-  background: var(--lr-bull);
+  background: var(--lr-gradient-bull, linear-gradient(135deg, rgb(79 224 174) 0%, rgb(33 197 142) 55%, rgb(20 158 112) 100%));
   border-color: var(--lr-bull);
+}
+
+.btn--neural[aria-disabled="true"]:hover {
+  background: var(--lr-gradient-brand, linear-gradient(135deg, rgb(56 225 255) 0%, rgb(124 108 255) 100%));
+  border-color: transparent;
 }
 
 .btn--danger[aria-disabled="true"]:hover {
@@ -239,14 +505,22 @@
   height: 16px;
 }
 
-/* ---- Badge, chip, status ---- */
+@media (forced-colors: active) {
+  .btn::after {
+    display: none;
+  }
+}
+
+/* ======================================================================
+ * Badge, chip, tahap, status
+ * ==================================================================== */
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 20px;
   padding: 0 7px;
-  border: 1px solid var(--lr-border);
+  border: 1px solid var(--lr-glass-border-strong, var(--lr-border));
   border-radius: var(--lr-radius-xs);
   background: var(--lr-neutral-soft);
   color: var(--lr-text-2);
@@ -256,10 +530,25 @@
   white-space: nowrap;
 }
 
+.badge--bull,
+.badge--warn,
+.badge--bear,
+.badge--accent,
+.badge--violet {
+  /* Glow halus sewarna teks badge. */
+  box-shadow: 0 0 10px -4px currentColor, inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
 .badge--bull { color: var(--lr-bull); background: var(--lr-bull-soft); border-color: var(--lr-bull-line); }
 .badge--warn { color: var(--lr-warn); background: var(--lr-warn-soft); border-color: var(--lr-warn-line); }
 .badge--bear { color: var(--lr-bear); background: var(--lr-bear-soft); border-color: var(--lr-bear-line); }
 .badge--accent { color: var(--lr-accent); background: var(--lr-accent-soft); border-color: var(--lr-accent-line); }
+/* Violet: label neural/metadata model (bukan arah pasar). Teks violet terang ±7:1 terhadap kaca gelap. */
+.badge--violet {
+  color: var(--lr-neural-violet-text, rgb(170 160 255));
+  background: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  border-color: var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
+}
 
 .stage {
   display: inline-flex;
@@ -273,10 +562,17 @@
 
 .stage::before {
   content: "";
+  flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.stage[data-stage="QUIET"]::before,
+.stage[data-stage="EXPIRED"]::before {
+  box-shadow: none;
 }
 
 .stage[data-stage="QUIET"] { --lr-stage-color: var(--lr-stage-quiet); }
@@ -290,6 +586,26 @@
 .stage[data-stage="BREAKDOWN"] { --lr-stage-color: var(--lr-stage-breakdown); }
 .stage[data-direction="SHORT"][data-stage="MOMENTUM_BUILDING"] { --lr-stage-color: var(--lr-stage-momentum-bear); }
 
+/* BREAKOUT / BREAKDOWN: tahap puncak, titiknya berdenyut halus + label ditebalkan. */
+.stage[data-stage="BREAKOUT"],
+.stage[data-stage="BREAKDOWN"] {
+  font-weight: var(--lr-weight-semibold);
+  text-shadow: 0 0 10px color-mix(in srgb, currentColor 45%, transparent);
+}
+
+.stage[data-stage="BREAKOUT"]::before,
+.stage[data-stage="BREAKDOWN"]::before {
+  width: 7px;
+  height: 7px;
+  animation: lr-stage-pulse 1.8s var(--lr-ease) infinite;
+}
+
+@keyframes lr-stage-pulse {
+  0%,
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent), 0 0 6px currentColor; }
+  60% { box-shadow: 0 0 0 5px transparent, 0 0 10px currentColor; }
+}
+
 .status {
   display: inline-flex;
   align-items: center;
@@ -301,15 +617,16 @@
 
 .status__dot {
   position: relative;
+  flex: none;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--lr-text-3);
 }
 
-.status[data-state="ok"] .status__dot { background: var(--lr-bull); }
-.status[data-state="warn"] .status__dot { background: var(--lr-warn); }
-.status[data-state="error"] .status__dot { background: var(--lr-bear); }
+.status[data-state="ok"] .status__dot { background: var(--lr-bull); box-shadow: 0 0 8px var(--lr-bull-line); }
+.status[data-state="warn"] .status__dot { background: var(--lr-warn); box-shadow: 0 0 8px var(--lr-warn-line); }
+.status[data-state="error"] .status__dot { background: var(--lr-bear); box-shadow: 0 0 8px var(--lr-bear-line); }
 .status[data-state="idle"] .status__dot { background: var(--lr-text-3); }
 
 .status[data-state="ok"][data-live] .status__dot::after {
@@ -332,7 +649,9 @@
 .delta--down { color: var(--lr-bear); }
 .delta--flat { color: var(--lr-text-2); }
 
-/* ---- Skor (bar tipis) ---- */
+/* ======================================================================
+ * Skor (meter 0–100, kecocokan aturan — bukan probabilitas)
+ * ==================================================================== */
 .score {
   display: inline-grid;
   grid-template-columns: 28px 56px;
@@ -342,9 +661,11 @@
 }
 
 .score__track {
+  position: relative;
   height: 4px;
   border-radius: 2px;
   background: var(--lr-surface-3);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.03);
   overflow: hidden;
 }
 
@@ -352,15 +673,38 @@
   display: block;
   height: 100%;
   width: calc(var(--lr-score, 0) * 1%);
-  background: var(--lr-accent);
+  background: linear-gradient(90deg, var(--lr-neural-violet, var(--lr-accent)), var(--lr-neural-cyan, var(--lr-accent)));
   border-radius: 2px;
+  box-shadow: 0 0 8px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
+  transform-origin: left center;
+  /* Isi meter tumbuh dari 0 ke nilai NYATA (lebar akhir = --lr-score). */
+  animation: lr-score-fill 700ms var(--lr-ease-out-expo, var(--lr-ease)) both;
 }
 
-.score[data-tone="bull"] .score__fill { background: var(--lr-bull); }
-.score[data-tone="warn"] .score__fill { background: var(--lr-warn); }
-.score[data-tone="bear"] .score__fill { background: var(--lr-bear); }
+@keyframes lr-score-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
 
-/* ---- Form ---- */
+.score[data-tone="bull"] .score__fill {
+  background: linear-gradient(90deg, rgb(33 197 142 / 0.55), var(--lr-bull) 60%, var(--lr-stage-breakout));
+  box-shadow: 0 0 8px var(--lr-bull-line);
+}
+
+.score[data-tone="warn"] .score__fill {
+  background: linear-gradient(90deg, rgb(244 184 96 / 0.55), var(--lr-warn));
+  box-shadow: 0 0 8px var(--lr-warn-line);
+}
+
+/* Skor bernada bear (Early Score sinyal SHORT). */
+.score[data-tone="bear"] .score__fill {
+  background: linear-gradient(90deg, rgb(241 107 117 / 0.55), var(--lr-bear) 60%, var(--lr-stage-breakdown));
+  box-shadow: 0 0 8px var(--lr-bear-line);
+}
+
+/* ======================================================================
+ * Form
+ * ==================================================================== */
 .field {
   display: flex;
   flex-direction: column;
@@ -389,12 +733,12 @@
   width: 100%;
   height: 34px;
   padding: 0 var(--lr-space-3);
-  border: 1px solid var(--lr-border);
+  border: 1px solid var(--lr-glass-border-strong, var(--lr-border));
   border-radius: var(--lr-radius-sm);
-  background: var(--lr-bg-sunken);
+  background-color: var(--lr-glass-strong, var(--lr-bg-sunken));
   color: var(--lr-text);
   font-size: var(--lr-text-sm);
-  transition: border-color var(--lr-dur-fast) var(--lr-ease), box-shadow var(--lr-dur-fast) var(--lr-ease);
+  transition: border-color var(--lr-dur-fast) var(--lr-ease), box-shadow var(--lr-dur) var(--lr-ease), background-color var(--lr-dur) var(--lr-ease);
 }
 
 .input::placeholder {
@@ -406,10 +750,12 @@
   border-color: var(--lr-border-strong);
 }
 
+/* Fokus: border aksen solid (indikator ≥ 3:1) + glow cyan lembut. */
 .input:focus-visible,
 .select:focus-visible {
   border-color: var(--lr-accent);
-  box-shadow: 0 0 0 3px var(--lr-accent-soft);
+  background-color: var(--lr-bg-sunken);
+  box-shadow: 0 0 0 3px var(--lr-accent-soft), 0 0 18px -4px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
   border-radius: var(--lr-radius-sm);
 }
 
@@ -421,6 +767,7 @@
 
 .input[aria-invalid="true"] {
   border-color: var(--lr-bear);
+  box-shadow: 0 0 0 3px var(--lr-bear-soft);
 }
 
 .input--mono {
@@ -434,6 +781,11 @@
   background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%;
   background-size: 5px 5px;
   background-repeat: no-repeat;
+}
+
+.select option {
+  background: var(--lr-surface-2);
+  color: var(--lr-text);
 }
 
 textarea.input {
@@ -455,9 +807,9 @@ textarea.input {
   align-self: flex-start;
   padding: 2px;
   gap: 2px;
-  border: 1px solid var(--lr-border);
+  border: 1px solid var(--lr-glass-border-strong, var(--lr-border));
   border-radius: var(--lr-radius-sm);
-  background: var(--lr-bg-sunken);
+  background: var(--lr-glass-strong, var(--lr-bg-sunken));
 }
 
 .segmented__option {
@@ -477,17 +829,23 @@ textarea.input {
   align-items: center;
   height: 26px;
   padding: 0 var(--lr-space-3);
+  border: 1px solid transparent;
   border-radius: var(--lr-radius-xs);
   color: var(--lr-text-2);
   font-size: var(--lr-text-xs);
   font-weight: var(--lr-weight-medium);
-  transition: background-color var(--lr-dur-fast) var(--lr-ease), color var(--lr-dur-fast) var(--lr-ease);
+  transition: background-color var(--lr-dur-fast) var(--lr-ease), color var(--lr-dur-fast) var(--lr-ease), border-color var(--lr-dur-fast) var(--lr-ease), box-shadow var(--lr-dur) var(--lr-ease);
+}
+
+.segmented__option:hover span {
+  color: var(--lr-text);
 }
 
 .segmented__option input:checked + span {
-  background: var(--lr-surface-3);
+  background: var(--lr-gradient-brand-soft, var(--lr-surface-3));
+  border-color: var(--lr-accent-line);
   color: var(--lr-text);
-  box-shadow: var(--lr-shadow-1);
+  box-shadow: 0 0 12px -4px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
 }
 
 .segmented__option input:focus-visible + span {
@@ -519,7 +877,7 @@ textarea.input {
   border-radius: var(--lr-radius-pill);
   background: var(--lr-surface-3);
   border: 1px solid var(--lr-border);
-  transition: background-color var(--lr-dur) var(--lr-ease), border-color var(--lr-dur) var(--lr-ease);
+  transition: background-color var(--lr-dur) var(--lr-ease), border-color var(--lr-dur) var(--lr-ease), box-shadow var(--lr-dur) var(--lr-ease);
   cursor: pointer;
 }
 
@@ -532,24 +890,28 @@ textarea.input {
   height: 14px;
   border-radius: 50%;
   background: var(--lr-text-2);
-  transition: transform var(--lr-dur) var(--lr-ease), background-color var(--lr-dur) var(--lr-ease);
+  transition: transform var(--lr-dur) var(--lr-ease-spring, var(--lr-ease)), background-color var(--lr-dur) var(--lr-ease), box-shadow var(--lr-dur) var(--lr-ease);
 }
 
 .switch input:checked {
   background: var(--lr-bull-soft);
   border-color: var(--lr-bull-line);
+  box-shadow: 0 0 12px -4px var(--lr-bull);
 }
 
 .switch input:checked::after {
   transform: translateX(14px);
   background: var(--lr-bull);
+  box-shadow: 0 0 8px var(--lr-bull);
 }
 
 .switch input:focus-visible {
   box-shadow: var(--lr-focus-ring);
 }
 
-/* ---- Tabel data padat ---- */
+/* ======================================================================
+ * Tabel data padat
+ * ==================================================================== */
 .table-wrap {
   overflow: auto;
   max-width: 100%;
@@ -566,21 +928,25 @@ textarea.input {
   padding: 0 var(--lr-space-3);
   text-align: left;
   white-space: nowrap;
-  border-bottom: 1px solid var(--lr-border-subtle);
+  border-bottom: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
 }
 
+/* Header sticky berbahan kaca pekat: baris yang menggulir di bawahnya tetap terbaca samar. */
 .table thead th {
   position: sticky;
   top: 0;
   z-index: 1;
   height: 32px;
-  background: var(--lr-surface);
+  background: var(--lr-glass-strong, var(--lr-surface));
+  -webkit-backdrop-filter: var(--lr-blur, blur(14px) saturate(140%));
+  backdrop-filter: var(--lr-blur, blur(14px) saturate(140%));
   color: var(--lr-text-3);
   font-size: var(--lr-text-2xs);
   font-weight: var(--lr-weight-semibold);
   text-transform: uppercase;
   letter-spacing: var(--lr-tracking-caps);
-  border-bottom-color: var(--lr-border);
+  border-bottom-color: var(--lr-glass-border-strong, var(--lr-border));
+  box-shadow: inset 0 -1px 0 var(--lr-accent-soft);
 }
 
 .table th[data-align="end"],
@@ -597,13 +963,44 @@ textarea.input {
   transition: background-color var(--lr-dur-fast) var(--lr-ease);
 }
 
+.table tbody tr > td:first-child {
+  transition: box-shadow var(--lr-dur) var(--lr-ease);
+}
+
+/* Hover: latar cyan tipis + garis aksen kiri bercahaya. */
 .table tbody tr:hover {
-  background: var(--lr-surface-hover);
+  background: var(--lr-row-hover, rgb(56 225 255 / 0.05));
+}
+
+.table tbody tr:hover > td:first-child {
+  box-shadow: inset 2px 0 0 var(--lr-neural-cyan, var(--lr-accent));
 }
 
 .table--compact th,
 .table--compact td {
   height: var(--lr-row-h-compact);
+}
+
+/* Baris masuk bertahap: dataTable() memberi data-enter + --i (indeks) hanya pada render pertama. */
+.table tbody tr[data-enter] {
+  animation: lr-row-in 380ms var(--lr-ease-out-expo, var(--lr-ease)) both;
+  animation-delay: calc(min(var(--i, 0), 16) * 24ms);
+}
+
+@keyframes lr-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Meter skor dalam tabel hanya beranimasi pada baris yang baru masuk — bukan setiap polling. */
+.table tbody tr:not([data-enter]) .score__fill {
+  animation: none;
 }
 
 .sort-btn {
@@ -617,6 +1014,11 @@ textarea.input {
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
+  transition: color var(--lr-dur-fast) var(--lr-ease);
+}
+
+.sort-btn:hover {
+  color: var(--lr-text);
 }
 
 .sort-btn::after {
@@ -627,11 +1029,12 @@ textarea.input {
   border-right: 3px solid transparent;
   border-top: 4px solid currentColor;
   opacity: 0.35;
+  transition: transform var(--lr-dur) var(--lr-ease), opacity var(--lr-dur) var(--lr-ease);
 }
 
 th[aria-sort="ascending"] .sort-btn,
 th[aria-sort="descending"] .sort-btn {
-  color: var(--lr-text);
+  color: var(--lr-neural-cyan, var(--lr-text));
 }
 
 th[aria-sort="ascending"] .sort-btn::after {
@@ -656,21 +1059,26 @@ th[aria-sort="descending"] .sort-btn::after {
   font-size: var(--lr-text-xs);
 }
 
-/* ---- Filter bar ---- */
+/* ======================================================================
+ * Filter bar
+ * ==================================================================== */
 .toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: var(--lr-space-3);
   padding: var(--lr-space-3) var(--lr-space-4);
-  border-bottom: 1px solid var(--lr-border-subtle);
+  border-bottom: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.015), transparent);
 }
 
 .toolbar .field {
   width: 150px;
 }
 
-/* ---- Empty state ---- */
+/* ======================================================================
+ * Empty state: ikon dikelilingi node yang mengorbit (dekoratif, aria-hidden)
+ * ==================================================================== */
 .empty {
   display: flex;
   flex-direction: column;
@@ -682,15 +1090,86 @@ th[aria-sort="descending"] .sort-btn::after {
   color: var(--lr-text-2);
 }
 
+.empty__visual {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: var(--lr-space-2);
+}
+
+/* Orbit: cincin putus-putus tipis. */
+.empty__visual::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  border: 1px dashed var(--lr-accent-line);
+  opacity: 0.55;
+}
+
+/* Halo lembut di belakang ikon. */
+.empty__visual::after {
+  content: "";
+  position: absolute;
+  inset: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--lr-neural-cyan-soft, rgb(56 225 255 / 0.12)), transparent 70%);
+  animation: lr-empty-breathe 3.2s var(--lr-ease) infinite;
+}
+
 .empty__icon {
+  position: relative;
+  z-index: 1;
   width: 36px;
   height: 36px;
   margin-bottom: var(--lr-space-2);
   padding: 8px;
-  border: 1px solid var(--lr-border);
+  border: 1px solid var(--lr-glass-border-strong, var(--lr-border));
   border-radius: var(--lr-radius-md);
-  color: var(--lr-text-3);
-  background: var(--lr-surface-2);
+  color: var(--lr-neural-cyan, var(--lr-text-3));
+  background: var(--lr-glass-strong, var(--lr-surface-2));
+  box-shadow: 0 0 16px -4px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
+}
+
+.empty__visual .empty__icon {
+  margin-bottom: 0;
+}
+
+/* Tiga node di orbit; tiap node berputar pada sudut awal berbeda. */
+.empty__node {
+  position: absolute;
+  inset: 0;
+  animation: lr-empty-orbit 9s linear infinite;
+  animation-delay: calc(var(--n, 0) * -3s);
+}
+
+.empty__node::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--lr-node-color, var(--lr-neural-cyan, var(--lr-accent)));
+  box-shadow: 0 0 8px var(--lr-node-color, var(--lr-neural-cyan, var(--lr-accent)));
+}
+
+.empty__node:nth-of-type(1) { --n: 0; }
+.empty__node:nth-of-type(2) { --n: 1; --lr-node-color: var(--lr-neural-violet, var(--lr-accent)); }
+.empty__node:nth-of-type(3) { --n: 2; --lr-node-color: var(--lr-neural-emerald, var(--lr-bull)); }
+
+@keyframes lr-empty-orbit {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes lr-empty-breathe {
+  0%,
+  100% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.15); opacity: 1; }
 }
 
 .empty__title {
@@ -704,7 +1183,9 @@ th[aria-sort="descending"] .sort-btn::after {
   font-size: var(--lr-text-sm);
 }
 
-/* ---- Daftar definisi (key/value) ---- */
+/* ======================================================================
+ * Daftar definisi (key/value)
+ * ==================================================================== */
 .kv {
   display: grid;
   grid-template-columns: minmax(120px, auto) 1fr;
@@ -723,7 +1204,9 @@ th[aria-sort="descending"] .sort-btn::after {
   overflow-wrap: anywhere;
 }
 
-/* ---- Roadmap / timeline ---- */
+/* ======================================================================
+ * Roadmap / timeline
+ * ==================================================================== */
 .timeline {
   list-style: none;
   margin: 0;
@@ -747,7 +1230,11 @@ th[aria-sort="descending"] .sort-btn::after {
   top: 24px;
   bottom: -8px;
   width: 1px;
-  background: var(--lr-border-subtle);
+  background: var(--lr-glass-border-strong, var(--lr-border-subtle));
+}
+
+.timeline__item[data-state="done"]::before {
+  background: linear-gradient(180deg, var(--lr-bull-line), var(--lr-glass-border-strong, var(--lr-border-subtle)));
 }
 
 .timeline__item:last-child::before {
@@ -755,6 +1242,7 @@ th[aria-sort="descending"] .sort-btn::after {
 }
 
 .timeline__dot {
+  position: relative;
   width: 9px;
   height: 9px;
   margin: 5px 0 0 4px;
@@ -766,11 +1254,23 @@ th[aria-sort="descending"] .sort-btn::after {
 .timeline__item[data-state="done"] .timeline__dot {
   background: var(--lr-bull);
   border-color: var(--lr-bull);
+  box-shadow: 0 0 8px var(--lr-bull-line);
 }
 
 .timeline__item[data-state="active"] .timeline__dot {
-  background: var(--lr-accent);
-  border-color: var(--lr-accent);
+  background: var(--lr-neural-cyan, var(--lr-accent));
+  border-color: var(--lr-neural-cyan, var(--lr-accent));
+  box-shadow: 0 0 10px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
+}
+
+.timeline__item[data-state="active"] .timeline__dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1px solid var(--lr-neural-cyan, var(--lr-accent));
+  opacity: 0;
+  animation: lr-pulse 2.4s var(--lr-ease) infinite;
 }
 
 .timeline__title {
@@ -782,24 +1282,40 @@ th[aria-sort="descending"] .sort-btn::after {
   font-size: var(--lr-text-xs);
 }
 
-/* ---- Callout ---- */
+/* ======================================================================
+ * Callout
+ * ==================================================================== */
 .callout {
+  --lr-callout-tone: var(--lr-accent);
+  position: relative;
   display: flex;
   gap: var(--lr-space-3);
   padding: var(--lr-space-3) var(--lr-space-4);
-  border: 1px solid var(--lr-border);
-  border-left: 2px solid var(--lr-accent);
+  border: 1px solid var(--lr-glass-border, var(--lr-border));
+  border-left: 2px solid var(--lr-callout-tone);
   border-radius: var(--lr-radius-sm);
-  background: var(--lr-surface);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--lr-callout-tone) 9%, transparent), transparent 55%),
+    var(--lr-glass, var(--lr-surface));
+  -webkit-backdrop-filter: var(--lr-blur, blur(14px) saturate(140%));
+  backdrop-filter: var(--lr-blur, blur(14px) saturate(140%));
   color: var(--lr-text-2);
+  box-shadow: -6px 0 14px -10px var(--lr-callout-tone);
 }
 
 .callout--warn {
+  --lr-callout-tone: var(--lr-warn);
   border-left-color: var(--lr-warn);
 }
 
 .callout--bear {
+  --lr-callout-tone: var(--lr-bear);
   border-left-color: var(--lr-bear);
+}
+
+.callout--bull {
+  --lr-callout-tone: var(--lr-bull);
+  border-left-color: var(--lr-bull);
 }
 
 .callout strong {
@@ -807,22 +1323,29 @@ th[aria-sort="descending"] .sort-btn::after {
   font-weight: var(--lr-weight-semibold);
 }
 
-/* ---- Skeleton loading ---- */
+/* ======================================================================
+ * Skeleton loading (shimmer bernuansa cyan)
+ * ==================================================================== */
 .skeleton {
   display: block;
   height: 12px;
   border-radius: var(--lr-radius-xs);
-  background: linear-gradient(90deg, var(--lr-surface-2) 0%, var(--lr-surface-3) 50%, var(--lr-surface-2) 100%);
-  background-size: 200% 100%;
-  animation: lr-shimmer 1.4s linear infinite;
+  background:
+    linear-gradient(90deg, transparent 0%, var(--lr-neural-cyan-soft, rgb(56 225 255 / 0.12)) 50%, transparent 100%),
+    var(--lr-surface-2);
+  background-size: 200% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  animation: lr-skeleton-shimmer 1.6s linear infinite;
 }
 
-@keyframes lr-shimmer {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
+@keyframes lr-skeleton-shimmer {
+  from { background-position: 200% 0, 0 0; }
+  to { background-position: -100% 0, 0 0; }
 }
 
-/* ---- Toast ---- */
+/* ======================================================================
+ * Toast (slide-in dari kanan, kaca pekat, bar sisa waktu)
+ * ==================================================================== */
 .toasts {
   position: fixed;
   right: var(--lr-space-5);
@@ -835,36 +1358,63 @@ th[aria-sort="descending"] .sort-btn::after {
 }
 
 .toast {
+  --lr-toast-tone: var(--lr-neural-cyan, var(--lr-accent));
+  position: relative;
+  overflow: hidden;
   min-width: 260px;
   max-width: 380px;
   padding: var(--lr-space-3) var(--lr-space-4);
-  border: 1px solid var(--lr-border);
-  border-left: 2px solid var(--lr-accent);
+  border: 1px solid var(--lr-glass-border-strong, var(--lr-border));
+  border-left: 2px solid var(--lr-toast-tone);
   border-radius: var(--lr-radius-sm);
-  background: var(--lr-surface-2);
-  box-shadow: var(--lr-shadow-2);
+  background: var(--lr-glass-strong, var(--lr-surface-2));
+  -webkit-backdrop-filter: var(--lr-blur-strong, blur(20px) saturate(150%));
+  backdrop-filter: var(--lr-blur-strong, blur(20px) saturate(150%));
+  box-shadow: var(--lr-shadow-2), -8px 0 20px -12px var(--lr-toast-tone);
   color: var(--lr-text);
   pointer-events: auto;
-  animation: lr-toast-in var(--lr-dur-slow) var(--lr-ease);
+  animation: lr-toast-in var(--lr-dur-page, 420ms) var(--lr-ease-out-expo, var(--lr-ease)) both;
 }
 
-.toast[data-tone="bull"] { border-left-color: var(--lr-bull); }
-.toast[data-tone="bear"] { border-left-color: var(--lr-bear); }
+/* Bar sisa waktu tampil (toast() menghapus setelah 4 detik). */
+.toast::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--lr-toast-tone);
+  opacity: 0.55;
+  transform-origin: left center;
+  animation: lr-toast-life 4s linear both;
+}
+
+.toast[data-tone="bull"] { --lr-toast-tone: var(--lr-bull); border-left-color: var(--lr-bull); }
+.toast[data-tone="bear"] { --lr-toast-tone: var(--lr-bear); border-left-color: var(--lr-bear); }
+.toast[data-tone="warn"] { --lr-toast-tone: var(--lr-warn); border-left-color: var(--lr-warn); }
 
 @keyframes lr-toast-in {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateX(24px) scale(0.98); }
   to { opacity: 1; transform: none; }
 }
 
-/* ---- User menu ---- */
+@keyframes lr-toast-life {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+/* ======================================================================
+ * User menu
+ * ==================================================================== */
 .user-chip {
   display: flex;
   align-items: center;
   gap: var(--lr-space-2);
   padding: 2px var(--lr-space-2) 2px 2px;
-  border: 1px solid var(--lr-border-subtle);
+  border: 1px solid var(--lr-glass-border-strong, var(--lr-border-subtle));
   border-radius: var(--lr-radius-pill);
-  background: var(--lr-surface);
+  background: var(--lr-glass, var(--lr-surface));
   color: var(--lr-text);
   font-size: var(--lr-text-xs);
 }
@@ -875,14 +1425,17 @@ th[aria-sort="descending"] .sort-btn::after {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: var(--lr-surface-3);
+  background: var(--lr-gradient-brand-soft, var(--lr-surface-3));
+  box-shadow: inset 0 0 0 1px var(--lr-accent-line);
   color: var(--lr-text);
   font-size: var(--lr-text-2xs);
   font-weight: var(--lr-weight-semibold);
   text-transform: uppercase;
 }
 
-/* ---- Swatch untuk referensi design system ---- */
+/* ======================================================================
+ * Swatch untuk referensi design system
+ * ==================================================================== */
 .swatches {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -893,15 +1446,15 @@ th[aria-sort="descending"] .sort-btn::after {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--lr-border-subtle);
+  border: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
   border-radius: var(--lr-radius-sm);
-  background: var(--lr-surface);
+  background: var(--lr-glass-strong, var(--lr-surface));
 }
 
 .swatch__color {
   height: 48px;
   background: var(--lr-swatch);
-  border-bottom: 1px solid var(--lr-border-subtle);
+  border-bottom: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
 }
 
 .swatch__meta {
@@ -922,7 +1475,7 @@ th[aria-sort="descending"] .sort-btn::after {
   justify-content: space-between;
   gap: var(--lr-space-4);
   padding: var(--lr-space-2) 0;
-  border-bottom: 1px solid var(--lr-border-subtle);
+  border-bottom: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
 }
 
 .type-sample:last-child {
@@ -946,12 +1499,14 @@ th[aria-sort="descending"] .sort-btn::after {
 
 .divider {
   height: 1px;
-  background: var(--lr-border-subtle);
+  background: linear-gradient(90deg, transparent, var(--lr-glass-border-strong, var(--lr-border-subtle)), transparent);
   border: 0;
   margin: var(--lr-space-2) 0;
 }
 
-/* ---- Kontrol scanner (System Health & Overview) ---- */
+/* ======================================================================
+ * Kontrol scanner (System Health & Overview)
+ * ==================================================================== */
 .worker-control {
   display: flex;
   flex-direction: column;
@@ -983,9 +1538,11 @@ th[aria-sort="descending"] .sort-btn::after {
   border-radius: var(--lr-radius-sm);
   background: var(--lr-bear-soft);
   color: var(--lr-text);
+  box-shadow: 0 0 18px -8px var(--lr-bear);
 }
 
-/* Bar progres indeterminate: perintah scanner sedang diproses (durasi tidak diketahui, jadi tanpa persentase). */
+/* Bar progres indeterminate: perintah scanner sedang diproses (durasi tidak diketahui, jadi tanpa persentase).
+   Animasi fungsional: tetap berjalan saat "Animasi latar" mati; statis pada prefers-reduced-motion. */
 .progress-indeterminate {
   position: relative;
   height: 4px;
@@ -1000,7 +1557,8 @@ th[aria-sort="descending"] .sort-btn::after {
   inset: 0 auto 0 0;
   width: 40%;
   border-radius: inherit;
-  background: var(--lr-accent);
+  background: linear-gradient(90deg, var(--lr-neural-violet, var(--lr-accent)), var(--lr-neural-cyan, var(--lr-accent)));
+  box-shadow: 0 0 10px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
   animation: lr-indeterminate 1.3s var(--lr-ease) infinite;
 }
 
@@ -1057,7 +1615,9 @@ th[aria-sort="descending"] .sort-btn::after {
   margin-top: 0;
 }
 
-/* ---- Proses sync scanner (frontend/js/views/syncProgress.js, docs/09-proses-sync.md) ---- */
+/* ======================================================================
+ * Proses sync scanner (frontend/js/views/syncProgress.js, docs/09-proses-sync.md)
+ * ==================================================================== */
 /* Header panel boleh membungkus: badge langkah dapat lebih panjang dari judul di layar sempit. */
 #sync-progress .panel__header {
   flex-wrap: wrap;
@@ -1122,11 +1682,12 @@ th[aria-sort="descending"] .sort-btn::after {
   bottom: 4px;
   width: 2px;
   border-radius: 1px;
-  background: var(--lr-border-subtle);
+  background: var(--lr-glass-border-strong, var(--lr-border-subtle));
 }
 
 .sync-step[data-state="done"]:not(:last-child)::before {
-  background: var(--lr-bull-line);
+  background: linear-gradient(180deg, var(--lr-bull), var(--lr-bull-line));
+  box-shadow: 0 0 6px var(--lr-bull-line);
 }
 
 .sync-step__marker {
@@ -1141,6 +1702,7 @@ th[aria-sort="descending"] .sort-btn::after {
 .sync-step[data-state="done"] .sync-step__marker {
   border-color: var(--lr-bull);
   background: var(--lr-bull);
+  box-shadow: 0 0 10px var(--lr-bull-line);
 }
 
 /* Tanda centang. */
@@ -1159,6 +1721,7 @@ th[aria-sort="descending"] .sort-btn::after {
 /* Langkah aktif: cincin berputar. */
 .sync-step[data-state="active"] .sync-step__marker {
   border-color: var(--lr-accent-soft);
+  box-shadow: 0 0 10px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
 }
 
 .sync-step[data-state="active"] .sync-step__marker::after {
@@ -1166,8 +1729,8 @@ th[aria-sort="descending"] .sort-btn::after {
   position: absolute;
   inset: -2px;
   border: 2px solid transparent;
-  border-top-color: var(--lr-accent);
-  border-right-color: var(--lr-accent);
+  border-top-color: var(--lr-neural-cyan, var(--lr-accent));
+  border-right-color: var(--lr-neural-violet, var(--lr-accent));
   border-radius: 50%;
   animation: lr-sync-spin 0.9s linear infinite;
 }
@@ -1176,6 +1739,7 @@ th[aria-sort="descending"] .sort-btn::after {
 .sync-step[data-state="live"] .sync-step__marker {
   border-color: var(--lr-bull);
   background: var(--lr-bull-soft);
+  box-shadow: 0 0 10px var(--lr-bull-line);
 }
 
 .sync-step[data-state="live"] .sync-step__marker::after {
@@ -1252,7 +1816,8 @@ th[aria-sort="descending"] .sort-btn::after {
   width: calc(var(--lr-sync-pct, 0) * 1%);
   height: 100%;
   border-radius: inherit;
-  background: var(--lr-accent);
+  background: linear-gradient(90deg, var(--lr-neural-violet, var(--lr-accent)), var(--lr-neural-cyan, var(--lr-accent)));
+  box-shadow: 0 0 10px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
   transition: width var(--lr-dur-slow) var(--lr-ease);
 }
 
@@ -1337,7 +1902,9 @@ th[aria-sort="descending"] .sort-btn::after {
   }
 }
 
-/* ---- Grafik simbol (Lightweight Charts) & side panel tabel ---- */
+/* ======================================================================
+ * Grafik simbol (Lightweight Charts) & side panel tabel
+ * ==================================================================== */
 /* Baris tabel yang dapat dipilih (dataTable dengan onRowSelect). */
 .table__row--selectable {
   cursor: pointer;
@@ -1352,11 +1919,12 @@ th[aria-sort="descending"] .sort-btn::after {
 
 .table tbody tr[data-selected],
 .table tbody tr[data-selected]:hover {
-  background: var(--lr-accent-soft);
+  background: linear-gradient(90deg, var(--lr-accent-soft), rgb(92 184 255 / 0.04) 70%);
 }
 
-.table tbody tr[data-selected] > td:first-child {
-  box-shadow: inset 2px 0 0 var(--lr-accent);
+.table tbody tr[data-selected] > td:first-child,
+.table tbody tr[data-selected]:hover > td:first-child {
+  box-shadow: inset 2px 0 0 var(--lr-accent), inset 10px 0 12px -10px var(--lr-accent);
 }
 
 /* Mode warna paksa membuang latar & box-shadow: baris terpilih tetap ditandai garis kiri warna sistem
@@ -1398,8 +1966,18 @@ th[aria-sort="descending"] .sort-btn::after {
   max-height: calc(100vh - var(--lr-topbar-h) - var(--lr-space-6));
   overflow: auto;
   padding: var(--lr-space-3);
-  border-left: 1px solid var(--lr-border-subtle);
+  border-left: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
   scroll-margin-top: calc(var(--lr-topbar-h) + var(--lr-space-2));
+}
+
+.chart-split__aside[data-open="true"],
+.chart-split[data-open="true"] .chart-split__aside {
+  animation: lr-aside-in var(--lr-dur-page, 420ms) var(--lr-ease-out-expo, var(--lr-ease)) both;
+}
+
+@keyframes lr-aside-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: none; }
 }
 
 .chart-split__aside .panel {
@@ -1421,6 +1999,7 @@ th[aria-sort="descending"] .sort-btn::after {
   overflow: hidden;
   contain: size layout;
   border-radius: var(--lr-radius-sm);
+  box-shadow: inset 0 0 0 1px var(--lr-glass-border, var(--lr-border-subtle));
 }
 
 .chart--detail .chart__canvas {
@@ -1519,10 +2098,6 @@ a#tv-attr-logo[data-dark] {
   --stroke: #131722;
 }
 
-/* Skor bernada bear (Early Score sinyal SHORT). Warna tahap SHORT sengaja tidak diatur di sini — aturan di akhir
-   berkas akan menimpa token tahap SHORT di samping aturan .stage lain; sampai token itu ada, tahap SHORT netral. */
-.score[data-tone="bear"] .score__fill { background: var(--lr-bear); }
-
 /* Halaman Symbol Intelligence: cari simbol & penjelasan kondisi. */
 .symbol-search {
   display: flex;
@@ -1549,7 +2124,7 @@ a#tv-attr-logo[data-dark] {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 2px var(--lr-space-3);
   padding-bottom: var(--lr-space-2);
-  border-bottom: 1px solid var(--lr-border-subtle);
+  border-bottom: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
   font-size: var(--lr-text-xs);
 }
 
@@ -1599,7 +2174,7 @@ a#tv-attr-logo[data-dark] {
     max-height: none;
     overflow: visible;
     border-left: 0;
-    border-top: 1px solid var(--lr-border-subtle);
+    border-top: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
   }
 }
 
@@ -1617,11 +2192,64 @@ a#tv-attr-logo[data-dark] {
   .chart-split__aside {
     padding: var(--lr-space-2);
   }
+
+  /* Layar kecil: blur lebih ringan agar gulir tetap mulus. */
+  .panel,
+  .stat,
+  .callout,
+  .table thead th {
+    -webkit-backdrop-filter: blur(8px) saturate(130%);
+    backdrop-filter: blur(8px) saturate(130%);
+  }
+}
+
+/* ======================================================================
+ * Preferensi gerak
+ * ==================================================================== */
+/* "Animasi latar: mati" atau reduced (app.js menulis data-motion pada <html>): gerak dekoratif dimatikan.
+   Bar progres indeterminate, cincin sync, dan shimmer skeleton (fungsional) tidak disentuh di sini. */
+:root[data-motion="off"] .btn::after,
+:root[data-motion="reduced"] .btn::after {
+  display: none;
+}
+
+:root[data-motion="off"] .stage::before,
+:root[data-motion="reduced"] .stage::before,
+:root[data-motion="off"] .score__fill,
+:root[data-motion="reduced"] .score__fill,
+:root[data-motion="off"] .table tbody tr[data-enter],
+:root[data-motion="reduced"] .table tbody tr[data-enter],
+:root[data-motion="off"] .empty__node,
+:root[data-motion="reduced"] .empty__node,
+:root[data-motion="off"] .empty__visual::after,
+:root[data-motion="reduced"] .empty__visual::after,
+:root[data-motion="off"] .lr-scanline::after,
+:root[data-motion="reduced"] .lr-scanline::after,
+:root[data-motion="off"] .chart-split__aside,
+:root[data-motion="reduced"] .chart-split__aside,
+:root[data-motion="off"] .toast,
+:root[data-motion="reduced"] .toast {
+  animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* base.css memendekkan semua animasi; di sini animasi dekoratif dimatikan sepenuhnya agar delay stagger dan
+     keadaan awal (opacity 0, scaleX 0) tidak pernah terlihat. */
+  .btn::after,
+  .lr-scanline::after {
+    display: none;
+  }
+
+  .stage::before,
+  .score__fill,
+  .table tbody tr[data-enter],
+  .empty__node,
+  .empty__visual::after,
+  .chart-split__aside,
+  .toast,
+  .toast::after,
+  .skeleton,
   .chart-skeleton .skeleton {
     animation: none;
   }
 }
-

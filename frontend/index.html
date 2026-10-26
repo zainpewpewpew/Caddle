@@ -10,9 +10,14 @@
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/layout.css">
   <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/neural.css">
+  <link rel="stylesheet" href="/css/overview.css">
+  <link rel="stylesheet" href="/css/scanner.css">
+  <link rel="stylesheet" href="/css/symbol.css">
   <script type="module" src="/js/app.js"></script>
 </head>
 <body>
+  <canvas class="neural-bg" id="neural-bg" aria-hidden="true"></canvas>
   <a class="skip-link" href="#main">Lewati ke konten</a>
   <div class="app" id="app" data-nav="expanded">
     <aside class="sidebar" id="sidebar" aria-label="Navigasi utama">
@@ -46,6 +51,10 @@
       </div>
       <div class="topbar__meta">
         <span class="status" data-state="idle" id="conn-status"><span class="status__dot" aria-hidden="true"></span><span>Memeriksa server…</span></span>
+        <button class="motion-toggle" type="button" id="motion-toggle" aria-pressed="true" aria-label="Animasi latar" title="Nyalakan/matikan animasi jaringan di latar">
+          <svg class="motion-toggle__icon" aria-hidden="true"><use href="/assets/icons.svg#i-neural"></use></svg>
+          <span class="motion-toggle__label">Animasi latar</span>
+        </button>
         <time class="topbar__clock" id="clock" aria-label="Waktu UTC"></time>
         <span class="user-chip" id="user-chip"><span class="avatar" id="user-avatar">·</span><span id="user-name"></span></span>
       </div>

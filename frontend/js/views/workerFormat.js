@@ -33,6 +33,9 @@ export const binancePill = (binance) => pill(BINANCE, binance?.status);
 /** State supervisor yang sedang berpindah: UI memantau tiap 2 detik sampai stabil. */
 export const isWorkerTransitional = (status) => status?.state === 'starting' || status?.state === 'stopping';
 
+/** Scanner benar-benar berjalan (dikelola website atau dijalankan di luar website) — dipakai animasi radar/scan line. */
+export const isWorkerActive = (status) => status?.state === 'running' || status?.state === 'external';
+
 /** Scanner dapat dijalankan dari website: kontrol aktif dan tidak ada worker yang berjalan. */
 export const canStartWorker = (status) => Boolean(status?.enabled) && (status.state === 'stopped' || status.state === 'crashed');
 

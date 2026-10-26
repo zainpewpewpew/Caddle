@@ -1,5 +1,8 @@
-/* AlphaLens — kerangka aplikasi: sidebar, topbar, area konten. */
+/* AlphaLens — kerangka aplikasi "Neural Aurora": sidebar & topbar kaca, area konten.
+ * .app duduk di atas canvas latar (#neural-bg, z-index 0, lihat neural.css). */
 .app {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: var(--lr-sidebar-w) minmax(0, 1fr);
   grid-template-rows: var(--lr-topbar-h) minmax(0, 1fr);
@@ -24,10 +27,120 @@
   flex-direction: column;
   gap: var(--lr-space-2);
   padding: var(--lr-space-3) var(--lr-space-2);
-  background: var(--lr-bg-sunken);
-  border-right: 1px solid var(--lr-border-subtle);
+  background:
+    linear-gradient(180deg, var(--lr-glass-highlight) 0%, transparent 18%),
+    var(--lr-glass-strong);
+  border-right: 1px solid var(--lr-glass-border);
+  box-shadow: inset -1px 0 0 var(--lr-glass-highlight);
   z-index: var(--lr-z-nav);
   overflow: hidden;
+}
+
+/* Garis tepi kanan bergradien cyan → violet yang sangat tipis. */
+.sidebar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(180deg, transparent 0%, var(--lr-neural-glow) 30%, var(--lr-neural-glow-violet) 70%, transparent 100%);
+  pointer-events: none;
+}
+
+/* ---- Brand ---- */
+.sidebar .brand {
+  display: flex;
+  align-items: center;
+  gap: var(--lr-space-3);
+  padding: var(--lr-space-1) var(--lr-space-2) var(--lr-space-2);
+  color: var(--lr-text);
+  border-radius: var(--lr-radius-md);
+}
+
+.sidebar .brand:hover {
+  text-decoration: none;
+}
+
+.sidebar .brand__mark {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--lr-radius-md);
+  box-shadow: 0 0 14px var(--lr-neural-glow);
+  transition: transform var(--lr-dur) var(--lr-ease-spring);
+}
+
+/* Halo brand: hanya opacity/transform pada pseudo-element (murah untuk compositor). */
+.sidebar .brand {
+  position: relative;
+}
+
+.sidebar .brand::before {
+  content: "";
+  position: absolute;
+  left: var(--lr-space-2);
+  top: var(--lr-space-1);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--lr-radius-md);
+  box-shadow: 0 0 22px var(--lr-neural-glow), 0 0 34px var(--lr-neural-violet-soft);
+  opacity: 0.35;
+  pointer-events: none;
+  animation: lr-brand-breathe 6s var(--lr-ease) infinite;
+}
+
+.sidebar .brand:hover .brand__mark {
+  transform: rotate(-6deg) scale(1.06);
+}
+
+.sidebar .brand__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  transition: opacity var(--lr-dur) var(--lr-ease);
+}
+
+.sidebar .brand__name {
+  font-weight: var(--lr-weight-semibold);
+  font-size: var(--lr-text-md);
+  letter-spacing: -0.01em;
+  background: linear-gradient(90deg, var(--lr-text) 0%, var(--lr-text) 45%, var(--lr-neural-cyan) 75%, var(--lr-neural-violet) 100%);
+  background-size: 200% 100%;
+  background-position: 0% 50%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  /* Kilau sekali saat muat, lalu diam. */
+  animation: lr-hue-drift 2.4s var(--lr-ease-out-expo) 1 both;
+}
+
+.sidebar .brand__tag {
+  font-size: var(--lr-text-2xs);
+  color: var(--lr-text-3);
+  text-transform: uppercase;
+  letter-spacing: var(--lr-tracking-caps);
+  white-space: nowrap;
+}
+
+@keyframes lr-brand-breathe {
+  0%,
+  100% { opacity: 0.25; transform: scale(0.96); }
+  50% { opacity: 0.8; transform: scale(1.04); }
+}
+
+:root[data-motion="off"] .sidebar .brand::before,
+:root[data-motion="reduced"] .sidebar .brand::before,
+:root[data-motion="off"] .sidebar .brand__name,
+:root[data-motion="reduced"] .sidebar .brand__name {
+  animation: none;
+}
+
+@media (forced-colors: active) {
+  .sidebar .brand__name {
+    color: CanvasText;
+    background: none;
+  }
 }
 
 .nav {
@@ -59,29 +172,60 @@
   color: var(--lr-text-2);
   font-weight: var(--lr-weight-medium);
   white-space: nowrap;
-  transition: background-color var(--lr-dur-fast) var(--lr-ease), color var(--lr-dur-fast) var(--lr-ease);
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  width: 100%;
+  transition:
+    background-color var(--lr-dur) var(--lr-ease),
+    color var(--lr-dur-fast) var(--lr-ease),
+    border-color var(--lr-dur) var(--lr-ease),
+    box-shadow var(--lr-dur) var(--lr-ease);
 }
 
 .nav__link:hover {
-  background: var(--lr-surface);
+  background: var(--lr-glass-soft);
+  border-color: var(--lr-glass-border);
   color: var(--lr-text);
   text-decoration: none;
 }
 
-.nav__link[aria-current="page"] {
-  background: var(--lr-surface-2);
-  color: var(--lr-text);
+.nav__link:hover .nav__icon {
+  color: var(--lr-neural-cyan);
+  transform: translateX(1px);
 }
 
+.nav__link[aria-current="page"] {
+  background:
+    linear-gradient(90deg, var(--lr-neural-cyan-soft) 0%, var(--lr-neural-violet-soft) 60%, transparent 100%),
+    var(--lr-surface-2);
+  border-color: var(--lr-glass-border-strong);
+  color: var(--lr-text);
+  box-shadow: inset 0 1px 0 var(--lr-glass-highlight);
+}
+
+.nav__link[aria-current="page"] .nav__icon {
+  color: var(--lr-neural-cyan);
+  filter: drop-shadow(0 0 4px var(--lr-neural-glow));
+}
+
+/* Indikator aktif: batang gradien cyan → violet dengan glow. */
 .nav__link[aria-current="page"]::before {
   content: "";
   position: absolute;
-  left: -8px;
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--lr-bull);
+  left: -9px;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--lr-neural-cyan), var(--lr-neural-violet));
+  box-shadow: 0 0 10px var(--lr-neural-glow), 0 0 4px var(--lr-neural-glow-violet);
+  animation: lr-nav-indicator var(--lr-dur-slow) var(--lr-ease-spring) both;
+}
+
+@keyframes lr-nav-indicator {
+  from { transform: scaleY(0.2); opacity: 0; }
+  to { transform: none; opacity: 1; }
 }
 
 .nav__icon {
@@ -89,6 +233,13 @@
   width: 18px;
   height: 18px;
   color: currentColor;
+  transition: color var(--lr-dur-fast) var(--lr-ease), transform var(--lr-dur) var(--lr-ease);
+}
+
+@media (forced-colors: active) {
+  .nav__link[aria-current="page"] {
+    border-color: Highlight;
+  }
 }
 
 .nav__badge {
@@ -104,7 +255,7 @@
   flex-direction: column;
   gap: 2px;
   padding-top: var(--lr-space-2);
-  border-top: 1px solid var(--lr-border-subtle);
+  border-top: 1px solid var(--lr-glass-border);
 }
 
 .app[data-nav="collapsed"] .brand__text,
@@ -130,9 +281,24 @@
   align-items: center;
   gap: var(--lr-space-4);
   padding: 0 var(--lr-space-5);
-  background: rgb(8 11 16 / 0.86);
-  backdrop-filter: saturate(140%) blur(10px);
-  border-bottom: 1px solid var(--lr-border-subtle);
+  background: var(--lr-glass-strong);
+  -webkit-backdrop-filter: var(--lr-blur);
+  backdrop-filter: var(--lr-blur);
+  border-bottom: 1px solid var(--lr-glass-border);
+  box-shadow: inset 0 1px 0 var(--lr-glass-highlight);
+}
+
+/* Garis cahaya tipis di bawah topbar. */
+.topbar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--lr-neural-glow) 25%, var(--lr-neural-glow-violet) 60%, transparent 100%);
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .topbar__title {
@@ -168,6 +334,63 @@
 .topbar__clock {
   font-family: var(--lr-font-mono);
   color: var(--lr-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tombol "Animasi latar" (aria-pressed = animasi aktif). */
+.motion-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  height: 28px;
+  padding: 0 var(--lr-space-3);
+  border-radius: var(--lr-radius-pill);
+  border: 1px solid var(--lr-glass-border);
+  background: var(--lr-glass-soft);
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+  white-space: nowrap;
+  transition: color var(--lr-dur-fast) var(--lr-ease), border-color var(--lr-dur) var(--lr-ease), box-shadow var(--lr-dur) var(--lr-ease);
+}
+
+.motion-toggle:hover {
+  color: var(--lr-text);
+  border-color: var(--lr-glass-border-strong);
+}
+
+.motion-toggle__icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.motion-toggle[aria-pressed="true"] {
+  color: var(--lr-text);
+  border-color: var(--lr-accent-line);
+  box-shadow: var(--lr-glow-accent);
+}
+
+.motion-toggle[aria-pressed="true"] .motion-toggle__icon {
+  color: var(--lr-neural-cyan);
+}
+
+.topbar .user-chip {
+  background: var(--lr-glass-soft);
+  border-color: var(--lr-glass-border);
+}
+
+.topbar .user-chip .avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--lr-radius-pill);
+  background: var(--lr-gradient-brand);
+  color: var(--lr-text-inverse);
+  font-weight: var(--lr-weight-semibold);
+  font-size: var(--lr-text-xs);
+  text-transform: uppercase;
+  box-shadow: 0 0 10px var(--lr-neural-glow);
 }
 
 /* ---- Konten ---- */
@@ -190,7 +413,28 @@
   display: flex;
   flex-direction: column;
   gap: var(--lr-space-4);
-  animation: lr-page-in var(--lr-dur-slow) var(--lr-ease);
+}
+
+/* Transisi masuk halaman: anak langsung .main dan .page muncul bertahap (fade + naik 6px). */
+.main > * {
+  animation: lr-page-in var(--lr-dur-page) var(--lr-ease-out-expo) both;
+}
+
+.page > * {
+  animation: lr-page-in var(--lr-dur-page) var(--lr-ease-out-expo) both;
+}
+
+.page > :nth-child(2) { animation-delay: 40ms; }
+.page > :nth-child(3) { animation-delay: 80ms; }
+.page > :nth-child(4) { animation-delay: 120ms; }
+.page > :nth-child(5) { animation-delay: 160ms; }
+.page > :nth-child(n + 6) { animation-delay: 200ms; }
+
+:root[data-motion="off"] .main > *,
+:root[data-motion="off"] .page > *,
+:root[data-motion="reduced"] .main > *,
+:root[data-motion="reduced"] .page > * {
+  animation: none;
 }
 
 .page__header {
@@ -249,7 +493,7 @@
 @keyframes lr-page-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -282,6 +526,7 @@
     visibility: hidden;
     transition: transform var(--lr-dur-slow) var(--lr-ease), visibility 0s linear var(--lr-dur-slow);
     box-shadow: var(--lr-shadow-3);
+    background: var(--lr-glass-strong);
   }
 
   .app[data-nav="open"] .sidebar {
@@ -305,6 +550,8 @@
   .topbar__meta .status > span:last-child,
   #user-name { display: none; }
   .topbar__meta { gap: var(--lr-space-3); }
+  .motion-toggle__label { display: none; }
+  .motion-toggle { padding: 0 var(--lr-space-2); }
   .grid--kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid--2,
   .grid--3 { grid-template-columns: minmax(0, 1fr); }
@@ -314,5 +561,8 @@
   position: fixed;
   inset: 0;
   z-index: calc(var(--lr-z-nav) - 1);
-  background: rgb(0 0 0 / 0.5);
+  background: rgb(3 5 10 / 0.6);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  animation: lr-fade-in var(--lr-dur) var(--lr-ease) both;
 }

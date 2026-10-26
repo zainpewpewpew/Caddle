@@ -83,6 +83,7 @@ test('E2E-SIG-005 respons tepat 500 baris (= limit, tanpa total dari API) → "�
   await signIn(page);
   await page.goto('/#/screener');
   const results = page.getByTestId('screener-results');
+  await expect(page.getByRole('heading', { level: 1, name: 'LONG Scanner' })).toBeVisible();
   await expect(page.locator('.panel__actions .badge')).toHaveText('≥ 500 hasil');
   await expect(results.getByText('Batas 500 kandidat tercapai')).toBeVisible();
   await expect(results.getByText('mungkin terpotong')).toBeVisible();
@@ -98,6 +99,8 @@ test('E2E-SIG-006 batas: respons 499 baris (< limit 500) → "499 hasil" tanpa c
   await page.route('**/api/signals/active?*', (route) => route.fulfill({ json: { items, count: items.length } }));
   await signIn(page);
   await page.goto('/#/screener');
+  // Tunggu halaman screener terpasang: Overview (masih tampil sesaat setelah goto) juga punya badge di .panel__actions.
+  await expect(page.getByRole('heading', { level: 1, name: 'LONG Scanner' })).toBeVisible();
   await expect(page.locator('.panel__actions .badge')).toHaveText('499 hasil');
   await expect(page.getByTestId('screener-results').getByRole('cell', { name: 'SYN498USDT' })).toBeVisible();
   await expect(page.getByTestId('screener-results').getByText('Batas 500 kandidat tercapai')).toHaveCount(0);

@@ -10,10 +10,16 @@ html {
   text-size-adjust: 100%;
 }
 
+html {
+  background: var(--lr-bg);
+}
+
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--lr-bg);
+  /* Aurora statis sebagai cadangan bila canvas latar tidak berjalan; canvas digambar di atasnya. */
+  background: var(--lr-gradient-aurora), var(--lr-bg);
+  background-attachment: fixed;
   color: var(--lr-text);
   font-family: var(--lr-font-sans);
   font-size: var(--lr-text-sm);
@@ -80,7 +86,7 @@ table {
 }
 
 ::selection {
-  background: var(--lr-accent-soft);
+  background: rgb(56 225 255 / 0.28);
   color: var(--lr-text);
 }
 
@@ -126,26 +132,116 @@ table {
   display: none !important;
 }
 
-/* Scrollbar tipis dan tenang. */
+/* Scrollbar tipis bergaya kaca; thumb bergradien saat disorot. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--lr-border-strong) transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 *::-webkit-scrollbar-thumb {
   background: var(--lr-border);
-  border: 3px solid transparent;
+  border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: var(--lr-radius-pill);
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: var(--lr-border-strong);
+  background: var(--lr-gradient-brand);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---- Keyframes umum (dipakai lintas komponen/view) ----
+ * lr-fade-up    : masuk dari bawah 6px + fade.         animation: lr-fade-up var(--lr-dur-page) var(--lr-ease-out-expo) both;
+ * lr-fade-in    : fade saja.
+ * lr-shimmer    : kilau skeleton; pakai background-size 200% 100% dan gradien horizontal.
+ * lr-pulse-glow : denyut glow halus; warna dari --lr-pulse-color (default cyan).
+ * lr-scan       : garis pindai bergerak kiri → kanan; elemen ::after selebar ±40%, translateX(-100% → 250%).
+ * lr-spin       : rotasi penuh (spinner).
+ * lr-float      : melayang naik-turun 2px (dekoratif).
+ * lr-hue-drift  : pergeseran posisi gradien (background-size ≥ 200%).
+ */
+@keyframes lr-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lr-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes lr-shimmer {
+  from { background-position: 150% 0; }
+  to { background-position: -50% 0; }
+}
+
+@keyframes lr-pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 1px var(--lr-pulse-color, rgb(56 225 255 / 0.35)), 0 0 14px var(--lr-pulse-color, rgb(56 225 255 / 0.35));
+  }
+}
+
+@keyframes lr-scan {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+@keyframes lr-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes lr-float {
+  0%,
+  100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes lr-hue-drift {
+  0%,
+  100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* Utilitas gerak opsional. */
+.lr-anim-fade-up {
+  animation: lr-fade-up var(--lr-dur-page) var(--lr-ease-out-expo) both;
+}
+
+.lr-anim-pulse {
+  animation: lr-pulse-glow var(--lr-dur-ambient) var(--lr-ease) infinite;
+}
+
+/* Gerak dekoratif dimatikan bila pengguna memilih "Animasi latar: mati" atau OS meminta reduced motion.
+   Animasi fungsional (spinner, progres) tidak disentuh. Komponen dekoratif lain sebaiknya menambah
+   aturan serupa: :root[data-motion="off"] .x { animation: none; } */
+:root[data-motion="off"] .lr-anim-pulse,
+:root[data-motion="reduced"] .lr-anim-pulse,
+:root[data-motion="off"] .lr-anim-fade-up,
+:root[data-motion="reduced"] .lr-anim-fade-up {
+  animation: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

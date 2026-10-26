@@ -4,54 +4,80 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="dark">
   <title>Masuk · AlphaLens</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/neural.css">
   <link rel="stylesheet" href="/css/login.css">
   <script type="module" src="/js/login.js"></script>
 </head>
-<body>
+<body class="auth-body">
+  <canvas class="neural-bg" id="neural-bg" aria-hidden="true"></canvas>
+  <div class="auth-aurora" aria-hidden="true"></div>
+
   <div class="auth">
-    <aside class="auth__aside" aria-hidden="true">
-      <div class="brand">
+    <section class="auth__aside" aria-labelledby="auth-headline">
+      <div class="brand auth__brand">
         <img class="brand__mark" src="/assets/logo.svg" alt="">
         <span class="brand__text">
           <span class="brand__name">AlphaLens</span>
           <span class="brand__tag">Crypto intelligence terminal</span>
         </span>
       </div>
+
       <div class="auth__lead">
-        <p class="auth__eyebrow">Akses privat</p>
-        <h1 class="auth__headline">Deteksi struktur bullish lebih awal, dengan alasan yang dapat dijelaskan.</h1>
-        <p class="auth__copy">Screening multi-timeframe untuk USDT-M perpetual — akumulasi senyap, akumulasi volume progresif, dan konteks tren timeframe lebih tinggi.</p>
+        <p class="auth__eyebrow">
+          <span class="auth__eyebrow-dot" aria-hidden="true"></span>
+          Akses privat · riset saja
+        </p>
+        <h1 class="auth__headline" id="auth-headline">
+          Baca struktur pasar <span class="auth__headline-grad">dua arah</span> —
+          LONG dan SHORT, dengan alasan yang dapat dijelaskan.
+        </h1>
+        <p class="auth__copy">Screening multi-timeframe untuk USDT-M perpetual: akumulasi dan distribusi, tekanan volume progresif, serta konteks tren timeframe lebih tinggi — untuk sisi bullish maupun bearish.</p>
+
+        <ul class="auth__sides" aria-label="Dua scanner">
+          <li class="auth__side auth__side--long">
+            <span class="auth__side-label">LONG scanner</span>
+            <span class="auth__side-copy">Akumulasi senyap, struktur naik, kandidat breakout.</span>
+          </li>
+          <li class="auth__side auth__side--short">
+            <span class="auth__side-label">SHORT scanner</span>
+            <span class="auth__side-copy">Distribusi, struktur turun, kandidat breakdown.</span>
+          </li>
+        </ul>
+
         <ul class="auth__points">
           <li>Hanya candle tertutup untuk sinyal terkonfirmasi.</li>
           <li>Setiap skor dapat ditelusuri ke aturan pola yang berversi.</li>
-          <li>Riset & pendukung keputusan — tanpa eksekusi order.</li>
+          <li>Sisi LONG dan SHORT dinilai dengan aturan cermin yang terpisah.</li>
+          <li>Riset &amp; pendukung keputusan — tanpa eksekusi order.</li>
         </ul>
       </div>
+
       <p class="auth__disclaimer">Skor bukan probabilitas profit yang terkalibrasi. Validasi setiap pola dengan data out-of-sample sebelum diandalkan.</p>
-    </aside>
+    </section>
 
     <main class="auth__main">
-      <div class="auth-card">
-        <div>
+      <div class="auth-card" id="auth-card">
+        <div class="auth-card__head">
           <h2 class="auth-card__title">Masuk</h2>
           <p class="auth-card__subtitle">Gunakan akun yang telah diberikan administrator.</p>
         </div>
         <form id="login-form" method="post" action="/api/auth/login" novalidate>
           <div class="field">
             <label class="field__label" for="username">Username</label>
-            <input class="input" id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="32">
+            <input class="input auth-input" id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="32">
           </div>
           <div class="field">
             <label class="field__label" for="password">Kata sandi</label>
-            <input class="input" id="password" name="password" type="password" autocomplete="current-password" required maxlength="512">
+            <input class="input auth-input" id="password" name="password" type="password" autocomplete="current-password" required maxlength="512">
           </div>
           <p class="auth-card__error" id="login-error" role="alert" hidden></p>
-          <button class="btn btn--primary btn--block" type="submit" id="login-submit" disabled>Masuk</button>
+          <button class="btn btn--primary btn--block auth-submit" type="submit" id="login-submit" disabled>Masuk</button>
         </form>
         <p class="auth-card__foot">
           <svg aria-hidden="true"><use href="/assets/icons.svg#i-lock"></use></svg>

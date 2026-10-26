@@ -14,6 +14,8 @@ import { signalsView } from './views/signals.js';
 import { symbolView } from './views/symbol.js';
 
 const NAV_KEY = 'lr.nav';
+const MOTION_KEY = 'lr.motion';
+const PULSE_KINDS = new Set(['bull', 'bear', 'accent']);
 
 const ROUTES = [
   { section: 'Pasar' },
@@ -120,6 +122,111 @@ function initSkipLink() {
   });
 }
 
+// ---- Latar jaringan saraf (dekoratif, aria-hidden, tanpa data) ----
+// Modul neural dimuat dinamis: bila gagal dimuat atau canvas tidak didukung, aplikasi tetap berjalan.
+let neural = null;
+let motionApi = null;
+
+/** Cadangan bila modul neural tidak tersedia: preferensi pengguna + prefers-reduced-motion. */
+function fallbackReadMotion() {
+  let saved = null;
+  try {
+    saved = window.localStorage.getItem(MOTION_KEY);
+  } catch {
+    // Penyimpanan lokal tidak tersedia.
+  }
+  if (saved === 'off') return 'off';
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'on';
+}
+
+function fallbackWriteMotion(mode) {
+  try {
+    window.localStorage.setItem(MOTION_KEY, mode === 'off' ? 'off' : 'on');
+  } catch {
+    // abaikan
+  }
+}
+
+function readMotion() {
+  try {
+    return motionApi?.readMotionPreference() ?? fallbackReadMotion();
+  } catch {
+    return fallbackReadMotion();
+  }
+}
+
+function applyMotion(mode) {
+  document.documentElement.dataset.motion = mode;
+  const btn = document.getElementById('motion-toggle');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(mode === 'on'));
+    btn.title = mode === 'reduced'
+      ? 'Animasi latar dibatasi oleh pengaturan "kurangi gerakan" sistem'
+      : mode === 'on' ? 'Matikan animasi jaringan di latar' : 'Nyalakan animasi jaringan di latar';
+  }
+  try {
+    neural?.setMotion(mode);
+  } catch {
+    // Latar dekoratif: kegagalan tidak boleh mengganggu aplikasi.
+  }
+}
+
+/** Panggil metode latar dengan aman (pulse/setActivity/resize). */
+function neuralCall(method, ...args) {
+  try {
+    neural?.[method]?.(...args);
+  } catch {
+    // abaikan
+  }
+}
+
+async function initMotion() {
+  applyMotion(fallbackReadMotion());
+  const btn = document.getElementById('motion-toggle');
+  btn?.addEventListener('click', () => {
+    const next = document.documentElement.dataset.motion === 'off' ? 'on' : 'off';
+    try {
+      (motionApi?.writeMotionPreference ?? fallbackWriteMotion)(next);
+    } catch {
+      fallbackWriteMotion(next);
+    }
+    applyMotion(next === 'off' ? 'off' : readMotion());
+  });
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', () => applyMotion(readMotion()));
+
+  // Peristiwa nyata dari view (sinyal baru, scanner mulai/berhenti) → pulsa & tingkat aktivitas latar.
+  window.addEventListener('lr:activity', (e) => {
+    const detail = e.detail ?? {};
+    if (PULSE_KINDS.has(detail.kind)) {
+      neuralCall('pulse', detail.kind, Number.isFinite(detail.count) ? detail.count : 6);
+    }
+    if (typeof detail.level === 'number' && Number.isFinite(detail.level)) {
+      neuralCall('setActivity', Math.min(1, Math.max(0, detail.level)));
+    }
+  });
+
+  // Halaman Pengaturan mengubah preferensi → sinkronkan toggle topbar & latar.
+  // (Ukuran canvas diurus neural.js sendiri lewat ResizeObserver/resize.)
+  window.addEventListener('lr:motion', (e) => {
+    const mode = e.detail?.mode;
+    applyMotion(mode === 'on' || mode === 'off' || mode === 'reduced' ? mode : readMotion());
+  });
+
+  const canvas = document.getElementById('neural-bg');
+  if (!(canvas instanceof HTMLCanvasElement)) return;
+  try {
+    motionApi = await import('./lib/neural.js');
+    const mode = readMotion();
+    neural = motionApi.mountNeuralBackground(canvas, { density: mobile.matches ? 0.6 : 1, interactive: !mobile.matches });
+    applyMotion(mode);
+    neuralCall('setActivity', 0.25);
+  } catch {
+    // Canvas/modul gagal: sembunyikan kanvas, aurora statis CSS di body tetap tampil.
+    neural = null;
+    canvas.hidden = true;
+  }
+}
+
 function showLoadError() {
   main.replaceChildren(h('div', { class: 'page' }, h('div', { class: 'callout callout--bear', role: 'alert' }, 'Gagal memuat halaman.')));
 }
@@ -167,6 +274,7 @@ function startClock() {
 async function pollConnection() {
   const el = document.getElementById('conn-status');
   const label = el.querySelector('span:last-child');
+  const before = el.dataset.state;
   try {
     // Tanpa cookie sesi: polling latar tidak boleh memperpanjang idle timeout sesi.
     const res = await fetch('/api/ready', { cache: 'no-store', credentials: 'omit' });
@@ -176,6 +284,8 @@ async function pollConnection() {
     el.dataset.state = 'error';
     label.textContent = 'Server tidak terjangkau';
   }
+  // Koneksi (kembali) sehat: satu pulsa aksen di latar.
+  if (el.dataset.state === 'ok' && before !== 'ok') neuralCall('pulse', 'accent', 8);
 }
 
 async function requestLogout() {
@@ -207,6 +317,8 @@ async function logout() {
 
 async function boot() {
   initSkipLink();
+  // Latar dimulai segera (paralel dengan pemeriksaan sesi); tidak pernah melempar.
+  initMotion().catch(() => {});
   const session = await api('/api/auth/session');
   setCsrfToken(session.csrfToken);
   ctx.user = session.user;

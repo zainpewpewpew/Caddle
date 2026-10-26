@@ -20,16 +20,91 @@ export function panel({ title, actions, flush = false, footer, id }, ...body) {
     footer && h('footer', { class: 'panel__footer' }, footer));
 }
 
-export function stat({ label, value, hint, muted = false, testId }) {
-  return h('div', { class: 'stat', 'data-testid': testId },
+/**
+ * Tile KPI. `tone` (opsional: bull/bear/warn/accent) memberi garis aksen bawah.
+ * `countTo` (opsional, angka NYATA dari API) membuat nilai dihitung naik dari 0 ke angka itu lewat animateNumber();
+ * `format` memformat angka tersebut (default bilangan bulat). Tanpa countTo, `value` ditampilkan apa adanya.
+ */
+export function stat({ label, value, hint, muted = false, testId, tone, countTo, format }) {
+  const valueEl = h('span', { class: muted ? 'stat__value stat__value--muted' : 'stat__value' }, value);
+  if (!muted && Number.isFinite(countTo)) animateNumber(valueEl, countTo, { format });
+  return h('div', { class: 'stat', 'data-testid': testId, 'data-tone': tone },
     h('span', { class: 'stat__label' }, label),
-    h('span', { class: muted ? 'stat__value stat__value--muted' : 'stat__value' }, value),
+    valueEl,
     hint && h('span', { class: 'stat__hint' }, hint));
+}
+
+/**
+ * Mode gerak saat ini: 'off' / 'reduced' bila pengguna mematikan "Animasi latar" (data-motion pada <html>) atau OS
+ * meminta prefers-reduced-motion; selain itu 'on'. Aman dipanggil di luar browser (→ 'reduced').
+ * @returns {'on' | 'off' | 'reduced'}
+ */
+export function motionMode() {
+  if (typeof document === 'undefined') return 'reduced';
+  const mode = document.documentElement.dataset.motion;
+  if (mode === 'off' || mode === 'reduced') return mode;
+  if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return 'reduced';
+  return 'on';
+}
+
+const COUNTERS = new WeakMap();
+const defaultNumberFormat = (n) => String(Math.round(n));
+
+/**
+ * Menghitung naik isi teks `el` dari `from` (default 0) menuju nilai NYATA `to`. Angka perantara hanyalah transisi
+ * visual menuju nilai itu — frame terakhir selalu persis `format(to)`. Langsung menulis `format(to)` tanpa animasi
+ * bila gerak dimatikan/reduced, tab tersembunyi, atau `to` bukan angka hingga (mis. null → `format(null)` dari
+ * pemanggil, umumnya '—'). Panggilan baru pada elemen yang sama membatalkan animasi sebelumnya.
+ * @param {HTMLElement} el
+ * @param {number} to
+ * @param {{ format?: (n: number) => string, duration?: number, from?: number }} [options]
+ * @returns {Promise<void>} selesai saat nilai akhir tertulis
+ */
+export function animateNumber(el, to, { format = defaultNumberFormat, duration = 700, from = 0 } = {}) {
+  COUNTERS.get(el)?.();
+  const finish = () => {
+    COUNTERS.delete(el);
+    el.removeAttribute('data-counting');
+    el.textContent = format(to);
+  };
+  const animatable = Number.isFinite(to) && Number.isFinite(from) && from !== to && duration > 0
+    && typeof requestAnimationFrame === 'function' && !document.hidden && motionMode() === 'on';
+  if (!animatable) {
+    finish();
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let frame = 0;
+    let start = null;
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      resolve();
+    };
+    COUNTERS.set(el, stop);
+    el.setAttribute('data-counting', '');
+    el.textContent = format(from);
+    const tick = (now) => {
+      start ??= now;
+      const t = Math.min(1, (now - start) / duration);
+      if (t >= 1) {
+        finish();
+        resolve();
+        return;
+      }
+      const eased = 1 - (1 - t) ** 3; // ease-out cubic
+      el.textContent = format(from + (to - from) * eased);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+  });
 }
 
 export function emptyState({ iconName = 'radar', title, text, action }) {
   return h('div', { class: 'empty' },
-    icon(iconName, 'empty__icon'),
+    // Visual dekoratif: ikon + tiga node mengorbit (CSS). Tidak memuat angka atau data.
+    h('div', { class: 'empty__visual', 'aria-hidden': 'true' },
+      icon(iconName, 'empty__icon'),
+      h('span', { class: 'empty__node' }), h('span', { class: 'empty__node' }), h('span', { class: 'empty__node' })),
     h('p', { class: 'empty__title' }, title),
     text && h('p', { class: 'empty__text' }, text),
     action);
@@ -80,10 +155,14 @@ const ROW_NAV_KEYS = {
  * @param {{ columns: Array<{ key: string, label: string, numeric?: boolean, sortable?: boolean,
  *   render?: (row: any) => any, sortValue?: (row: any) => any }>, rows: any[], empty?: Node,
  *   initialSort?: { key: string, dir: 'asc' | 'desc' }, compact?: boolean, caption?: string,
- *   onRowSelect?: (row: any) => void, isRowSelected?: (row: any) => boolean }} options
+ *   onRowSelect?: (row: any) => void, isRowSelected?: (row: any) => boolean, animateRows?: boolean }} options
+ * `animateRows` (default true): baris pada render pertama masuk bertahap (data-enter + --i, CSS di components.css).
+ * Halaman yang membuat ulang tabel tiap polling sebaiknya memberi false pada penyegaran agar tidak berkedip.
+ * Mengurutkan ulang tidak pernah menganimasikan baris.
  */
-export function dataTable({ columns, rows, empty, initialSort, compact = false, caption, onRowSelect, isRowSelected }) {
+export function dataTable({ columns, rows, empty, initialSort, compact = false, caption, onRowSelect, isRowSelected, animateRows = true }) {
   let sort = initialSort ?? null;
+  let firstRender = animateRows;
   const tbody = h('tbody');
   const selectable = typeof onRowSelect === 'function';
   let selectedRow = null;
@@ -172,7 +251,16 @@ export function dataTable({ columns, rows, empty, initialSort, compact = false, 
   const renderBody = () => {
     const data = sortedRows();
     emptyHost.hidden = data.length > 0;
-    tbody.replaceChildren(...data.map(rowEl));
+    const els = data.map(rowEl);
+    if (firstRender) {
+      // Stagger dibatasi CSS (maks. 16 langkah); baris setelahnya masuk bersamaan.
+      els.forEach((tr, i) => {
+        tr.dataset.enter = 'true';
+        tr.style.setProperty('--i', String(i));
+      });
+      firstRender = false;
+    }
+    tbody.replaceChildren(...els);
     if (selectable) paintSelection();
   };
 
