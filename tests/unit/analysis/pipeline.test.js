@@ -78,13 +78,45 @@ async function feedBase({ repos, pipeline }, candles) {
   }
 }
 
+// Skenario SA sintetis lama tidak memiliki taker flow/konteks HTF, sehingga konfluensi v3 menahannya di QUIET. Tes
+// mekanika state machine mematikan gerbang tier (konfluensi tetap dihitung); perilaku gerbang diuji UNIT-PIPE-V3-*.
+const MECHANICS = Object.freeze({ signals: { minEarlyTier: null } });
+
 describe('analyzeAt (murni)', () => {
+  it('UNIT-PIPE-V3-001 default v3: view membawa konfluensi; tier di bawah B menahan sinyal di QUIET tanpa alert', () => {
+    const all = silentAccumulationCandles(1);
+    let prev = null;
+    const events = [];
+    let last = null;
+    for (let k = 20; k <= all.length; k += 1) {
+      last = analyzeAt({ symbol: SYMBOL, timeframe: '5m', candlesByTimeframe: byTimeframe(all.slice(0, k)), prev });
+      if (last.event) events.push({ ...last.event, alert: last.alert, tier: last.view.confluence.tier });
+      prev = last.next;
+    }
+    expect(last.view.confluence).toMatchObject({ version: 1, tier: expect.stringMatching(/^[ABCD]$/) });
+    expect(last.view.explanation.some((e) => e.factor === 'CONFLUENCE:TIER')).toBe(true);
+    const opened = events.find((e) => e.fromState === 'NO_PATTERN');
+    expect(opened).toBeDefined();
+    if (['C', 'D'].includes(opened.tier)) {
+      expect(opened.toState).toBe('QUIET');
+      expect(opened.alert).toBe(false);
+    }
+    expect(events.every((e) => e.toState !== 'EARLY_BULLISH' || ['A', 'B'].includes(e.tier))).toBe(true);
+  });
+
+  it('UNIT-PIPE-V3-002 params.confluence === false → mode v2 murni (tanpa konfluensi, tanpa gerbang)', () => {
+    const all = silentAccumulationCandles(1);
+    const r = analyzeAt({ symbol: SYMBOL, timeframe: '5m', candlesByTimeframe: byTimeframe(all.slice(0, 66)), prev: null, params: { confluence: false } });
+    expect(r.view.confluence).toBeUndefined();
+    expect(r.view.explanation.some((e) => e.factor.startsWith('CONFLUENCE:'))).toBe(false);
+  });
+
   it('UNIT-PIPE-001 skenario SA sintetis membuka EARLY_BULLISH dengan alert, skor & penjelasan', () => {
     const all = silentAccumulationCandles(1);
     let prev = null;
     const events = [];
     for (let k = 20; k <= all.length; k += 1) {
-      const r = analyzeAt({ symbol: SYMBOL, timeframe: '5m', candlesByTimeframe: byTimeframe(all.slice(0, k)), prev });
+      const r = analyzeAt({ symbol: SYMBOL, timeframe: '5m', candlesByTimeframe: byTimeframe(all.slice(0, k)), prev, params: MECHANICS });
       if (r.event) events.push({ k, ...r.event, alert: r.alert, view: r.view });
       prev = r.next;
     }
@@ -171,7 +203,7 @@ describe('createAnalysisPipeline (SQLite)', () => {
   it('POS-PIPE-001 replay candle demi candle: sinyal SA tersimpan dengan event, penjelasan, dan definisi pola', async () => {
     const ctx = await setup();
     const alerts = [];
-    const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, onAlert: (a) => alerts.push(a) });
+    const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, onAlert: (a) => alerts.push(a), params: MECHANICS });
     const all = silentAccumulationCandles(1);
     for (let k = 1; k <= all.length; k += 1) await feed({ ...ctx, pipeline }, all, k);
 
@@ -228,7 +260,7 @@ describe('createAnalysisPipeline (SQLite)', () => {
   it('EDGE-PIPE-007 restart setelah candle tanpa event: candle yang sudah dievaluasi tidak di-replay (kursor analisis persisten), hanya candle baru', async () => {
     const ctx = await setup();
     const all = saThenSideways(60);
-    await feedBase({ ...ctx, pipeline: createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals }) }, all.slice(0, -1));
+    await feedBase({ ...ctx, pipeline: createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, params: MECHANICS }) }, all.slice(0, -1));
     const lastEvent = await ctx.signals.lastEventCandleTime({ symbol: SYMBOL, timeframe: '5m' });
     // Guard fixture: event terakhir (candle 89) jauh sebelum candle terakhir yang dievaluasi (134).
     expect(lastEvent).toBe(all[89].openTime);
@@ -236,11 +268,11 @@ describe('createAnalysisPipeline (SQLite)', () => {
     const events = count(ctx.db, 'signal_events');
 
     // Restart tanpa candle baru → tidak ada yang dievaluasi ulang.
-    const restarted = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals });
+    const restarted = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, params: MECHANICS });
     expect(await restarted.onClosedCandles({ symbol: SYMBOL, timeframe: '5m' })).toMatchObject({ skipped: 'ALREADY_EVALUATED' });
     // Satu candle baru → tepat satu evaluasi (bukan 135 − 89 = 46 candle sejak event terakhir).
     await ctx.repos.candles.upsertClosed([all.at(-1)], { now: NOW });
-    const r = await createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals }).onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
+    const r = await createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, params: MECHANICS }).onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
     expect(r.evaluated).toBe(1);
     expect(count(ctx.db, 'signal_events')).toBe(events);
     expect(await ctx.signals.lastEvaluatedCandleTime({ symbol: SYMBOL, timeframe: '5m' })).toBe(all.at(-1).openTime);
@@ -519,7 +551,7 @@ describe('createAnalysisPipeline (SQLite)', () => {
       const ctx = await setup();
       const alerts = [];
       const pipeline = createAnalysisPipeline({
-        repos: ctx.repos, signals: ctx.signals, onAlert: (a) => alerts.push(a),
+        repos: ctx.repos, signals: ctx.signals, onAlert: (a) => alerts.push(a), params: MECHANICS,
         getLiquidity: () => (thresholds ? { ...liquidity, thresholds } : liquidity),
       });
       for (let k = 1; k <= 64; k += 1) await feed({ ...ctx, pipeline }, all, k);

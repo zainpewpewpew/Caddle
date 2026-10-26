@@ -323,3 +323,36 @@ describe('deriveMarketInputs', () => {
     expect(deriveMarketInputs(cs.slice(0, 3))).toEqual({ atr: null, rvol: null, resistance: null });
   });
 });
+
+describe('gerbang tier konfluensi v3', () => {
+  const v = (tier, score, extra = {}) => ({ patternScore: 90, earlyScore: 80, riskFlags: [], confluence: { score, tier, calibration: null }, ...extra });
+
+  it('UNIT-SSM-V3-001 tier < B: pola dengan earlyScore tinggi tetap QUIET tanpa alert, juga saat breakout; tier B naik normal', () => {
+    const low = run([
+      input(0, 100, { view: v('C', 50) }),
+      input(1, 106, { market: { rvol: 5, resistance: 104 }, view: v('C', 50) }), // breakout RVOL tinggi tetapi tier C
+    ]);
+    expect(low.snap.state).toBe('QUIET');
+    expect(low.alerts).toEqual([]);
+    expect(low.snap).toMatchObject({ confluenceScore: 50, confidenceTier: 'C', winProbability: null });
+
+    const ok = run([input(0, 100, { view: v('B', 65) }), input(1, 106, { market: { rvol: 5, resistance: 104 }, view: v('B', 65) })]);
+    expect(ok.alerts).toEqual(['EARLY_BULLISH', 'BREAKOUT']);
+  });
+
+  it('UNIT-SSM-V3-002 QUIET tergerbang tetap kedaluwarsa (tidak macet); minEarlyTier null mematikan gerbang', () => {
+    const steps = Array.from({ length: DEFAULT_SIGNAL_PARAMS.expiryBars.QUIET + 2 }, (_, i) => input(i, 100, { view: v('D', 20) }));
+    expect(run(steps).events.find((e) => e.toState === 'EXPIRED')).toMatchObject({ reason: 'NO_PROGRESS', fromState: 'QUIET' });
+    expect(run([input(0, 100, { view: v('D', 20) })], { minEarlyTier: null }).snap.state).toBe('EARLY_BULLISH');
+    expect(() => resolveSignalParams({ minEarlyTier: 'E' })).toThrow(RangeError);
+  });
+
+  it('NEG-SSM-V3-001 konfluensi tidak valid ditolak; peluang di luar 0..1 → null; view tanpa konfluensi menghapus nilai basi', () => {
+    expect(() => transition(null, input(0, 100, { view: v('Z', 50) }))).toThrow(RangeError);
+    expect(() => transition(null, input(0, 100, { view: v('B', 101) }))).toThrow(RangeError);
+    const r = transition(null, input(0, 100, { view: { ...v('B', 70), confluence: { score: 70, tier: 'B', calibration: { probability: 1.5 } } } }));
+    expect(r.next.winProbability).toBeNull();
+    const next = transition(r.next, input(1, 100, { view: { patternScore: 90, earlyScore: 80, riskFlags: [] } }));
+    expect(next.next).toMatchObject({ confluenceScore: null, confidenceTier: null, winProbability: null });
+  });
+});

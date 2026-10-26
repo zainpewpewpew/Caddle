@@ -11,3 +11,6 @@ playwright-report/
 uploads/
 reports/
 .claude/worktrees/
+
+# Kalibrasi backtest lokal (hasil npm run backtest --write-calibration)
+config/calibration.json

@@ -1,4 +1,5 @@
 // Parameter state machine sinyal (konfigurabel, divalidasi). Satuan bar = candle timeframe dasar.
+import { CONFIDENCE_TIERS } from '../market/contracts.js';
 
 /** State terbuka sinyal LONG (urutan kemajuan). */
 export const LONG_PATTERN_STATES = Object.freeze(['QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT']);
@@ -52,6 +53,13 @@ export const DEFAULT_SIGNAL_PARAMS = Object.freeze({
    * nilai yang sama dengan state cerminnya (EARLY_BEARISH = EARLY_BULLISH, BREAKDOWN = BREAKOUT): bila tidak
    * di-override eksplisit, resolveSignalParams menyalin nilai cermin hasil resolve (termasuk override-nya).
    */
+  /**
+   * Tier konfluensi v3 minimum agar sinyal QUIET naik ke state alert mana pun (EARLY_*, MOMENTUM_BUILDING,
+   * BREAKOUT/BREAKDOWN) atau dibuka langsung sebagai EARLY_*. Di bawahnya sinyal tetap QUIET (terlihat, tanpa alert). Hanya berlaku bila view membawa `confluence` (pipeline v3); view
+   * lama tanpa konfluensi tidak digerbang. null = gerbang mati. Default 'B': hipotesis untuk menaikkan presisi
+   * (lebih sedikit sinyal, lebih selektif) yang WAJIB diverifikasi backtest (npm run backtest).
+   */
+  minEarlyTier: 'B',
   expiryBars: Object.freeze({ QUIET: 48, EARLY_BULLISH: 36, MOMENTUM_BUILDING: 24, BREAKOUT: 12, EARLY_BEARISH: 36, BREAKDOWN: 12 }),
 });
 
@@ -87,6 +95,9 @@ export function resolveSignalParams(overrides = {}) {
   }
   const p = { ...DEFAULT_SIGNAL_PARAMS, ...overrides, expiryBars };
 
+  if (p.minEarlyTier !== null && !CONFIDENCE_TIERS.includes(p.minEarlyTier)) {
+    throw new RangeError(`minEarlyTier harus salah satu ${CONFIDENCE_TIERS.join('/')} atau null`);
+  }
   if (typeof p.earlyMinScore !== 'number' || !(p.earlyMinScore >= 0 && p.earlyMinScore <= 100)) {
     throw new RangeError('earlyMinScore harus 0..100');
   }

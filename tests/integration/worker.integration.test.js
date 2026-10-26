@@ -458,6 +458,7 @@ async function createWorker({ timers, db, binance, settings, settleMs = 0, restS
   const { repos, rest, pipeline, scanner, serverClock } = assembleWorker({
     db,
     logger,
+    analysisParams: MECHANICS_PARAMS,
     clock: timers.clock,
     fetch: binance.fetch,
     restSleep,
@@ -525,6 +526,10 @@ const DEFAULT_THRESHOLDS = DEFAULT_SCANNER_SETTINGS.liquidity;
 
 // ---------- acuan "live = replay" ----------
 
+// Data sintetis skenario ini tanpa taker flow & konteks HTF lengkap, sehingga konfluensi v3 menahan sinyal di QUIET.
+// Tes ini menguji MEKANIKA live = replay, jadi gerbang tier EARLY dimatikan di kedua sisi (konfluensi tetap dihitung).
+const MECHANICS_PARAMS = Object.freeze({ signals: { minEarlyTier: null } });
+
 const LIQ_SA = { quoteVolume24h: 900_000_000, spreadBps: spreadOf('99.9900', '100.0000') };
 
 /**
@@ -542,7 +547,7 @@ function referenceReplay(symbol, liquidity, { market = MARKET, timeframe = '5m',
     const base = timeframe === '5m' ? m5 : aggregate(m5, timeframe);
     const candlesByTimeframe = { [timeframe]: base.slice(-ANALYSIS_LOOKBACK) };
     for (const tf of HIGHER_TIMEFRAMES[timeframe]) candlesByTimeframe[tf] = aggregate(m5, tf);
-    const r = analyzeAt({ symbol, timeframe, prev: open, liquidity, candlesByTimeframe, params });
+    const r = analyzeAt({ symbol, timeframe, prev: open, liquidity, candlesByTimeframe, params: { ...MECHANICS_PARAMS, ...params } });
     steps.push({ index: i, saved: Boolean(r.event || open), ...r });
     open = OPEN_STATES.includes(r.next.state) ? r.next : null;
   }
@@ -570,6 +575,10 @@ function expectedHistory(symbol, steps, timeframe = '5m') {
       riskFlags: n.riskFlags, explanation: last.view.explanation, peakPrice: n.peakPrice, peakState: n.peakState,
       barsInState: n.barsInState, finalOutcome: terminal ? `${n.state}:${n.peakState}` : null,
       updatedAt: n.lastEvaluatedAt, closedAt: terminal ? last.event.occurredAt : null,
+      // Konfluensi v3 (migrasi 006) tersimpan bersama snapshot.
+      ...(n.confluenceScore === undefined ? {} : {
+        confluenceScore: n.confluenceScore, confidenceTier: n.confidenceTier, winProbability: n.winProbability,
+      }),
       events: events.map((e) => ({
         occurredAt: e.occurredAt, candleTime: e.candleTime, fromState: e.fromState, toState: e.toState, price: e.price,
         detail: { reason: e.reason, ...e.detail },

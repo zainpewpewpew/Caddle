@@ -12,7 +12,9 @@ import {
   MIRROR_BASE, PATTERN_VERSION, PVA_CONDITIONS, PVD_CONDITIONS, SA_CONDITIONS, SD_CONDITIONS, SHORT_PATTERN_VERSION,
   evaluatePatterns, evaluateShortPatterns, requiredCandles, resolveParams,
 } from '../patterns/index.js';
-import { buildSignalView } from '../scoring/index.js';
+import { applyCalibration } from '../backtest/calibration.js';
+import { extractFeatures } from '../features/index.js';
+import { buildSignalView, computeConfluence } from '../scoring/index.js';
 import { deriveDirectionalMarketInputs, transition } from '../signals/index.js';
 import { buildTimeframeContext, contextForDirection } from '../timeframe/index.js';
 
@@ -45,6 +47,55 @@ export const REPLAY_LIQUIDITY_DETAIL = 'Data likuiditas tidak tersedia untuk can
 
 function withReplayLiquidity(view) {
   return { ...view, explanation: view.explanation.map((e) => (e.factor === 'CONTEXT:LIQUIDITY' ? { ...e, detail: REPLAY_LIQUIDITY_DETAIL } : e)) };
+}
+
+/**
+ * Kunci tabel kalibrasi: `${arah}:${timeframe}` lebih spesifik, lalu `${arah}:*`. Tabel berasal dari backtest
+ * out-of-sample (`npm run backtest -- --write-calibration`); tanpa tabel peluang = null (tidak pernah dikarang).
+ */
+function calibrationFor(calibration, direction, timeframe, score) {
+  const tables = calibration?.tables;
+  if (!tables || typeof tables !== 'object') return null;
+  const table = tables[`${direction}:${timeframe}`] ?? tables[`${direction}:*`] ?? null;
+  if (!table) return null;
+  try {
+    const c = applyCalibration(table, score);
+    const unit = (v) => Number.isFinite(v) && v >= 0 && v <= 1;
+    return c && unit(c.probability) && unit(c.lower) && unit(c.upper) ? c : null;
+  } catch {
+    return null; // tabel rusak tidak boleh menghentikan analisis seri
+  }
+}
+
+/**
+ * View + konfluensi v3: `view.confluence` (skor, tier, komponen, konfirmasi, konflik, veto, kalibrasi) dan entri
+ * penjelasan `CONFLUENCE:*` (kontribusi komponen dijumlahkan = skor konfluensi; entri lain kontribusi 0).
+ */
+function withConfluence(view, { direction, timeframe, context, features, params, scoreView }) {
+  // Timeframe tanpa HTF (1h): alignment selalu UNCONFIRMED karena tidak ada pembanding, bukan karena setup buruk —
+  // komponen HTF dikeluarkan dari penyebut alih-alih dinilai 0.
+  const hasHtf = HIGHER_TIMEFRAMES[timeframe].length > 0;
+  const input = hasHtf ? { view: scoreView, context } : { view: { ...scoreView, alignment: null }, context: null };
+  const c = computeConfluence({ direction, ...input, ...features }, params.confluence ?? {});
+  const calibration = calibrationFor(params.calibration, direction, timeframe, c.score);
+  const explanation = [
+    {
+      factor: 'CONFLUENCE:TIER',
+      contribution: 0,
+      detail: `Konfluensi v${c.version}: skor ${c.score} → tier ${c.tier}${c.vetoes.length ? ` (veto: ${c.vetoes.join(', ')})` : ''}`
+        + (calibration
+          ? `; peluang historis ${Math.round(calibration.probability * 100)}% (95% CI ${Math.round(calibration.lower * 100)}–${Math.round(calibration.upper * 100)}%, ${calibration.samples} sampel backtest)`
+          : '; peluang historis belum tersedia (jalankan kalibrasi backtest)'),
+    },
+    ...c.components.map((k) => ({
+      factor: `CONFLUENCE:${k.id}`,
+      contribution: k.contribution,
+      detail: `${k.label}: ${k.value === null ? 'data tidak tersedia' : `nilai ${Math.round(k.value * 100)}%`} (bobot ${k.weight})`,
+    })),
+    ...c.confirmations.map((t) => ({ factor: 'CONFLUENCE:CONFIRM', contribution: 0, detail: t })),
+    ...c.conflicts.map((t) => ({ factor: 'CONFLUENCE:CONFLICT', contribution: 0, detail: t })),
+  ];
+  return { ...view, confluence: { ...c, calibration }, explanation: [...view.explanation, ...explanation] };
 }
 
 /** Daftar arah tervalidasi (tidak kosong, tanpa duplikat), urut DIRECTIONS (LONG lebih dulu). */
@@ -115,12 +166,25 @@ export function analyzeDirectionsAt({
   // hanya menghitung ulang alignment dari trend yang sama (contextForDirection).
   const context = buildTimeframeContext({ baseTimeframe: timeframe, evaluationTime, candlesByTimeframe });
   const markets = deriveDirectionalMarketInputs(base);
+  // Fitur v3 dihitung sekali untuk kedua arah (fitur tidak berarah). params.confluence === false = mode v2 murni
+  // (tanpa fitur/konfluensi/gerbang tier) — dipakai backtest sebagai pembanding "sebelum".
+  const confluenceOn = params.confluence !== false;
+  const features = confluenceOn ? extractFeatures(base) : null;
 
   const out = {};
   for (const direction of active) {
     const patterns = patternsByDirection[direction];
     const directionContext = direction === 'LONG' ? context : contextForDirection(context, timeframe, direction);
-    const view = buildSignalView({ symbol, timeframe, patterns, context: directionContext, liquidity, dataQuality: quality, params: params.view });
+    let view = buildSignalView({ symbol, timeframe, patterns, context: directionContext, liquidity, dataQuality: quality, params: params.view });
+    if (confluenceOn) {
+      // Tier (yang menggerbang state) dihitung TANPA likuiditas 24 jam saat ini: ukuran itu hanya ada untuk candle terbaru
+      // (replay/backtest tidak memilikinya), sehingga live, restart, dan backtest memberi state yang sama. Risk flag
+      // likuiditas tetap tampil di view; flag likuiditas dari candle (detektor) tetap ikut veto.
+      const scoreView = liquidity === undefined || liquidity === null ? view : buildSignalView({
+        symbol, timeframe, patterns, context: directionContext, dataQuality: quality, params: params.view,
+      });
+      view = withConfluence(view, { direction, timeframe, context: directionContext, features, params, scoreView });
+    }
     const market = markets[direction];
     const result = transition(prevByDirection[direction] ?? null, { candle: last, patterns, context: directionContext, market, view }, params.signals);
     out[direction] = { direction, evaluationTime, patterns, context: directionContext, view, market, ...result };
