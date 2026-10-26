@@ -508,11 +508,16 @@ export async function runSmartMoneySync({
     // Hanya chain yang juga punya provider riwayat transfer: wallet temuan di chain lain tidak dapat dinilai.
     const discoveryChains = CHAINS.filter((c) => discoverers.some((p) => p.chains.includes(c))
       && registry.withCapability('walletTransfers', c).length > 0);
+    const mappingActive = registry.withCapability('binanceMapping').length > 0;
     for (const chain of discoveryChains) {
       if (!matched.some((t) => t.chain === chain)) {
         summary.discovery.skippedChains.push(chain);
-        note(`Penemuan wallet ${chain} dilewati: belum ada token yang MATCHED di mapping Binance.`);
+        if (mappingActive) note(`Penemuan wallet ${chain} dilewati: belum ada token yang MATCHED di mapping Binance.`);
       }
+    }
+    if (!mappingActive && summary.discovery.skippedChains.length > 0 && matched.length === 0) {
+      note('Penemuan wallet otomatis dilewati: pemetaan Binance belum aktif (isi BINANCE_API_KEY + BINANCE_API_SECRET '
+        + 'read-only di .env). Hanya wallet di watchlist yang disinkronkan.');
     }
     const eligibleTokens = matched.filter((t) => discoveryChains.includes(t.chain));
     const rotState = (await repo.getSyncState(SYNC_STATE_KEYS.discovery))?.value ?? {};
