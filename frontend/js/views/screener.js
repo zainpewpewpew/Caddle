@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { badge, callout, dataTable, emptyState, page, panel, score, selectField } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { formatPrice, formatUtc } from '../lib/format.js';
+import { formatPrice, formatTime } from '../lib/format.js';
 import {
   alignmentBadge, confluenceFieldsOf, confluenceValue, directionOf, formatWinProbability, meetsMinTier, patternBadge,
   refreshUpdatedCells, riskBadges, signalStage, tierBadge, tierRank, updatedCell,
@@ -67,7 +67,7 @@ export function scannerColumns(direction = 'LONG', fields = {}) {
     { key: 'alignment', label: 'Alignment', render: (r) => alignmentBadge(r.alignment) },
     { key: 'state', label: 'Tahap', render: (r) => signalStage(r.state, dir) },
     { key: 'riskFlags', label: 'Risiko', sortable: false, render: (r) => riskBadges(r.riskFlags) },
-    { key: 'firstDetectedAt', label: 'Deteksi pertama', render: (r) => formatUtc(r.firstDetectedAt) },
+    { key: 'firstDetectedAt', label: 'Deteksi pertama', render: (r) => formatTime(r.firstDetectedAt) },
     // Waktu tutup candle terakhir yang dievaluasi worker; penanda "Basi" bila > 2 candle tanpa evaluasi baru.
     { key: 'updatedAt', label: 'Update', render: (r) => updatedCell(r) },
   ];
@@ -76,7 +76,6 @@ export function scannerColumns(direction = 'LONG', fields = {}) {
 export const SCREENER_COLUMNS = scannerColumns('LONG');
 
 const ALL = { value: '', label: 'Semua' };
-const TIMEFRAME_OPTIONS = [ALL, { value: '5m', label: '5m' }, { value: '15m', label: '15m' }, { value: '1h', label: '1h' }];
 const ALIGNMENT_OPTIONS = [ALL, { value: 'ALIGNED', label: 'Aligned' }, { value: 'PARTIALLY_CONFIRMED', label: 'Parsial' }, { value: 'UNCONFIRMED', label: 'Unconfirmed' }, { value: 'COUNTERTREND', label: 'Countertrend' }];
 const MIN_TIER_OPTIONS = [ALL, { value: 'A', label: 'A' }, { value: 'B', label: '≥ B' }, { value: 'C', label: '≥ C' }, { value: 'D', label: '≥ D' }];
 const MIN_SCORE_OPTIONS = [ALL, { value: '50', label: '≥ 50' }, { value: '70', label: '≥ 70' }, { value: '85', label: '≥ 85' }];
@@ -86,7 +85,10 @@ const MIN_SCORE_OPTIONS = [ALL, { value: '50', label: '≥ 50' }, { value: '70',
 const SCANNERS = {
   LONG: {
     title: 'LONG Scanner',
-    subtitle: 'Kandidat struktur bullish per timeframe. Skor mengukur kemiripan dengan aturan pola, bukan probabilitas profit.',
+    // Timeframe tetap per arah (selaras DIRECTION_TIMEFRAMES backend): LONG hanya 15m dengan konteks 1h.
+    timeframe: '15m',
+    timeframeHint: 'Konteks HTF: 1h',
+    subtitle: 'Kandidat struktur bullish pada timeframe 15m (konteks 1h). Skor mengukur kemiripan dengan aturan pola, bukan probabilitas profit.',
     queryDirection: null,
     filterLabel: 'Filter LONG scanner',
     patterns: [ALL, { value: 'SA', label: 'SA' }, { value: 'PVA', label: 'PVA' }, { value: 'BOTH', label: 'BOTH' }],
@@ -97,11 +99,14 @@ const SCANNERS = {
     iconName: 'screener',
     emptyTitle: 'Belum ada kandidat LONG',
     emptyText: 'Kandidat muncul setelah worker mengingesti candle tertutup Binance dan detektor SA/PVA menemukan pola. Tidak ada data contoh yang ditampilkan.',
-    footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup. Alignment = konteks timeframe lebih tinggi, tidak membuang pola.',
+    footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup 15m. Alignment = konteks timeframe 1h, tidak membuang pola.',
   },
   SHORT: {
     title: 'SHORT Scanner',
-    subtitle: 'Kandidat struktur bearish (distribusi) per timeframe — hanya riset, tanpa eksekusi order. Skor mengukur kemiripan dengan aturan pola, bukan probabilitas profit.',
+    // SHORT hanya 1h; tidak ada timeframe lebih tinggi di sistem, sehingga alignment selalu Unconfirmed.
+    timeframe: '1h',
+    timeframeHint: 'Tanpa konteks HTF',
+    subtitle: 'Kandidat struktur bearish (distribusi) pada timeframe 1h — hanya riset, tanpa eksekusi order. Skor mengukur kemiripan dengan aturan pola, bukan probabilitas profit.',
     queryDirection: 'SHORT',
     filterLabel: 'Filter SHORT scanner',
     patterns: [ALL, { value: 'SD', label: 'SD' }, { value: 'PVD', label: 'PVD' }, { value: 'BOTH', label: 'BOTH' }],
@@ -112,13 +117,13 @@ const SCANNERS = {
     iconName: 'screener-short',
     emptyTitle: 'Belum ada kandidat SHORT',
     emptyText: 'Kandidat muncul setelah worker mengingesti candle tertutup Binance dan detektor SD/PVD menemukan pola distribusi. Tidak ada data contoh yang ditampilkan.',
-    footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup. Alignment relatif terhadap arah SHORT (Aligned = timeframe lebih tinggi sedang turun), tidak membuang pola. Riset saja — tidak ada eksekusi order.',
+    footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup 1h. Tidak ada timeframe di atas 1h yang dipantau, jadi kolom Alignment selalu Unconfirmed. Riset saja — tidak ada eksekusi order.',
   },
 };
 
 // Semua filter dikirim ke server (nama field form → parameter query API) dan diterapkan SEBELUM limit.
 // Tidak ada filter di klien: memfilter setelah potongan top-N patternScore membuat hasil diam-diam tidak lengkap.
-const SERVER_FILTERS = { tf: 'timeframe', pattern: 'classification', stage: 'state', alignment: 'alignment', minScore: 'minScore', minTier: 'minTier' };
+const SERVER_FILTERS = { pattern: 'classification', stage: 'state', alignment: 'alignment', minScore: 'minScore', minTier: 'minTier' };
 // Batas maksimum API (1–500). Sinyal terbuka maks. 1 per simbol × timeframe × arah dan tiap halaman meminta satu
 // arah (≤ 100 × 3), sehingga daftar lengkap dan urutan Early Score di klien mencakup seluruh hasil. API tidak
 // mengirim total/penanda terpotong (count = panjang halaman), jadi count = limit hanya berarti "batas tercapai": bisa
@@ -331,7 +336,11 @@ async function scannerPage(ctx, direction) {
     : Promise.resolve(null);
 
   const filters = h('form', { class: 'toolbar', 'aria-label': cfg.filterLabel },
-    selectField({ label: 'Timeframe', name: 'tf', options: TIMEFRAME_OPTIONS }),
+    // Timeframe tetap (bukan filter): LONG 15m, SHORT 1h.
+    h('div', { class: 'field', 'data-testid': 'scanner-timeframe' },
+      h('span', { class: 'field__label' }, 'Timeframe'),
+      badge(cfg.timeframe, 'accent'),
+      h('span', { class: 'field__hint' }, cfg.timeframeHint)),
     selectField({ label: 'Pola', name: 'pattern', options: cfg.patterns }),
     selectField({ label: 'Tahap', name: 'stage', options: cfg.stages }),
     selectField({ label: 'Alignment', name: 'alignment', options: ALIGNMENT_OPTIONS }),

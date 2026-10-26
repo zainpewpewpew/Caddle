@@ -8,7 +8,7 @@
 import { api } from '../lib/api.js';
 import { emptyState, panel, statusPill } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { EMPTY, formatInteger, formatRelative, formatUtc } from '../lib/format.js';
+import { EMPTY, formatInteger, formatRelative, formatTime } from '../lib/format.js';
 import { binancePill } from './workerFormat.js';
 
 const SYNC_URL = '/api/system/sync';
@@ -421,7 +421,7 @@ function createFacts() {
       setText(cells.symbols, formatInteger(sc.symbols));
       setText(cells.streams, isNum(sc.streams) ? `${formatInteger(sc.streams)} (basi ${formatInteger(sc.staleStreams)})` : EMPTY);
       setText(cells.candles, formatInteger(sync.candlesStored));
-      setText(cells.lastCandle, isNum(sync.lastCandleAt) ? `${candleAgo(d)} · ${formatUtc(sync.lastCandleAt)}` : EMPTY);
+      setText(cells.lastCandle, isNum(sync.lastCandleAt) ? `${candleAgo(d)} · ${formatTime(sync.lastCandleAt)}` : EMPTY);
       setText(cells.lastAnalysis, ago(d, sync.lastAnalysisAt));
       const ws = d.binance?.status ?? 'unknown';
       if (cells.ws.dataset.key !== ws) {

@@ -107,6 +107,23 @@ function resolveDirections(directions) {
 }
 
 /**
+ * Timeframe per arah untuk pipeline: null = semua timeframe (perilaku lama, dipakai tes/replay); objek
+ * { LONG?: string[], SHORT?: string[] } — arah aktif tanpa entri juga memakai semua timeframe.
+ */
+function resolveDirectionTimeframes(map, directions) {
+  if (map !== null && (typeof map !== 'object' || Array.isArray(map))) throw new TypeError('directionTimeframes harus objek atau null');
+  const out = {};
+  for (const d of directions) {
+    const list = map?.[d] ?? TIMEFRAMES;
+    if (!Array.isArray(list) || list.length === 0 || list.some((tf) => !TIMEFRAMES.includes(tf))) {
+      throw new RangeError(`directionTimeframes.${d} harus array timeframe valid yang tidak kosong`);
+    }
+    out[d] = Object.freeze([...list]);
+  }
+  return Object.freeze(out);
+}
+
+/**
  * Kualitas seri dasar yang dimuat: celah (openTime tidak bersambung), candle belum tertutup, campuran seri.
  * Pola juga memeriksa jendelanya sendiri; ini menangkap masalah di luar jendela pola (mis. konteks swing).
  * @returns {{ ok: boolean, issues: string[] }}
@@ -254,12 +271,16 @@ export function patternDefinitions(params = {}, { maxWarmup, directions = ['LONG
  * Panggilan repositori untuk LONG tidak membawa argumen `direction` (bentuk lama); SHORT memakai
  * `direction: 'SHORT'`.
  *
+ * `directionTimeframes` (worker: DIRECTION_TIMEFRAMES = LONG 15m, SHORT 1h): arah hanya dievaluasi pada timeframe-nya;
+ * seri tanpa arah yang berlaku dilewati (skipped 'NO_DIRECTION'). Sinyal terbuka lama dari arah yang tidak lagi dipindai
+ * pada timeframe itu ditutup EXPIRED (MONITORING_STOPPED) saat seri itu pertama kali dievaluasi. null = semua timeframe.
+ *
  * @param {{ repos: { candles: any }, signals: any,
  *   getLiquidity?: (symbol: string) => { quoteVolume24h: number|null, spreadBps: number|null,
  *     thresholds?: { minQuoteVolume24h: number, maxSpreadBps: number } } | null | undefined,
  *   logger?: any, params?: object, lookback?: number, maxReplay?: number, settleMs?: number,
  *   sleep?: (ms: number) => Promise<void>, yieldEvery?: number, yieldToEventLoop?: () => Promise<void>,
- *   directions?: Array<'LONG'|'SHORT'>,
+ *   directions?: Array<'LONG'|'SHORT'>, directionTimeframes?: { LONG?: string[], SHORT?: string[] } | null,
  *   onAlert?: (alert: { symbol: string, timeframe: string, direction: 'LONG'|'SHORT', state: string, event: object, view: object }) => void }} deps
  *   settleMs: bila candle timeframe lebih tinggi yang tutup bersamaan belum tersimpan, tunggu sekali
  *   selama ini agar konteks live sama dengan replay (stream per timeframe diproses paralel).
@@ -272,7 +293,7 @@ export function patternDefinitions(params = {}, { maxWarmup, directions = ['LONG
 export function createAnalysisPipeline({
   repos, signals, getLiquidity = () => undefined, logger, params = {}, lookback = ANALYSIS_LOOKBACK,
   maxReplay = 288, settleMs = 0, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onAlert,
-  yieldEvery = 25, yieldToEventLoop = () => nextMacrotask(), directions = ['LONG'],
+  yieldEvery = 25, yieldToEventLoop = () => nextMacrotask(), directions = ['LONG'], directionTimeframes = null,
 }) {
   if (!repos?.candles || !signals) throw new TypeError('repos.candles dan signals wajib ada');
   if (!Number.isInteger(lookback) || lookback < 100 || lookback > 1500) throw new RangeError('lookback harus 100..1500');
@@ -280,6 +301,11 @@ export function createAnalysisPipeline({
   if (!Number.isInteger(settleMs) || settleMs < 0 || settleMs > 30_000) throw new RangeError('settleMs harus 0..30000');
   if (!Number.isInteger(yieldEvery) || yieldEvery < 1 || yieldEvery > 5000) throw new RangeError('yieldEvery harus 1..5000');
   const activeDirections = resolveDirections(directions);
+  const allowedTimeframes = resolveDirectionTimeframes(directionTimeframes, activeDirections);
+  // Arah yang dievaluasi pada satu timeframe (worker: LONG hanya 15m, SHORT hanya 1h — DIRECTION_TIMEFRAMES).
+  const directionsFor = (timeframe) => activeDirections.filter((d) => allowedTimeframes[d].includes(timeframe));
+  // Seri × arah yang sinyal terbuka lamanya (dari timeframe yang kini tidak dipindai arah itu) sudah diperiksa.
+  const leftoverChecked = new Set();
   const definitions = patternDefinitions(params, { maxWarmup: lookback, directions: activeDirections });
   let definitionsReady = null;
   const queues = new Map();
@@ -363,17 +389,39 @@ export function createAnalysisPipeline({
     }
   }
 
+  /**
+   * Sinyal terbuka arah yang tidak lagi dipindai pada timeframe ini (mis. LONG 1h / SHORT 15m dari versi sebelum
+   * DIRECTION_TIMEFRAMES) ditutup EXPIRED/MONITORING_STOPPED sekali per proses, agar tidak menggantung selamanya.
+   */
+  async function closeLeftovers(symbol, timeframe, at) {
+    for (const direction of activeDirections) {
+      if (allowedTimeframes[direction].includes(timeframe)) continue;
+      const key = cursorKey(symbol, timeframe, direction);
+      if (leftoverChecked.has(key)) continue;
+      leftoverChecked.add(key);
+      if (typeof signals.closeOpenForSymbol !== 'function') continue;
+      if (!(await signals.getOpen(scoped(direction, { symbol, timeframe })))) continue;
+      const result = await signals.closeOpenForSymbol({ symbol, timeframes: [timeframe], direction, reason: 'MONITORING_STOPPED', at });
+      if (result.closed.length > 0) {
+        logger?.info?.({ symbol, timeframe, direction, closed: result.closed.length }, 'sinyal ditutup: arah tidak dipindai di timeframe ini');
+      }
+    }
+  }
+
   async function evaluateSeries({ symbol, timeframe }) {
     if (!TIMEFRAMES.includes(timeframe)) throw new RangeError(`Timeframe tidak didukung: ${timeframe}`);
     await ensureDefinitions();
+    const seriesDirections = directionsFor(timeframe);
     const base = await repos.candles.getLatest({ symbol, timeframe, limit: lookback + maxReplay });
     if (!base.length) return { symbol, timeframe, skipped: 'NO_DATA' };
     const last = base[base.length - 1];
+    await closeLeftovers(symbol, timeframe, last.closeTime);
+    if (seriesDirections.length === 0) return { symbol, timeframe, skipped: 'NO_DIRECTION' };
 
     // Candle yang belum dievaluasi per arah (indeks di `base`): selalu sufiks seri yang berakhir di candle terakhir.
     const pendingByDirection = new Map();
     let dropped = 0;
-    for (const direction of activeDirections) {
+    for (const direction of seriesDirections) {
       const key = cursorKey(symbol, timeframe, direction);
       if (!lastEvaluated.has(key)) lastEvaluated.set(key, await signals.lastEvaluatedCandleTime(scoped(direction, { symbol, timeframe })));
       const seen = lastEvaluated.get(key);
@@ -406,7 +454,7 @@ export function createAnalysisPipeline({
       const index = pending[n];
       const candle = base[index];
       const window = base.slice(Math.max(0, index + 1 - lookback), index + 1);
-      const due = activeDirections.filter((d) => pendingByDirection.get(d)?.has(index));
+      const due = seriesDirections.filter((d) => pendingByDirection.get(d)?.has(index));
       const prevByDirection = {};
       for (const direction of due) prevByDirection[direction] = await signals.getOpen(scoped(direction, { symbol, timeframe }));
       const historical = index !== latest;
@@ -430,7 +478,7 @@ export function createAnalysisPipeline({
     }
 
     // Setiap arah yang dievaluasi berakhir di candle terbaru; alert hanya dari hasil candle itu.
-    for (const direction of activeDirections) {
+    for (const direction of seriesDirections) {
       const result = results.get(direction);
       if (!result?.alert) continue;
       logger?.info?.({ symbol, timeframe, direction, state: result.next.state, reason: result.event?.reason }, 'alert sinyal');
@@ -444,7 +492,7 @@ export function createAnalysisPipeline({
       };
     }
     // Field tingkat atas = arah utama (LONG bila ikut dievaluasi); `evaluated` = jumlah candle yang dievaluasi.
-    const direction = activeDirections.find((d) => results.has(d));
+    const direction = seriesDirections.find((d) => results.has(d));
     const primary = results.get(direction);
     return {
       symbol, timeframe, direction, evaluationTime: primary.evaluationTime, state: primary.next.state, evaluated: pending.length,

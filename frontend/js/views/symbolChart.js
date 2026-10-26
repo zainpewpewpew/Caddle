@@ -5,10 +5,11 @@ import { api } from '../lib/api.js';
 import { createCandleChart, loadChartLibrary, onDisconnect } from '../lib/chart.js';
 import { callout, emptyState, panel, refreshRowSelection, score, segmented } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
-import { formatPrice, formatUtc } from '../lib/format.js';
+import { formatPrice, formatTime } from '../lib/format.js';
 import { alignmentBadge, directionBadge, directionOf, patternBadge, riskBadges, signalStage } from './signalFormat.js';
 
-export const CHART_TIMEFRAMES = Object.freeze(['5m', '15m', '1h']);
+// 5m tidak lagi diingesti (LONG 15m, SHORT 1h), sehingga grafik hanya menawarkan timeframe yang datanya diperbarui.
+export const CHART_TIMEFRAMES = Object.freeze(['15m', '1h']);
 export const SYMBOL_RE = /^[A-Z0-9]{2,30}$/;
 const DEFAULT_TIMEFRAME = '15m';
 // Cukup untuk EMA25 dan ±3 hari candle 15m; batas API 1–1000.
@@ -75,7 +76,7 @@ export function signalSummary(signal) {
       row('Alignment', alignmentBadge(signal.alignment)),
       row('Level invalidasi', formatPrice(signal.invalidationPrice), { class: 'num' }),
       row('Harga deteksi', formatPrice(signal.firstDetectedPrice), { class: 'num' }),
-      row('Deteksi pertama', formatUtc(signal.firstDetectedAt)),
+      row('Deteksi pertama', formatTime(signal.firstDetectedAt)),
       row('Risiko', riskBadges(signal.riskFlags))),
     h('p', { class: 'chart-note' },
       'Skor = tingkat kecocokan dengan aturan pola (0–100), bukan probabilitas profit. Riset saja, bukan saran transaksi.'));

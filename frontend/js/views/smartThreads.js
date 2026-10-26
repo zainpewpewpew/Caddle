@@ -11,7 +11,7 @@
 // sempit, sehingga tidak ada gulir horizontal di 390 px.
 import { emptyState } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { formatRelative, formatUtc } from '../lib/format.js';
+import { formatRelative, formatTime } from '../lib/format.js';
 import {
   addressLink, chainBadge, disclaimerBox, labelChips, simBadge, tokenLink, txLink, typeBadge, usdText,
 } from './smartMoneyCommon.js';
@@ -325,7 +325,7 @@ function legend() {
 }
 
 const fact = (label, value) => h('div', null, h('dt', null, label), h('dd', null, value));
-const timeText = (ms, now) => (isNum(ms) ? h('span', { title: formatUtc(ms) }, `${formatUtc(ms)} · ${formatRelative(ms, now)}`) : EMPTY);
+const timeText = (ms, now) => (isNum(ms) ? h('span', { title: formatTime(ms) }, `${formatTime(ms)} · ${formatRelative(ms, now)}`) : EMPTY);
 
 /** Isi panel bukti untuk satu benang. */
 function evidenceContent(st, w, t, now) {
@@ -354,7 +354,7 @@ function evidenceContent(st, w, t, now) {
     events.length
       ? h('ul', { class: 'sm-txs' }, events.slice(0, MAX_EVIDENCE_TXS).map((e) => h('li', null,
         typeBadge(e.type), ' ', usdText(e.usd), ' ',
-        h('span', { class: 'muted', title: formatUtc(e.at) }, formatRelative(e.at, now)), ' ',
+        h('span', { class: 'muted', title: formatTime(e.at) }, formatRelative(e.at, now)), ' ',
         txLink(e.explorerUrl ?? explorerTxUrl(st.chain, e.txHash), e.txHash), simBadge(e.isSimulated))))
       : h('p', { class: 'muted' }, 'Tidak ada transaksi tercatat untuk pasangan ini.'),
     h('div', { class: 'cluster' },

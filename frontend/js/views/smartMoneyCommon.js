@@ -4,7 +4,7 @@
 import { ApiError, api } from '../lib/api.js';
 import { badge, emptyState, toast } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
-import { formatRelative, formatUtc } from '../lib/format.js';
+import { formatRelative, formatTime } from '../lib/format.js';
 import {
   CHAIN_LABELS, EMPTY, SM_API, USD_UNKNOWN, clampScore, componentPercent, disclaimersOf, flagInfo, formatUsdOrDash,
   labelText, matchBadge, metaStatus, safeExternalUrl, shortAddress, signOf, smartTokenHref, smartWalletHref,
@@ -157,9 +157,9 @@ export function simulatedRibbon(meta) {
 export function statusStrip(meta, now) {
   const s = metaStatus(meta);
   const items = [
-    h('span', { class: 'sm-strip__item', title: s.dataAsOf ? formatUtc(s.dataAsOf) : 'Belum ada aktivitas tersimpan' },
-      h('span', { class: 'sm-strip__k' }, 'Kesegaran'), s.dataAsOf ? `data per ${formatUtc(s.dataAsOf)}` : 'belum ada data'),
-    h('span', { class: 'sm-strip__item', title: s.lastSyncAt ? formatUtc(s.lastSyncAt) : undefined },
+    h('span', { class: 'sm-strip__item', title: s.dataAsOf ? formatTime(s.dataAsOf) : 'Belum ada aktivitas tersimpan' },
+      h('span', { class: 'sm-strip__k' }, 'Kesegaran'), s.dataAsOf ? `data per ${formatTime(s.dataAsOf)}` : 'belum ada data'),
+    h('span', { class: 'sm-strip__item', title: s.lastSyncAt ? formatTime(s.lastSyncAt) : undefined },
       h('span', { class: 'sm-strip__k' }, 'Sinkron terakhir'), s.lastSyncAt ? formatRelative(s.lastSyncAt, now) : 'belum pernah'),
     h('span', { class: 'sm-strip__item' },
       h('span', { class: 'sm-strip__k' }, 'Cakupan'),

@@ -3,7 +3,7 @@
 import { api } from '../lib/api.js';
 import { badge, emptyState, page, panel } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
-import { formatRelative, formatUtc } from '../lib/format.js';
+import { formatRelative, formatTime } from '../lib/format.js';
 import { hashQuery } from '../lib/router.js';
 import {
   binanceBadge, chainBadge, copyButton, disclaimerBox, externalLink, loadable, meter, metaHeader, simBadge, stateBadge,
@@ -65,7 +65,7 @@ function radarPanel(data) {
         h('div', null, h('dt', null, 'Gross beli'), h('dd', null, usdText(r.grossBuyUsd))),
         h('div', null, h('dt', null, 'Gross jual'), h('dd', null, usdText(r.grossSellUsd))),
         h('div', null, h('dt', null, 'Perubahan kepemilikan'), h('dd', { class: 'num' }, formatSignedPct(r.holdingChangePct))),
-        h('div', null, h('dt', null, 'Aktivitas terakhir'), h('dd', { title: formatUtc(r.lastActivityAt) }, formatRelative(r.lastActivityAt)))),
+        h('div', null, h('dt', null, 'Aktivitas terakhir'), h('dd', { title: formatTime(r.lastActivityAt) }, formatRelative(r.lastActivityAt)))),
       evidencePanel({ ...r, chain: r.chain ?? data.token?.chain }, data.meta)));
 }
 

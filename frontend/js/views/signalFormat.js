@@ -1,7 +1,7 @@
 // Render bersama untuk data sinyal (screener, riwayat, overview). Semua via h() — aman XSS.
 import { badge, stage } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { EMPTY, formatRelative, formatUtc } from '../lib/format.js';
+import { EMPTY, formatRelative, formatTime } from '../lib/format.js';
 
 const ALIGNMENT_LABELS = {
   ALIGNED: ['Aligned', 'bull'],
@@ -237,8 +237,8 @@ export function paintUpdatedCell(el, now = Date.now()) {
   else delete el.dataset.stale;
   el.title = row.updatedAt === null ? 'Belum ada evaluasi tercatat'
     : stale
-      ? `Basi: evaluasi terakhir pada candle ${row.timeframe} yang tutup ${formatUtc(row.updatedAt)}. Lebih dari 2 candle tanpa evaluasi baru — scanner mati, sedang mengejar data setelah restart, atau seri ini tertinggal.`
-      : `Evaluasi terakhir: candle ${row.timeframe} yang tutup ${formatUtc(row.updatedAt)}. Diperbarui tiap candle tertutup selama scanner berjalan.`;
+      ? `Basi: evaluasi terakhir pada candle ${row.timeframe} yang tutup ${formatTime(row.updatedAt)}. Lebih dari 2 candle tanpa evaluasi baru — scanner mati, sedang mengejar data setelah restart, atau seri ini tertinggal.`
+      : `Evaluasi terakhir: candle ${row.timeframe} yang tutup ${formatTime(row.updatedAt)}. Diperbarui tiap candle tertutup selama scanner berjalan.`;
 }
 
 /**

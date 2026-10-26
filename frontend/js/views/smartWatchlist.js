@@ -3,7 +3,7 @@
 import { ApiError, api } from '../lib/api.js';
 import { badge, callout, emptyState, page, panel, selectField, toast, toggle } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
-import { formatRelative, formatUtc } from '../lib/format.js';
+import { formatRelative, formatTime } from '../lib/format.js';
 import {
   chainBadge, disclaimerBox, loadable, metaHeader, simBadge, txLink, walletLink,
 } from './smartMoneyCommon.js';
@@ -91,7 +91,7 @@ function alertItem(alert, onRead) {
       alert.chain && chainBadge(alert.chain),
       watchedBadge(alert),
       simBadge(alert.isSimulated),
-      h('span', { class: 'muted', title: formatUtc(alert.createdAt) }, formatRelative(alert.createdAt)),
+      h('span', { class: 'muted', title: formatTime(alert.createdAt) }, formatRelative(alert.createdAt)),
       !alert.read ? h('span', { class: 'sr-only' }, 'belum dibaca') : null),
     h('p', { class: 'sm-alert__title' }, alert.title ?? ''),
     alert.message && h('p', { class: 'sm-alert__msg' }, alert.message),

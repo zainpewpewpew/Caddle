@@ -290,6 +290,7 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
       WHERE s.symbol_id = @symbolId AND s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'EARLY_BEARISH', 'BREAKDOWN')
         AND s.timeframe IN (SELECT value FROM json_each(@timeframes))
+        AND (@direction IS NULL OR s.direction = @direction)
       ORDER BY s.timeframe, s.id`),
     openSeries: db.prepare(`SELECT DISTINCT sym.symbol, s.timeframe
       FROM signals s JOIN symbols sym ON sym.id = s.symbol_id
@@ -412,11 +413,11 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
     return { id, opened: opening, closed: terminal, saved: true };
   });
 
-  const closeForSymbolTx = db.transaction(({ symbol, timeframes, reason, at }) => {
+  const closeForSymbolTx = db.transaction(({ symbol, timeframes, direction, reason, at }) => {
     const sym = stmt.symbolId.get(symbol);
     if (!sym) return [];
     const closed = [];
-    for (const row of stmt.openForSymbol.all({ symbolId: sym.id, timeframes: JSON.stringify(timeframes) })) {
+    for (const row of stmt.openForSymbol.all({ symbolId: sym.id, timeframes: JSON.stringify(timeframes), direction })) {
       const snapshot = toSnapshot(row);
       const last = stmt.lastStoredClose.get(sym.id, row.timeframe);
       const price = isFiniteNumber(last?.close) ? last.close : null;
@@ -506,15 +507,16 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
     },
 
     /**
-     * Menutup semua sinyal terbuka sebuah simbol — LONG dan SHORT (opsional hanya timeframe tertentu) karena simbol
+     * Menutup semua sinyal terbuka sebuah simbol — LONG dan SHORT, atau hanya `direction` (opsional hanya timeframe tertentu) karena simbol
      * berhenti dipantau: state → EXPIRED, closed_at = updated_at = `at`, final_outcome `EXPIRED:<peakState>`, dan satu
      * baris signal_events per sinyal (reason, price = close candle tersimpan terakhir atau null) — semuanya
      * dalam satu transaksi. Tanpa alert. Simbol tak dikenal / tanpa sinyal terbuka → { closed: [] }.
-     * @param {{ symbol: string, timeframes?: string[]|null, reason: 'SYMBOL_DELISTED'|'MONITORING_STOPPED', at: number }} input
+     * @param {{ symbol: string, timeframes?: string[]|null, direction?: 'LONG'|'SHORT'|null, reason: 'SYMBOL_DELISTED'|'MONITORING_STOPPED', at: number }} input
      * @returns {Promise<{ closed: Array<{ id: number, timeframe: string, fromState: string, price: number|null }> }>}
      */
-    async closeOpenForSymbol({ symbol, timeframes = null, reason, at } = {}) {
+    async closeOpenForSymbol({ symbol, timeframes = null, direction = null, reason, at } = {}) {
       assertSymbol(symbol);
+      if (direction !== null) assertDirection(direction);
       if (!MONITORING_STOP_REASONS.includes(reason)) throw new RangeError(`Reason penutupan tidak valid: ${reason}`);
       if (!Number.isInteger(at) || at < 0) throw new TypeError('at wajib epoch ms bilangan bulat');
       let list = TIMEFRAMES;
@@ -523,7 +525,7 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
         for (const tf of timeframes) assertTimeframe(tf);
         list = [...new Set(timeframes)];
       }
-      return { closed: closeForSymbolTx({ symbol, timeframes: list, reason, at }) };
+      return { closed: closeForSymbolTx({ symbol, timeframes: list, direction, reason, at }) };
     },
 
     /**

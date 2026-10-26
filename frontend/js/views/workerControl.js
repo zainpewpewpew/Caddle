@@ -5,7 +5,7 @@
 import { ApiError, api } from '../lib/api.js';
 import { callout, panel, toast } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { formatUtc } from '../lib/format.js';
+import { formatTime } from '../lib/format.js';
 import { requestSyncRefresh, syncProgressInline } from './syncProgress.js';
 import { canStartWorker, isWorkerActive, isWorkerTransitional, workerControlLabel, workerControlPill } from './workerFormat.js';
 
@@ -74,7 +74,7 @@ function describe(status) {
   }
   switch (status.state) {
     case 'running':
-      return `Worker berjalan sebagai proses terpisah yang dikelola server ini${status.startedAt ? ` sejak ${formatUtc(status.startedAt)}` : ''}. Log-nya tampil di terminal npm start.`;
+      return `Worker berjalan sebagai proses terpisah yang dikelola server ini${status.startedAt ? ` sejak ${formatTime(status.startedAt)}` : ''}. Log-nya tampil di terminal npm start.`;
     case 'starting':
       return 'Menyiapkan proses worker…';
     case 'stopping':
@@ -85,7 +85,7 @@ function describe(status) {
       return 'Worker dijalankan di luar website (mis. npm run worker di terminal lain). Hentikan dari terminal tersebut; dua worker pada database yang sama akan menggandakan ingesti.';
     default:
       return status.stoppedAt
-        ? `Berhenti sejak ${formatUtc(status.stoppedAt)}. Data pasar dan sinyal tidak diperbarui.`
+        ? `Berhenti sejak ${formatTime(status.stoppedAt)}. Data pasar dan sinyal tidak diperbarui.`
         : 'Scanner belum dijalankan. Tekan "Jalankan scanner" untuk memulai ingesti candle dan analisis pola.';
   }
 }

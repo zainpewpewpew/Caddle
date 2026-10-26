@@ -3,7 +3,7 @@
 import { api } from '../lib/api.js';
 import { badge, callout, dataTable, emptyState, page, panel, score, selectField, stat, toggle } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
-import { formatInteger, formatRelative, formatUtc } from '../lib/format.js';
+import { formatInteger, formatRelative, formatTime } from '../lib/format.js';
 import { hashQuery } from '../lib/router.js';
 import {
   chainBadge, componentBars, copyButton, disclaimerBox, externalLink, flagChips, labelChips, loadable, metaHeader,
@@ -135,7 +135,7 @@ function scoreCard(s) {
         h('dt', null, 'Win rate (info saja)'), h('dd', { class: 'num', title: 'Tidak menjadi komponen skor' }, formatRatioPct(m.winRate))),
       h('h3', { class: 'sm-h' }, 'Alasan'),
       textList(s.reasons, { empty: h('p', { class: 'muted' }, EMPTY) }),
-      s.computedAt ? h('p', { class: 'muted' }, `Dihitung ${formatUtc(s.computedAt)}`) : null));
+      s.computedAt ? h('p', { class: 'muted' }, `Dihitung ${formatTime(s.computedAt)}`) : null));
 }
 
 // Field *Pct dari metrik = poin persen (konsisten dengan holdingChangePct). maxDrawdownPct = besaran penurunan (≥ 0)
@@ -146,7 +146,7 @@ function limitationsBox(data) {
   const s = data.score;
   const summary = data.pnl?.summary ?? {};
   const completeness = completenessLabel(summary.completeness);
-  const staleNotes = (data.pnl?.positions ?? []).filter((p) => p.stalePrice).map((p) => `Harga ${p.token?.symbol ?? shortAddress(p.tokenKey)} lebih tua dari 24 jam${p.priceAt ? ` (per ${formatUtc(p.priceAt)})` : ''} — unrealized PnL mungkin tidak akurat.`);
+  const staleNotes = (data.pnl?.positions ?? []).filter((p) => p.stalePrice).map((p) => `Harga ${p.token?.symbol ?? shortAddress(p.tokenKey)} lebih tua dari 24 jam${p.priceAt ? ` (per ${formatTime(p.priceAt)})` : ''} — unrealized PnL mungkin tidak akurat.`);
   const unsourced = (data.labels ?? []).filter((l) => l?.label && !l.source).map((l) => `Label "${l.label}" tanpa sumber — perlakukan sebagai tidak terverifikasi.`);
   const notes = [...(s?.limitations ?? []), ...(summary.notes ?? []), ...staleNotes, ...unsourced];
   if (data.meta?.isStale !== false) notes.push('Data on-chain belum diperbarui sesuai jadwal (basi).');
@@ -180,7 +180,7 @@ function clusterPanel(chain, address, cluster) {
       h('strong', null, clusterReasonLabel(r.type)), ': ', walletLink(chain, r.a), ' ↔ ', walletLink(chain, r.b),
       clusterEvidenceText(r.type, r.evidence) ? h('span', { class: 'muted' }, ` · ${clusterEvidenceText(r.type, r.evidence)}`) : null,
       r.evidence?.txHash ? [' · ', txLink(explorerTxUrl(chain, r.evidence.txHash), r.evidence.txHash)] : null,
-      r.evidence?.at ? h('span', { class: 'muted' }, ` · ${formatUtc(r.evidence.at)}`) : null))));
+      r.evidence?.at ? h('span', { class: 'muted' }, ` · ${formatTime(r.evidence.at)}`) : null))));
 }
 
 function pnlPanel(pnl) {
@@ -223,7 +223,7 @@ function positionsTable(chain, positions) {
 /** Tabel riwayat aktivitas (dipakai profil wallet; detail token memakai varian dengan kolom wallet). */
 export function activityTable(chain, activities, { withWallet = false, withToken = true, caption = 'Riwayat aktivitas' } = {}) {
   const columns = [
-    { key: 'blockTime', label: 'Waktu', render: (a) => h('span', { title: formatUtc(a.blockTime) }, formatRelative(a.blockTime)) },
+    { key: 'blockTime', label: 'Waktu', render: (a) => h('span', { title: formatTime(a.blockTime) }, formatRelative(a.blockTime)) },
     { key: 'type', label: 'Jenis', render: (a) => typeBadge(a.type) },
     withWallet && { key: 'wallet', label: 'Wallet', render: (a) => walletLink(chain, a.wallet) },
     withToken && { key: 'token', label: 'Token', render: (a) => tokenLink(chain, a.token?.address ?? '', a.token?.symbol) },
@@ -253,7 +253,7 @@ function profileHeader(data) {
       h('p', { class: 'sm-identity__addr mono', 'data-testid': 'sm-wallet-address' }, w.address),
       h('div', { class: 'cluster' }, copyButton(w.address, 'alamat'), externalLink(explorer, 'Buka di explorer', { label: `Buka wallet ${w.address} di explorer (tab baru)` }))),
     h('dl', { class: 'kv sm-identity__facts' },
-      h('dt', null, 'Pertama terlihat'), h('dd', null, formatUtc(w.firstSeenAt)),
+      h('dt', null, 'Pertama terlihat'), h('dd', null, formatTime(w.firstSeenAt)),
       h('dt', null, 'Aktivitas terakhir'), h('dd', null, formatRelative(w.lastActivityAt)),
       h('dt', null, 'Ditemukan via'), h('dd', null, [w.discoveredVia, w.discoveryReason].filter(Boolean).join(' — ') || EMPTY)),
     h('div', { class: 'sm-identity__actions' }, watchButton({ kind: 'WALLET', chain: w.chain, address: w.address, watching: data.watching, name: shortAddress(w.address) })));

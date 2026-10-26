@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { animateNumber, badge, dataTable, emptyState, page, panel, stat } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { formatInteger, formatPercent, formatPrice, formatRelative, formatUtc } from '../lib/format.js';
+import { formatInteger, formatPercent, formatPrice, formatRelative, formatTime } from '../lib/format.js';
 import { diffNewSignals, mountConstellation, normalizeSignals, stageLabel } from './constellation.js';
 import { MILESTONES } from './roadmap.js';
 import { directionBadge, directionOf, signalStage } from './signalFormat.js';
@@ -98,7 +98,7 @@ function marketBody(data) {
           trendBadge(m),
           h('span', { class: 'num' }, formatPrice(m.lastPrice)),
           h('span', { class: Number(m.change24h) < 0 ? 'num ov-delta ov-delta--down' : 'num ov-delta ov-delta--up' }, `24j ${formatPercent(m.change24h)}`),
-          h('span', { class: 'muted' }, formatUtc(m.asOf)))
+          h('span', { class: 'muted' }, formatTime(m.asOf)))
         : 'Belum ada data'),
     ]))
     : emptyState({
@@ -121,7 +121,7 @@ function detectionsBody(data) {
       { key: 'timeframe', label: 'TF' },
       { key: 'classification', label: 'Pola' },
       { key: 'state', label: 'Tahap', render: (r) => signalStage(r.state, r.direction) },
-      { key: 'first_detected_at', label: 'Deteksi pertama', render: (r) => formatUtc(r.first_detected_at) },
+      { key: 'first_detected_at', label: 'Deteksi pertama', render: (r) => formatTime(r.first_detected_at) },
     ].filter(Boolean),
     rows,
     empty: emptyState({ iconName: 'radar', title: 'Belum ada deteksi', text: 'Deteksi SA/PVA (LONG) dan SD/PVD (SHORT) muncul di sini setelah worker berjalan dan menemukan pola pada candle tertutup.' }),
@@ -232,7 +232,7 @@ export async function overviewView(ctx) {
     const ingestValue = ingestEl.querySelector('.stat__value');
     ingestValue.textContent = d.lastIngestionAt ? formatRelative(d.lastIngestionAt) : '—';
     ingestValue.classList.toggle('stat__value--muted', !d.lastIngestionAt);
-    ingestEl.querySelector('.stat__hint').textContent = d.lastIngestionAt ? formatUtc(d.lastIngestionAt) : 'Belum ada candle tersimpan';
+    ingestEl.querySelector('.stat__hint').textContent = d.lastIngestionAt ? formatTime(d.lastIngestionAt) : 'Belum ada candle tersimpan';
     marketSlot.replaceChildren(marketBody(d));
     detectionsSlot.replaceChildren(detectionsBody(d));
     statusSlot.replaceChildren(statusBody(d));
@@ -241,7 +241,7 @@ export async function overviewView(ctx) {
   function applySignals({ signals, failed }) {
     constellation.update(signals, { error: failed.length === 2 });
     distSlot.replaceChildren(...distributionBody(signals, failed));
-    updatedEl.textContent = formatUtc(Date.now());
+    updatedEl.textContent = formatTime(Date.now());
   }
 
   applyOverview(data);

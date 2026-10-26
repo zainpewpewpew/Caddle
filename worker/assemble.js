@@ -10,11 +10,11 @@ import { createKlineStream } from '../backend/ingestion/binance/wsClient.js';
 import { CLOSE_MARGIN_MS } from '../backend/ingestion/backfill.js';
 import { createServerClock } from '../backend/ingestion/serverClock.js';
 import { discoverSymbols } from '../backend/ingestion/symbolDiscovery.js';
-import { DIRECTIONS } from '../backend/market/contracts.js';
+import { DIRECTIONS, DIRECTION_TIMEFRAMES, scannedTimeframes } from '../backend/market/contracts.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY } from '../backend/settings/scannerSettings.js';
 import { createScanner } from './scanner.js';
 
-/** Jeda tunggu candle HTF yang tutup bersamaan sebelum candle 5m dievaluasi (lihat createAnalysisPipeline). */
+/** Jeda tunggu candle HTF (1h) yang tutup bersamaan sebelum candle 15m dievaluasi (lihat createAnalysisPipeline). */
 export const WORKER_SETTLE_MS = 3_000;
 
 const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {} });
@@ -105,6 +105,8 @@ export function assembleWorker({
     logger,
     onAlert,
     directions,
+    // LONG hanya 15m, SHORT hanya 1h (keputusan pengguna); seri lain hanya konteks/tidak diingesti.
+    directionTimeframes: DIRECTION_TIMEFRAMES,
     params: analysisParams,
   });
 
@@ -134,7 +136,8 @@ export function assembleWorker({
     logger,
     setTimer,
     clearTimer,
-    options: { ...scannerOptions, closeMarginMs },
+    // Timeframe analisis tetap = gabungan DIRECTION_TIMEFRAMES arah aktif (pengaturan `timeframes` lama diabaikan).
+    options: { timeframes: scannedTimeframes(directions), ...scannerOptions, closeMarginMs },
     heartbeatOwner,
   });
 

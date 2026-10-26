@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { dataTable, page, panel, stat, statusPill } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
-import { EMPTY, formatBytes, formatDuration, formatInteger, formatRelative, formatUtc } from '../lib/format.js';
+import { EMPTY, formatBytes, formatDuration, formatInteger, formatRelative, formatTime } from '../lib/format.js';
 import { requestSyncRefresh, syncProgressPanel } from './syncProgress.js';
 import { workerControlCard } from './workerControl.js';
 import { binancePill, scannerPill } from './workerFormat.js';
@@ -74,10 +74,10 @@ function render(data) {
           h('dt', null, 'Database'), h('dd', null, db.status === 'ok' ? statusPill('ok', 'OK') : statusPill('error', 'Gagal')),
           h('dt', null, 'Worker scanner'), h('dd', { 'data-testid': 'health-scanner' }, scannerPill(sc)),
           h('dt', null, 'WebSocket Binance'), h('dd', { 'data-testid': 'health-binance' }, binancePill(data.binance)),
-          h('dt', null, 'Heartbeat worker'), h('dd', null, running ? `${formatRelative(sc.heartbeatAt, data.serverTime)} · ${formatUtc(sc.heartbeatAt)}` : 'Worker belum pernah berjalan (tombol "Jalankan scanner" atau npm run worker)'))),
+          h('dt', null, 'Heartbeat worker'), h('dd', null, running ? `${formatRelative(sc.heartbeatAt, data.serverTime)} · ${formatTime(sc.heartbeatAt)}` : 'Worker belum pernah berjalan (tombol "Jalankan scanner" atau npm run worker)'))),
       panel({ title: 'Ingesti data' },
         h('dl', { class: 'kv' },
-          h('dt', null, 'Ingesti terakhir'), h('dd', null, sc.lastIngestionAt ? `${formatRelative(sc.lastIngestionAt, data.serverTime)} · ${formatUtc(sc.lastIngestionAt)}` : EMPTY),
+          h('dt', null, 'Ingesti terakhir'), h('dd', null, sc.lastIngestionAt ? `${formatRelative(sc.lastIngestionAt, data.serverTime)} · ${formatTime(sc.lastIngestionAt)}` : EMPTY),
           h('dt', null, 'Lag candle'), h('dd', null, formatDuration(seconds(sc.candleLagMs))),
           h('dt', null, 'Simbol / stream'), h('dd', { class: 'mono' }, running ? `${formatInteger(sc.symbols)} / ${formatInteger(sc.streams)} (basi ${formatInteger(sc.staleStreams)})` : EMPTY),
           h('dt', null, 'Reconnect / gap / duplikat'), h('dd', { class: 'mono' }, running ? `${formatInteger(sc.reconnects)} / ${formatInteger(sc.gaps)} / ${formatInteger(sc.duplicates)}` : EMPTY),
@@ -87,13 +87,13 @@ function render(data) {
             sc.clockFault === 'OFFSET_OUT_OF_RANGE'
               ? 'Jam host menyimpang > 10 menit dari Binance — periksa NTP'
               : (running && typeof sc.clockOffsetMs === 'number' && sc.sync?.clockSynced !== false ? `${formatInteger(sc.clockOffsetMs)} ms` : EMPTY)),
-          h('dt', null, 'Waktu server'), h('dd', { class: 'mono' }, formatUtc(data.serverTime))))),
+          h('dt', null, 'Waktu server'), h('dd', { class: 'mono' }, formatTime(data.serverTime))))),
     panel({ title: 'Error ingesti terbaru', flush: true },
       dataTable({
         compact: true,
         caption: 'Error ingesti terbaru',
         columns: [
-          { key: 'at', label: 'Waktu', render: (r) => formatUtc(r.at) },
+          { key: 'at', label: 'Waktu', render: (r) => formatTime(r.at) },
           { key: 'source', label: 'Sumber', render: (r) => h('span', { class: 'mono' }, r.source) },
           { key: 'message', label: 'Pesan', sortable: false },
         ],

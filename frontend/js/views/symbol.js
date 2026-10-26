@@ -4,7 +4,7 @@
 import { api } from '../lib/api.js';
 import { badge, callout, dataTable, emptyState, page, panel, stat } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { formatPrice, formatUtc } from '../lib/format.js';
+import { formatPrice, formatTime } from '../lib/format.js';
 import { hashQuery } from '../lib/router.js';
 import { synapseArt } from './roadmap.js';
 import {
@@ -137,7 +137,7 @@ function symbolHero({ symbol, focused, signals, direction, timeframe, historyErr
         ? heroStat({ label: 'Peluang historis', value: formatWinProbability(focused.winProbability), hint: 'Terkalibrasi backtest — bukan jaminan', tone, testId: 'symbol-win-probability' })
         : null,
       heroStat({ label: 'Early Score', value: roundScore(focused?.earlyScore), meter: focused?.earlyScore, hint: 'Dinilai terpisah', tone }),
-      heroStat({ label: 'Harga deteksi', value: focused && isNum(focused.firstDetectedPrice) ? formatPrice(focused.firstDetectedPrice) : null, hint: focused ? formatUtc(focused.firstDetectedAt) : 'Belum ada sinyal' }),
+      heroStat({ label: 'Harga deteksi', value: focused && isNum(focused.firstDetectedPrice) ? formatPrice(focused.firstDetectedPrice) : null, hint: focused ? formatTime(focused.firstDetectedAt) : 'Belum ada sinyal' }),
       heroStat({ label: 'Invalidasi', value: focused && isNum(focused.invalidationPrice) ? formatPrice(focused.invalidationPrice) : null, hint: 'Level batal pola', tone: 'bear' }),
       heroStat({
         label: 'Sinyal tercatat',
@@ -243,7 +243,7 @@ function transitionsPanel(signal, emptyText) {
             ? [signalStage(e.fromState, dir), ' → ', signalStage(e.toState, dir)]
             : signalStage(e.toState, dir)),
           h('br'),
-          h('span', { class: 'timeline__text' }, `${formatUtc(e.occurredAt)} · harga ${formatPrice(e.price)}`)))))
+          h('span', { class: 'timeline__text' }, `${formatTime(e.occurredAt)} · harga ${formatPrice(e.price)}`)))))
       : h('p', { class: 'muted' }, signal ? 'Belum ada transisi tercatat.' : emptyText));
 }
 
@@ -263,7 +263,7 @@ function historyPanel(symbol, signals, focused, error) {
     },
     isRowSelected: (row) => focused !== null && row.id === focused.id,
     columns: [
-      { key: 'firstDetectedAt', label: 'Deteksi pertama', render: (r) => formatUtc(r.firstDetectedAt) },
+      { key: 'firstDetectedAt', label: 'Deteksi pertama', render: (r) => formatTime(r.firstDetectedAt) },
       { key: 'direction', label: 'Arah', sortValue: directionOf, render: (r) => directionBadge(r.direction) },
       { key: 'timeframe', label: 'TF', render: (r) => h('span', { class: 'mono' }, r.timeframe) },
       { key: 'classification', label: 'Pola', render: (r) => patternBadge(r.classification, directionOf(r)) },
@@ -271,7 +271,7 @@ function historyPanel(symbol, signals, focused, error) {
       { key: 'invalidationPrice', label: 'Invalidasi', numeric: true, render: (r) => formatPrice(r.invalidationPrice) },
       { key: 'state', label: 'Tahap terakhir', render: (r) => (typeof r.state === 'string' ? signalStage(r.state, directionOf(r)) : '—') },
       { key: 'events', label: 'Transisi', sortable: false, render: (r) => h('span', { class: 'subtle' }, statePath(r)) },
-      { key: 'updatedAt', label: 'Update', render: (r) => formatUtc(r.updatedAt) },
+      { key: 'updatedAt', label: 'Update', render: (r) => formatTime(r.updatedAt) },
     ],
     empty: emptyState({
       iconName: 'signals',
