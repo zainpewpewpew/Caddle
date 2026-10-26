@@ -180,9 +180,7 @@ function toView(row) {
     finalOutcome: row.final_outcome,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
-    confluenceScore: row.confluence_score ?? null,
-    confidenceTier: row.confidence_tier ?? null,
-    winProbability: row.win_probability ?? null,
+    ...confluenceOfRow(row),
   };
 }
 
