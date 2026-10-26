@@ -87,6 +87,21 @@ describe('sinkronisasi smart money (runSmartMoneySync)', () => {
     expect(lastRun.value).toMatchObject({ status: 'OK', inserted: s.inserted });
   });
 
+  it('UNIT-SM-SYNC-013 tanpa pemetaan Binance aktif: penemuan dilewati dengan satu catatan cara mengaktifkan, watchlist tetap jalan', async () => {
+    const noMapping = (fixture) => [derive(fixture, {
+      capabilities: new Set([...fixture.capabilities].filter((c) => c !== 'binanceMapping')),
+    })];
+    const { repo, run } = setup({ adapters: noMapping });
+    const s = await run();
+    expect(s.mapping.refreshed).toEqual([]);
+    expect(s.discovery.added).toBe(0);
+    expect(s.discovery.skippedChains).toContain('ethereum');
+    expect(s.notes.filter((n) => n.includes('pemetaan Binance belum aktif'))).toHaveLength(1);
+    expect(s.notes.some((n) => n.includes('BINANCE_API_KEY + BINANCE_API_SECRET'))).toBe(true);
+    expect(s.notes.some((n) => n.includes('MATCHED di mapping Binance'))).toBe(false);
+    expect(await repo.listWallets()).toEqual([]);
+  });
+
   it('UNIT-SM-SYNC-002 klasifikasi tersimpan: hanya swap = beli; penarikan CEX/bridge/deposit CEX bukan beli/jual', async () => {
     const { repo, run } = setup();
     await run();

@@ -6,7 +6,7 @@ import { evaluateHistorically } from '../../../backend/smartmoney/evaluate.js';
 import {
   ALERT_KINDS, ALERT_PREF_LIMITS, CHAINS, DISCLAIMERS, EMPTY, EXPLORERS, RADAR_STATES, RADAR_WINDOWS, TRADING_STYLES,
   USD_UNKNOWN, alertKindLabel, alertWatchInfo, buildAlertsQuery, buildRadarQuery, buildWalletsQuery, clampScore,
-  clusterEvidenceText, clusterReasonLabel, clusterText, completenessLabel, componentPercent, disclaimersOf, entityPath,
+  clusterEvidenceText, clusterReasonLabel, clusterText, completenessBasisText, completenessLabel, componentPercent, disclaimersOf, entityPath,
   evaluationSummary, evidenceLines, excludedSummary, explorerAddressUrl, explorerTokenUrl, explorerTxUrl, flagInfo,
   formatDrawdownPct, formatDurationShort, formatRatioPct, formatReturnFraction, formatSignedPct, formatUsdOrDash,
   isNoSourceState, labelText, mapServerPrefErrors, matchBadge, metaStatus, normalizeAddress, parseEntityQuery,
@@ -113,6 +113,14 @@ describe('Smart Money UI — format', () => {
     expect(completenessLabel('PARTIAL')).toEqual({ label: 'Sebagian', tone: 'warn' });
     expect(completenessLabel(undefined).label).toBe('Tidak diketahui');
     expect(alertKindLabel('WALLET_EXIT')).toBe('Wallet keluar');
+  });
+
+  it('UNIT-SM-UI-055 completenessBasisText: dasar rasio kelengkapan PnL dijelaskan (USD, rata-rata token, tanpa jual, data lama)', () => {
+    expect(completenessBasisText('USD')).toMatch(/nilai jual \(USD\)/);
+    expect(completenessBasisText('TOKEN_AVERAGE')).toMatch(/rata-rata per token/);
+    expect(completenessBasisText('TOKEN_AVERAGE')).toMatch(/tidak ditimbang USD/);
+    expect(completenessBasisText('NONE')).toMatch(/belum ada penjualan/);
+    expect(completenessBasisText(undefined)).toMatch(/tidak diketahui/);
   });
 
   it('UNIT-SM-UI-015 matchBadge: hanya MATCHED dapat ditautkan; simbol sama tanpa kontrak = peringatan', () => {
