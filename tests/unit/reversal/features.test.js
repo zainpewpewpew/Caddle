@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   atrContractionRatio, findBottomIndex, findBottomRetest, findSpring, htfTrend, intactHigherLow, linearSlope, liquidityClassOf,
   lowerHighSinceBottom, lowerLowChain, quadraticFit, quietRise, rangeContraction, risingFloor, roundedBottomFit, rsiDivergenceAtBottom,
-  staircaseSinceBottom, triggerLevelAt, volumeDryUp,
+  staircaseSinceBottom, triggerLevelAt, volumeDryUp, cleanSuffixStart,
 } from '../../../backend/reversal/features.js';
 import { resolveReversalParams } from '../../../backend/reversal/params.js';
 
@@ -71,16 +71,43 @@ describe('fitur Reversal Radar', () => {
     expect(findBottomRetest(cs, 2, 7, 0, P).retestIndex).toBeNull();
   });
 
-  it('UNIT-RR-FT-005 triggerLevelAt: swing high terkonfirmasi sejak dasar dinaikkan ke high sesudahnya sampai candle sebelum evaluasi; fallback high tertinggi sejak dasar', () => {
+  it('UNIT-RR-FT-005 triggerLevelAt: puncak range sejak dasar (high tertinggi dasar..candle sebelum evaluasi), lower high di dalam range tidak menurunkan pemicu; swing = swing high terkonfirmasi terakhir sejak dasar', () => {
     const cs = fromLows([10, 9, 8, 9, 10, 9, 8.5, 9, 9.5, 9.2]).map((c, i) => ({ ...c, high: [11, 10, 9, 10, 12, 10, 9.5, 10, 13, 10][i] }));
     const highs = [swing(4, 12)]; // terkonfirmasi di indeks 6
-    expect(triggerLevelAt(cs, highs, 2, 9)).toEqual({ level: 13, swing: highs[0] }); // dinaikkan ke high 13 di indeks 8
+    expect(triggerLevelAt(cs, highs, 2, 9)).toEqual({ level: 13, swing: highs[0] }); // high 13 di indeks 8 = puncak range
     expect(triggerLevelAt(cs, highs, 2, 7)).toEqual({ level: 12, swing: highs[0] }); // high 13 (indeks 8) belum ada
-    expect(triggerLevelAt(cs, highs, 2, 5)).toEqual({ level: 12, swing: null }); // swing belum terkonfirmasi → fallback high tertinggi [2..4]
+    expect(triggerLevelAt(cs, highs, 2, 5)).toEqual({ level: 12, swing: null }); // swing belum terkonfirmasi, puncak [2..4] = 12
     expect(triggerLevelAt(cs, [], 2, 3)).toEqual({ level: 9, swing: null });
     expect(triggerLevelAt(cs, [], 9, 9)).toBeNull();
     // Swing high SEBELUM dasar tidak dipakai.
     expect(triggerLevelAt(cs, [swing(0, 11)], 2, 5)).toEqual({ level: 12, swing: null });
+    // Lower high terkonfirmasi di dalam range (indeks 6, high 9,5 < puncak 12) TIDAK menurunkan pemicu: level tetap puncak range.
+    const lowerHigh = [swing(4, 12), swing(7, 10)];
+    expect(triggerLevelAt(cs, lowerHigh, 2, 9)).toEqual({ level: 13, swing: lowerHigh[1] });
+    const flat = cs.map((c, i) => ({ ...c, high: i === 8 ? 10 : c.high }));
+    expect(triggerLevelAt(flat, lowerHigh, 2, 9)).toEqual({ level: 12, swing: lowerHigh[1] });
+  });
+
+  it('UNIT-RR-FT-005b cleanSuffixStart: sufiks bersih mundur dari candle terakhir (candle rusak, gap waktu, volume nol beruntun, seri campuran)', () => {
+    const base = fromLows(Array.from({ length: 12 }, () => 10));
+    const interval = base[1].openTime - base[0].openTime;
+    expect(cleanSuffixStart(base, interval)).toBe(0);
+    expect(cleanSuffixStart([], interval)).toBe(0);
+    // Candle rusak (high < low) di indeks 3 → sufiks mulai 4.
+    const corrupt = base.map((c, i) => (i === 3 ? { ...c, high: c.low - 1 } : c));
+    expect(cleanSuffixStart(corrupt, interval)).toBe(4);
+    // Gap waktu antara indeks 5 dan 6 → sufiks mulai 6.
+    const gapped = base.filter((_, i) => i !== 6);
+    expect(cleanSuffixStart(gapped, interval)).toBe(6);
+    // Volume nol 3 candle beruntun di indeks 2..4 → sufiks mulai 5; dua candle saja tidak dihitung.
+    const zero3 = base.map((c, i) => (i >= 2 && i <= 4 ? { ...c, volume: 0 } : c));
+    expect(cleanSuffixStart(zero3, interval)).toBe(5);
+    const zero2 = base.map((c, i) => (i >= 2 && i <= 3 ? { ...c, volume: 0 } : c));
+    expect(cleanSuffixStart(zero2, interval)).toBe(0);
+    // Candle terakhir sendiri rusak / belum tutup → tidak ada sufiks bersih.
+    expect(cleanSuffixStart(base.map((c, i) => (i === 11 ? { ...c, isClosed: false } : c)), interval)).toBe(12);
+    // Simbol berbeda di indeks 1 → sufiks mulai 2.
+    expect(cleanSuffixStart(base.map((c, i) => (i === 1 ? { ...c, symbol: 'LAINUSDT' } : c)), interval)).toBe(2);
   });
 
   it('UNIT-RR-FT-006 intactHigherLow: HL vs swing low sebelumnya sejak dasar, utuh (tidak ditembus, close di atas)', () => {

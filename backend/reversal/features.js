@@ -11,6 +11,7 @@
 // yang berakhir di dasar, higher low dibanding swing low sebelumnya SEJAK dasar, langkah tangga diukur antar
 // swing sejenis.
 import { analyzeMarketStructure } from '../features/marketStructure.js';
+import { ZERO_VOLUME_STREAK, isValidCandle } from '../patterns/conditions.js';
 import { analyzeOrderFlow } from '../features/orderFlow.js';
 import { analyzeRegime } from '../features/regime.js';
 import { atr, confirmedAt, ema, findSwings, normalizedSlope, rsi, rvol, trailingHigherLows } from '../indicators/index.js';
@@ -462,17 +463,39 @@ export function quietRise(series, last, lookback, atrNow) {
  * @returns {{ level: number, swing: object|null }|null}
  */
 export function triggerLevelAt(candles, highs, bottomIndex, evalIndex) {
+  if (evalIndex - 1 < bottomIndex) return null;
+  // Level pemicu = PUNCAK RANGE sejak dasar (high tertinggi candle dasar..candle sebelum evaluasi) — resistance range
+  // akumulasi Wyckoff (automatic rally / "creek"), bukan swing high terakhir: lower high di dalam range tidak boleh
+  // menjadi pemicu, karena menembusnya belum berarti keluar dari base (validasi docs/21: CONFIRMED sesaat).
+  // `swing` = swing high terkonfirmasi terakhir sejak dasar (penanda chart), boleh null.
   let swing = null;
   for (const s of highs) if (s.index > bottomIndex && s.confirmedIndex <= evalIndex) swing = s;
-  if (swing !== null) {
-    let level = swing.price;
-    for (let i = swing.index + 1; i < evalIndex; i += 1) level = Math.max(level, candles[i].high);
-    return { level, swing };
-  }
-  if (evalIndex - 1 < bottomIndex) return null;
   let level = -Infinity;
   for (let i = bottomIndex; i < evalIndex; i += 1) level = Math.max(level, candles[i].high);
-  return { level, swing: null };
+  return { level, swing };
+}
+
+/**
+ * Indeks awal sufiks candle yang BERSIH (valid, tertutup, satu seri, urut tanpa gap waktu, tanpa volume nol beruntun
+ * ≥ `zeroVolumeStreak`), dihitung mundur dari candle terakhir. 0 = seluruh array bersih; candles.length = candle
+ * terakhir sendiri tidak valid. Dipakai detektor agar satu candle rusak/gap yang lebih tua tidak membutakan seri
+ * selama seluruh jendela lookback: evaluasi memakai sufiks bersih bila panjangnya masih ≥ warm-up (risiko
+ * DATA_QUALITY tetap dilaporkan).
+ */
+export function cleanSuffixStart(candles, interval, { zeroVolumeStreak = ZERO_VOLUME_STREAK } = {}) {
+  const n = candles.length;
+  if (n === 0) return 0;
+  const ref = candles[n - 1];
+  if (!isValidCandle(ref) || ref.isClosed !== true) return n;
+  let streak = 0;
+  for (let i = n - 1; i >= 0; i -= 1) {
+    const c = candles[i];
+    if (!isValidCandle(c) || c.isClosed !== true || c.symbol !== ref.symbol || c.timeframe !== ref.timeframe) return i + 1;
+    if (i < n - 1 && candles[i + 1].openTime - c.openTime !== interval) return i + 1;
+    streak = c.volume === 0 ? streak + 1 : 0;
+    if (streak >= zeroVolumeStreak) return i + streak;
+  }
+  return 0;
 }
 
 /**

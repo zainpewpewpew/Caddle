@@ -1,6 +1,7 @@
-// Parameter mesin Reversal Radar (docs/19 §3.1 & §4). Semua nilai default adalah HIPOTESIS AWAL yang
-// masuk akal secara metodologi — BUKAN hasil optimasi — dan WAJIB divalidasi lewat replay
-// (scripts/reversal-replay.js, docs/21) sebelum dianggap andal. Konstanta kontrak (id bukti, bobot,
+// Parameter mesin Reversal Radar (docs/19 §3.1 & §4). Nilai default = hipotesis awal dari literatur (docs/20) yang
+// disetel SEKALI pada skenario sintetis set penyetelan (benih 1–20) dan dievaluasi pada benih 21–60 — lihat docs/21
+// (minBottomAge 3→5, minEarlyGroups 2, minTriggerAboveBottomAtr 1,5, minBaseBarsForTrigger 8). Belum pernah diuji pada
+// data Binance nyata: jalankan scripts/reversal-replay.js dengan data nyata sebelum menganggapnya andal. Konstanta kontrak (id bukti, bobot,
 // tahap, dsb.) berada di constants.js dan tidak dapat di-override.
 //
 // Bentuk: objek datar berisi angka, plus tiga peta kecil per timeframe/tahap (enterConfirmBars,
@@ -82,8 +83,11 @@ export const REVERSAL_PARAM_SPECS = Object.freeze({
   // F. TRIGGER.
   breakRvol: spec('number', 0.5, 10, 'BREAK_VOLUME_SUPPORT: RVOL minimum candle breakout'),
   followThroughAtr: spec('number', 0, 10, 'BREAK_FOLLOW_THROUGH: close ≥ trigger + nilai ini (ATR)'),
+  minTriggerAboveBottomAtr: spec('number', 0, 20, 'TRIGGER_BREAK: level pemicu (puncak range sejak dasar) minimal sekian ATR di atas dasar — rally bermakna'),
+  minBaseBarsForTrigger: spec('integer', 0, 100, 'TRIGGER_BREAK: umur dasar minimum (candle sejak dasar) agar penembusan dianggap keluar dari base, bukan pantulan V'),
   // Tahap.
   minEarlyEvidence: spec('integer', 1, 10, 'EARLY: bukti EXHAUSTION+BASE+VOLUME minimum'),
+  minEarlyGroups: spec('integer', 1, 3, 'EARLY: jumlah grup berbeda di antara EXHAUSTION/BASE/VOLUME minimum (dua bukti segrup saja tidak cukup)'),
   minDevelopingEvidence: spec('integer', 1, 15, 'DEVELOPING: total bukti minimum'),
   minConfirmedEvidence: spec('integer', 0, 15, 'CONFIRMED: bukti non-TRIGGER minimum'),
   // Level & risiko.
@@ -127,7 +131,7 @@ export const DEFAULT_REVERSAL_PARAMS = Object.freeze({
   declineLookback: 120,
   minDeclineAtr: 3,
   minDeclinePct: 0.06,
-  minBottomAge: 3,
+  minBottomAge: 5,
   minContextBars: 120,
 
   llShallowerRatio: 0.7,
@@ -175,8 +179,11 @@ export const DEFAULT_REVERSAL_PARAMS = Object.freeze({
 
   breakRvol: 1.5,
   followThroughAtr: 0.3,
+  minTriggerAboveBottomAtr: 1.5,
+  minBaseBarsForTrigger: 8,
 
   minEarlyEvidence: 2,
+  minEarlyGroups: 2,
   minDevelopingEvidence: 3,
   minConfirmedEvidence: 2,
 

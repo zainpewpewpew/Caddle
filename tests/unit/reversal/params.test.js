@@ -18,11 +18,12 @@ describe('parameter Reversal Radar', () => {
     expect(REVERSAL_MAP_SPECS.expiryBars.keys).toBe(STAGES);
   });
 
-  it('UNIT-RR-PRM-002 nilai kontrak §3.1/§4 tersimpan sebagai default', () => {
+  it('UNIT-RR-PRM-002 nilai kontrak §3.1/§4 (setelah penyetelan docs/21 §3) tersimpan sebagai default', () => {
     expect(DEFAULT_REVERSAL_PARAMS).toMatchObject({
-      bottomLookback: 60, declineLookback: 120, minDeclineAtr: 3, minDeclinePct: 0.06, minBottomAge: 3, llStoppedBars: 8, bowlWindow: 40,
+      bottomLookback: 60, declineLookback: 120, minDeclineAtr: 3, minDeclinePct: 0.06, minBottomAge: 5, llStoppedBars: 8, bowlWindow: 40,
       atrContractionLookback: 20, rangeContractionLookback: 20, breakRvol: 1.5, invalidationBufferAtr: 0.25, failedBreakAtr: 0.75, lateAtr: 4,
-      minEarlyEvidence: 2, weakBarsLimit: 6, extendedAtr: 2.5, extendedPct: 0.08, thinLiquidityRatio: 0.25, minQuoteVolume24h: 50_000_000,
+      minEarlyEvidence: 2, minEarlyGroups: 2, minTriggerAboveBottomAtr: 1.5, minBaseBarsForTrigger: 8,
+      weakBarsLimit: 6, extendedAtr: 2.5, extendedPct: 0.08, thinLiquidityRatio: 0.25, minQuoteVolume24h: 50_000_000,
       enterConfirmBars: { '5m': 2, '15m': 1, '1h': 1 },
       expiryBars: { EARLY_FORMATION: 48, DEVELOPING_REVERSAL: 36, CONFIRMED_BREAKOUT: 24 },
       minAvgQuoteVolume: { '5m': 20_000, '15m': 60_000, '1h': 240_000 },

@@ -22,7 +22,7 @@
 // BREAK_FOLLOW_THROUGH hanya lulus bila TRIGGER_BREAK lulus; konteks HTF menilai SEMUA HTF yang tersedia
 // (BEARISH bila salah satu bearish, BULLISH bila semua bullish, selain itu NEUTRAL); measures.invalidationBase =
 // invalidasi tanpa lantai breakout (dipakai state machine agar invalidasi tidak ikut naik mengejar high baru).
-import { HIGHER_TIMEFRAMES } from '../market/contracts.js';
+import { HIGHER_TIMEFRAMES, TIMEFRAME_MS } from '../market/contracts.js';
 import { inspectCandles } from '../patterns/conditions.js';
 import { ORDER_FLOW_THRESHOLDS } from '../features/orderFlow.js';
 import {
@@ -132,7 +132,10 @@ function stageOf(evidence, p) {
   const ids = new Set(evidence.map((c) => c.id));
   const count = (groups) => evidence.filter((c) => groups.includes(c.group)).length;
   const nonTrigger = evidence.filter((c) => c.group !== 'TRIGGER').length;
-  const early = count(['EXHAUSTION', 'BASE', 'VOLUME']) >= p.minEarlyEvidence && count(['EXHAUSTION', 'BASE']) >= 1;
+  // EARLY butuh bukti dari ≥ minEarlyGroups grup BERBEDA (EXHAUSTION/BASE/VOLUME): dua bukti segrup (mis. BOTTOM_HELD +
+  // RSI_DIVERGENCE pada setiap pantulan downtrend) tidak cukup — karakter chart harus berpadu (docs/21 §2.7).
+  const earlyGroups = new Set(evidence.filter((c) => ['EXHAUSTION', 'BASE', 'VOLUME'].includes(c.group)).map((c) => c.group)).size;
+  const early = count(['EXHAUSTION', 'BASE', 'VOLUME']) >= p.minEarlyEvidence && earlyGroups >= p.minEarlyGroups && count(['EXHAUSTION', 'BASE']) >= 1;
   const developing = early && count(['STRUCTURE']) >= 1 && evidence.length >= p.minDevelopingEvidence;
   const confirmed = ids.has('TRIGGER_BREAK') && (ids.has('BREAK_VOLUME_SUPPORT') || ids.has('BREAK_FOLLOW_THROUGH')) && nonTrigger >= p.minConfirmedEvidence;
   if (confirmed) return 'CONFIRMED_BREAKOUT';
@@ -521,14 +524,24 @@ function buildChecks(ctx) {
   // ---- TRIGGER ----
   const trigger = levels.trigger;
   const breakAtr = trigger !== null ? atrOr(close - trigger) : null;
-  const triggerBreak = trigger !== null && close > trigger;
+  // Pemicu bermakna hanya bila puncak range sejak dasar sudah ≥ minTriggerAboveBottomAtr × ATR di atas dasar (ada rally
+  // yang layak ditembus); range sempit tepat di atas dasar bukan breakout (validasi docs/21: CONFIRMED sesaat).
+  const triggerAboveBottomAtr = trigger !== null && atrNow !== null ? (trigger - bottomPrice) / atrNow : null;
+  const triggerTall = triggerAboveBottomAtr !== null && triggerAboveBottomAtr >= p.minTriggerAboveBottomAtr;
+  const baseOldEnough = barsSinceBottom >= p.minBaseBarsForTrigger;
+  const triggerMeaningful = triggerTall && baseOldEnough;
+  const triggerBreak = trigger !== null && triggerMeaningful && close > trigger;
   add('TRIGGER_BREAK', {
     passed: triggerBreak, value: breakAtr, threshold: 0, index: last, price: trigger,
     detail: trigger === null
       ? 'Level pemicu belum tersedia (belum ada candle sesudah dasar)'
-      : triggerBreak
-        ? `Close ${fmtPrice(close)} di atas level pemicu ${fmtPrice(trigger)} (+${fmtAtr(breakAtr)})`
-        : `Close ${fmtPrice(close)} masih ${fmtAtr(breakAtr === null ? null : -breakAtr)} di bawah level pemicu ${fmtPrice(trigger)}`,
+      : !triggerTall
+        ? `Level pemicu ${fmtPrice(trigger)} baru ${fmtAtr(triggerAboveBottomAtr)} di atas dasar ${fmtPrice(bottomPrice)} (< ${fmtAtr(p.minTriggerAboveBottomAtr)}): belum ada rally yang bermakna untuk ditembus`
+        : !baseOldEnough
+          ? `Dasar ${fmtPrice(bottomPrice)} baru berumur ${barsSinceBottom} candle (< ${p.minBaseBarsForTrigger}): penembusan ${fmtPrice(trigger)} masih pantulan V, belum keluar dari base`
+          : triggerBreak
+          ? `Close ${fmtPrice(close)} di atas level pemicu ${fmtPrice(trigger)} (+${fmtAtr(breakAtr)})`
+          : `Close ${fmtPrice(close)} masih ${fmtAtr(breakAtr === null ? null : -breakAtr)} di bawah level pemicu ${fmtPrice(trigger)}`,
   });
 
   {
@@ -652,7 +665,8 @@ function finish(base, fields) {
  */
 export function evaluateReversal(input) {
   if (input === null || typeof input !== 'object') throw new TypeError('input evaluateReversal harus objek');
-  const { candles, timeframe, higher = {}, liquidity, provisional = false, params } = input;
+  const { candles: inputCandles, timeframe, higher = {}, liquidity, provisional = false, params } = input;
+  let candles = inputCandles;
   if (!REVERSAL_TIMEFRAMES.includes(timeframe)) throw new RangeError(`Timeframe reversal tidak dikenal: ${String(timeframe)}`);
   if (typeof provisional !== 'boolean') throw new TypeError('provisional harus boolean');
   const p = resolveReversalParams(params ?? {}, timeframe);
@@ -660,19 +674,32 @@ export function evaluateReversal(input) {
   if (candles.length === 0) throw new RangeError('candles kosong');
   if (liquidity !== undefined && liquidity !== null && (typeof liquidity !== 'object' || Array.isArray(liquidity))) throw new TypeError('liquidity harus objek');
 
-  const last = candles.length - 1;
-  const lastCandle = candles[last];
+  const risks = new Set();
+  const lastCandle = candles[candles.length - 1];
   const lastIsObject = lastCandle !== null && typeof lastCandle === 'object';
   if (!provisional && !(lastIsObject && lastCandle.isClosed === true)) {
     throw new RangeError('Candle terakhir belum tutup; evaluasi non-provisional hanya menerima candle tertutup');
   }
   const running = provisional && lastIsObject && lastCandle.isClosed !== true;
-  const inspected = running ? [...candles.slice(0, last), { ...lastCandle, isClosed: true }] : candles;
+  let inspected = running ? [...candles.slice(0, -1), { ...lastCandle, isClosed: true }] : candles;
   const minCandles = requiredCandles(p);
-  const { fatal, issues } = inspectCandles(inspected, minCandles);
+  let { fatal, issues } = inspectCandles(inspected, minCandles);
+  // Candle rusak / gap / volume nol beruntun yang lebih TUA dari sufiks bersih sepanjang ≥ warm-up tidak membutakan
+  // seri: evaluasi memakai sufiks bersih (indeks bergeser `candlesDropped`), risiko DATA_QUALITY tetap dilaporkan.
+  let candlesDropped = 0;
+  if (fatal.length > 0 || issues.length > 0) {
+    const start = F.cleanSuffixStart(inspected, TIMEFRAME_MS[timeframe]);
+    if (start > 0 && inspected.length - start >= minCandles) {
+      candlesDropped = start;
+      candles = candles.slice(start);
+      inspected = inspected.slice(start);
+      ({ fatal, issues } = inspectCandles(inspected, minCandles));
+    }
+  }
   if (fatal.length === 0 && candles[0].timeframe !== timeframe) {
     throw new RangeError(`Timeframe candle ${candles[0].timeframe} tidak sama dengan timeframe evaluasi ${timeframe}`);
   }
+  if (candlesDropped > 0) risks.add('DATA_QUALITY');
 
   const candleOpenTime = lastIsObject && Number.isInteger(lastCandle.openTime) ? lastCandle.openTime : null;
   const evaluatedAt = lastIsObject && Number.isInteger(lastCandle.closeTime) ? lastCandle.closeTime : null;
@@ -680,7 +707,6 @@ export function evaluateReversal(input) {
   const { htf, perTf } = htfContext(timeframe, higher, evaluatedAt, p);
   const htfMeasures = {};
   for (const tf of HIGHER_TIMEFRAMES[timeframe]) htfMeasures[`htfTrend${tf}`] = perTf[tf] ? TREND_SIGN[perTf[tf].trend] : null;
-  const risks = new Set();
   if (provisional) risks.add('PROVISIONAL');
   if (htf.trend === 'BEARISH') risks.add('HTF_DOWNTREND');
   if (htf.trend === null) risks.add('HTF_UNKNOWN');
@@ -700,7 +726,7 @@ export function evaluateReversal(input) {
       cancelCondition: cancelConditionOf(null),
       risks,
       markers: [],
-      measures: { close: lastIsObject ? orNull(lastCandle.close) : null, candles: candles.length, requiredCandles: minCandles, ...htfMeasures },
+      measures: { close: lastIsObject ? orNull(lastCandle.close) : null, candles: candles.length, candlesDropped, requiredCandles: minCandles, ...htfMeasures },
     });
   };
 
@@ -717,6 +743,7 @@ export function evaluateReversal(input) {
   }
 
   // ---- Fitur ----
+  const last = candles.length - 1;
   const s = F.computeReversalSeries(candles, p);
   const close = s.closes[last];
   const atrNow = positive(s.atr[last]);
@@ -741,6 +768,7 @@ export function evaluateReversal(input) {
 
   const measures = {
     close,
+    candlesDropped,
     atr: atrNow,
     atrPct: atrNow !== null && close > 0 ? atrNow / close : null,
     atrExpansion,

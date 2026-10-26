@@ -157,6 +157,7 @@ export async function main(argv = process.argv.slice(2), {
     return 1;
   }
   log(`Replay ${jobs.length} seri (${args.timeframes.join(', ')}; horizon ${args.horizonBars} candle; pembanding lama: ${args.old})`);
+  if (Object.keys(args.params).length > 0) log(`Override parameter mesin: ${JSON.stringify(args.params)}`);
 
   const engineDeps = {
     evaluate: engine.evaluateReversal, transition: engine.transitionReversal, resolveParams: engine.resolveReversalParams,
@@ -177,7 +178,7 @@ export async function main(argv = process.argv.slice(2), {
         checkedPerKey.set(key, done + 1);
         lookahead.checked += 1;
         try {
-          const r = await assertNoLookahead({ symbol: job.symbol, timeframe: job.timeframe, candles: job.candles, higher: job.higher, ...engineDeps, samples: args.lookaheadSamples, horizonBars: args.horizonBars });
+          const r = await assertNoLookahead({ symbol: job.symbol, timeframe: job.timeframe, candles: job.candles, higher: job.higher, ...engineDeps, params: args.params, samples: args.lookaheadSamples, horizonBars: args.horizonBars });
           log(`anti-look-ahead ${job.symbol} ${job.timeframe}: stabil pada candle #${r.samples.join(', #')}`);
         } catch (err) {
           if (isStubError(err)) {
@@ -195,7 +196,7 @@ export async function main(argv = process.argv.slice(2), {
     let res;
     try {
       res = await replayReversalSeries({
-        symbol: job.symbol, timeframe: job.timeframe, candles: job.candles, higher: job.higher, ...engineDeps,
+        symbol: job.symbol, timeframe: job.timeframe, candles: job.candles, higher: job.higher, ...engineDeps, params: args.params,
         horizonBars: args.horizonBars, targetAtr: args.targetAtr, oldScanner: args.old !== 'off', oldMode: args.old === 'off' ? 'fast' : args.old,
       });
     } catch (err) {
@@ -220,7 +221,11 @@ export async function main(argv = process.argv.slice(2), {
       generatedAt: startedAt, source: args.source, timeframes: args.timeframes, horizonBars: args.horizonBars, targetAtr: args.targetAtr,
       oldMode: args.old === 'off' ? 'off' : args.old, seedSet: args.source === 'synthetic' ? args.seedSet : null,
       ...(args.source === 'synthetic' ? { seeds: args.seeds, scenarios: args.scenarios, tuning: args.tuning } : { symbols: [...new Set(jobs.map((j) => j.symbol))], from: args.from, to: args.to }),
-      notes: [...args.warnings, `Durasi replay ${now() - startedAt} ms untuk ${evaluations} evaluasi mesin baru`],
+      notes: [
+        ...args.warnings,
+        ...(Object.keys(args.params).length > 0 ? [`Override parameter mesin (--params): ${JSON.stringify(args.params)}`] : []),
+        `Durasi replay ${now() - startedAt} ms untuk ${evaluations} evaluasi mesin baru`,
+      ],
     },
   });
 

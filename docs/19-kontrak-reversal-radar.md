@@ -93,7 +93,7 @@ evaluateReversal({
 }) → ReversalEvaluation
 ```
 
-`REVERSAL_LOOKBACK = 300` (candle yang dimuat pemanggil). Warm-up minimum `requiredCandles(params) ≤ 150` → di bawahnya `classification: 'INSUFFICIENT_DATA'`. Kualitas data mengikuti `inspectCandles` (gap waktu, volume nol beruntun, candle rusak) → `classification: 'DATA_QUALITY'` + risk `DATA_QUALITY`. Candle terakhir `isClosed !== true` saat `provisional=false` → `RangeError`.
+`REVERSAL_LOOKBACK = 300` (candle yang dimuat pemanggil). Warm-up minimum `requiredCandles(params) ≤ 150` → di bawahnya `classification: 'INSUFFICIENT_DATA'`. Kualitas data mengikuti `inspectCandles` (gap waktu, volume nol beruntun, candle rusak) → `classification: 'DATA_QUALITY'` + risk `DATA_QUALITY`; **kecuali** bila sufiks candle yang bersih (setelah kerusakan terakhir, `features.cleanSuffixStart`) masih ≥ warm-up: evaluasi memakai sufiks itu, `measures.candlesDropped` mencatat jumlah candle yang dibuang, dan risk `DATA_QUALITY` tetap dilaporkan (satu candle rusak/gap lama tidak membutakan seri selama 300 candle — docs/21 §3 usulan e). Candle terakhir `isClosed !== true` saat `provisional=false` → `RangeError`.
 
 ```ts
 ReversalEvaluation = {
@@ -128,7 +128,7 @@ Fitur (dari candle tertutup, indeks terakhir `L`): EMA7/EMA25 (`indicators/ema`)
 
 **A. Konteks penurunan awal (prasyarat reversal, membedakan dari kelanjutan uptrend)**
 - `bottomIndex` = indeks low terendah pada `bottomLookback` (60) candle terakhir; `highIndex` = indeks close tertinggi pada `declineLookback` (120) candle SEBELUM/sampai bottom.
-- `priorDecline.ok` bila `declineAtr = (closeTertinggi − bottomLow) / ATR(bottom) ≥ minDeclineAtr` (3) **atau** `declinePct ≥ minDeclinePct` (0.06), **dan** `barsSinceBottom ≥ minBottomAge` (3), **dan** tidak ada close < bottomLow sesudah bottom (bottom belum ditembus close).
+- `priorDecline.ok` bila `declineAtr = (closeTertinggi − bottomLow) / ATR(bottom) ≥ minDeclineAtr` (3) **atau** `declinePct ≥ minDeclinePct` (0.06), **dan** `barsSinceBottom ≥ minBottomAge` (5; semula 3, disetel di docs/21 §3 — dasar harus bertahan ≥ 5 candle sebelum disebut "lower low berhenti"), **dan** tidak ada close < bottomLow sesudah bottom (bottom belum ditembus close).
 - `CONTINUATION` bila `priorDecline.ok === false` **dan** EMA25 naik (slope ≥ 0 selama `slopeLookback`) **dan** close > EMA25. Selain itu tanpa penurunan awal → `NO_SETUP`.
 
 **B. EXHAUSTION (maks 25 poin)**
@@ -160,14 +160,14 @@ Skor grup = min(25, jumlah poin).
 - `QUIET_RISE` (5): close naik 0 < Δ ≤ 2 ATR dalam 10 candle **dan** rata-rata RVOL 10 candle ≤ 1,0.
 
 **F. TRIGGER (maks 10 poin, hanya untuk CONFIRMED)**
-- `levels.trigger` = resistance berjalan: swing high terkonfirmasi terakhir sejak bottom, dinaikkan ke high tertinggi sesudahnya sampai candle sebelum evaluasi (aturan `runningLevel` PR #19). Bila tidak ada swing high sejak bottom → high tertinggi sejak bottom (tanpa candle evaluasi).
-- `TRIGGER_BREAK` (4): close > trigger.
+- `levels.trigger` = **puncak range sejak bottom**: high tertinggi dari candle bottom sampai candle SEBELUM evaluasi (resistance range akumulasi Wyckoff / automatic rally). Semula "swing high terkonfirmasi terakhir dinaikkan ke high sesudahnya" — diganti karena lower high di dalam range menjadi pemicu yang terlalu rendah ("CONFIRMED sesaat", docs/21 §2.7). `markers` tetap memuat swing high terkonfirmasi terakhir sejak bottom bila ada.
+- `TRIGGER_BREAK` (4): close > trigger **dan** pemicu bermakna: `(trigger − bottom)/ATR ≥ minTriggerAboveBottomAtr` (1,5 — ada rally yang layak ditembus) **dan** `barsSinceBottom ≥ minBaseBarsForTrigger` (8 — penembusan beberapa candle setelah low adalah pantulan V, bukan keluar dari base). Keduanya disetel di docs/21 §3.
 - `BREAK_VOLUME_SUPPORT` (3): RVOL candle ≥ `breakRvol` (1,5).
 - `BREAK_FOLLOW_THROUGH` (3): close > trigger pada 2 candle tutup berurutan, atau close ≥ trigger + 0,3 ATR.
 
 **Tahap pada evaluasi (sebelum histeresis state machine):**
 - prasyarat: `classification === 'REVERSAL_CANDIDATE'` (A ok, data cukup & sehat).
-- `EARLY_FORMATION`: jumlah bukti EXHAUSTION+BASE+VOLUME ≥ `minEarlyEvidence` (2) dan setidaknya 1 dari grup EXHAUSTION atau BASE.
+- `EARLY_FORMATION`: jumlah bukti EXHAUSTION+BASE+VOLUME ≥ `minEarlyEvidence` (2), berasal dari ≥ `minEarlyGroups` (2) grup BERBEDA di antara EXHAUSTION/BASE/VOLUME (dua bukti segrup — mis. BOTTOM_HELD + RSI_DIVERGENCE pada setiap pantulan downtrend — tidak cukup; docs/21 §2.7), dan setidaknya 1 dari grup EXHAUSTION atau BASE.
 - `DEVELOPING_REVERSAL`: syarat EARLY **dan** ≥ 1 bukti STRUCTURE **dan** total bukti ≥ 3.
 - `CONFIRMED_BREAKOUT`: `TRIGGER_BREAK` **dan** (`BREAK_VOLUME_SUPPORT` atau `BREAK_FOLLOW_THROUGH`) **dan** total bukti (tanpa TRIGGER) ≥ 2.
 - `stage = null` bila tidak ada yang terpenuhi.

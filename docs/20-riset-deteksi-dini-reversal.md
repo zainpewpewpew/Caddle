@@ -188,6 +188,9 @@ bawah level invalidasi (SUCCESS); close di bawah invalidasi lebih dulu (FAIL); s
 |---|---|---|---|
 | `bottomLookback` / `declineLookback` | 60 / 120 candle | Setara 5 jam / 10 jam (5m), 15 / 30 jam (15m), 2,5 / 5 hari (1h) — cukup untuk "penurunan sebelumnya" tanpa menjangkau rezim lama. | seed 1–20 |
 | `minDeclineAtr` / `minDeclinePct` | 3 ATR / 6 % | Di bawah ini pullback biasa; Bulkowski mensyaratkan tren turun nyata sebelum pola reversal. | seed 1–20 |
+| `minBottomAge` | 5 candle (semula 3) | "Lower low berhenti" butuh waktu: dengan fraktal 2-2 low baru terkonfirmasi di +2, dan +5 berarti sudah melewati satu pantulan kecil. Disetel di seed 1–20: FP downtrend HIGH 55 % → 30 % seri tanpa mengurangi cakupan reversal sukses. | docs/21 §3 |
+| `minEarlyGroups` | 2 grup berbeda | Wyckoff: secondary test (exhaustion) harus disertai volume/range yang menyusut (base/volume); dua bukti segrup muncul di setiap pantulan downtrend. | docs/21 §3 |
+| `minTriggerAboveBottomAtr` / `minBaseBarsForTrigger` | 1,5 ATR / 8 candle | Pemicu = puncak range sejak dasar (resistance Wyckoff); breakout hanya bermakna bila rally-nya ≥ 1,5 ATR dan dasar sudah berumur ≥ 8 candle (bukan pantulan V). Disetel di seed 1–20 (15m, reversal sukses): CONFIRMED yang gagal sebelum mencapai +2 ATR turun dari 63/167 = 38 % (tanpa syarat umur dasar) menjadi 7/99 = 7 % kandidat terkonfirmasi. | docs/21 §3 |
 | `enterConfirmBars` | 5m: 2, 15m: 1, 1h: 1 | 5m paling berisik; satu candle ekstra = 5 menit penundaan untuk mengurangi kedip. | docs/21 (jumlah kandidat & pembatalan) |
 | `expiryBars` (NO_PROGRESS) | 48 / 36 / 24 | ≈ 4 jam (5m), 9 jam (15m), 1 hari (1h): base yang tidak maju selama itu bukan lagi "awal pembentukan". | docs/21 |
 | `weakBars` (EVIDENCE_FADED) | 6 | Bukti hilang 6 candle berturut-turut = struktur tidak lagi mendukung. | docs/21 |
@@ -207,8 +210,9 @@ dokumen ini sengaja tidak mengklaim peningkatan apa pun tanpa hasil uji.
   tanpa iterasi ulang per bukti. Pipeline memberi jeda ke event loop tiap `yieldEvery` simbol agar API tetap responsif saat
   ratusan pair 5m tutup bersamaan.
 - Candle provisional di-throttle 15 detik per seri dan tidak pernah menyentuh kursor.
-- Gap/duplikat/candle rusak (high < low, volume negatif) → `DATA_QUALITY` dan tidak membuka kandidat; data < kebutuhan warm-up
-  → `INSUFFICIENT_DATA`. Candle terlambat ditangani kursor persisten: replay dari kursor terakhir, maksimum 288 candle per
+- Gap/duplikat/candle rusak (high < low, volume negatif) → `DATA_QUALITY` dan tidak membuka kandidat; bila kerusakan lebih tua
+  dari sufiks bersih sepanjang ≥ warm-up (120 candle), evaluasi memakai sufiks bersih dan hanya menandai risiko `DATA_QUALITY`
+  (satu candle rusak tidak membutakan seri selama 300 candle); data < kebutuhan warm-up → `INSUFFICIENT_DATA`. Candle terlambat ditangani kursor persisten: replay dari kursor terakhir, maksimum 288 candle per
   putaran, dengan `settleMs` agar candle yang baru tutup tidak dievaluasi sebelum feed stabil.
 
 ## 9. Sumber

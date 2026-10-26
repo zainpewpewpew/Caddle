@@ -173,10 +173,21 @@ describe('evaluateReversal', () => {
     }
     const invalid = candles.map((c, i) => (i === candles.length - 3 ? { ...c, high: c.low - 1 } : c));
     expect(ev(invalid).classification).toBe('DATA_QUALITY');
-    const mixed = candles.map((c, i) => (i === 10 ? { ...c, symbol: 'OTHERUSDT' } : c));
-    expect(ev(mixed).classification).toBe('DATA_QUALITY');
+    const mixedRecent = candles.map((c, i) => (i === candles.length - 40 ? { ...c, symbol: 'OTHERUSDT' } : c));
+    expect(ev(mixedRecent).classification).toBe('DATA_QUALITY');
+    // Kerusakan yang lebih TUA dari sufiks bersih ≥ warm-up tidak membutakan seri: evaluasi memakai sufiks bersih,
+    // risiko DATA_QUALITY tetap dilaporkan dan jumlah candle yang dibuang tercatat (measures.candlesDropped).
+    const mixedOld = candles.map((c, i) => (i === 10 ? { ...c, symbol: 'OTHERUSDT' } : c));
+    const rOld = ev(mixedOld);
+    expect(rOld.classification).not.toBe('DATA_QUALITY');
+    expect(rOld.risks).toContain('DATA_QUALITY');
+    expect(rOld.measures.candlesDropped).toBe(11);
+    const corruptOld = candles.map((c, i) => (i === 10 ? { ...c, high: c.low - 1 } : c));
+    expect(ev(corruptOld).classification).toBe(ev(candles.slice(11)).classification);
+    expect(ev(corruptOld).measures.candlesDropped).toBe(11);
     // Gap yang sudah keluar dari jendela warm-up tidak lagi menghukum.
     expect(ev(withoutCandle(candles, 3)).classification).not.toBe('DATA_QUALITY');
+    expect(ev(candles).measures.candlesDropped).toBe(0);
     const short = ev(candles.slice(0, WARMUP - 1));
     expect(short.classification).toBe('INSUFFICIENT_DATA');
     expect(short.risks).not.toContain('DATA_QUALITY');

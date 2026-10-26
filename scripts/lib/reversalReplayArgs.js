@@ -32,6 +32,7 @@ Opsi umum:
   --lookahead-samples 4       jumlah indeks acak per seri yang diuji
   --lookahead-series 1        jumlah seri per skenario × timeframe (data nyata: per timeframe) yang diuji
   --out reports/              folder laporan (reversal-replay-<timestamp>.md & .json)
+  --params '{"minEarlyGroups":1}'  override parameter mesin (JSON objek; kunci harus ada di DEFAULT_REVERSAL_PARAMS) — untuk penyetelan
   -h, --help                  tampilkan bantuan ini
 `;
 
@@ -55,6 +56,7 @@ const OPTIONS = Object.freeze({
   'lookahead-samples': { type: 'string', default: '4' },
   'lookahead-series': { type: 'string', default: '1' },
   out: { type: 'string', default: 'reports' },
+  params: { type: 'string', default: '{}' },
   help: { type: 'boolean', short: 'h', default: false },
 });
 
@@ -121,7 +123,7 @@ export function classifySeeds(seeds) {
  *   help: boolean, source: 'synthetic'|'binance'|null, seeds: number[], seedSet: string, scenarios: string[], tuning: boolean,
  *   symbols: string[]|null, top: number|null, from: number, to: number, minQuoteVolume24h: number, cacheDir: string|null,
  *   timeframes: string[], horizonBars: number, targetAtr: number, old: 'fast'|'full'|'off', checkLookahead: boolean,
- *   lookaheadSamples: number, lookaheadSeries: number, out: string, warnings: string[],
+ *   lookaheadSamples: number, lookaheadSeries: number, out: string, params: object, warnings: string[],
  * }}
  * @throws {TypeError|RangeError} pesan bahasa Indonesia untuk argumen tidak valid
  */
@@ -176,6 +178,13 @@ export function parseReversalReplayArgs(argv, { now = Date.now() } = {}) {
   if (!['fast', 'full', 'off'].includes(old)) throw new TypeError(`--old harus fast, full, atau off (diberikan: ${old.slice(0, 20)})`);
   const outDir = String(v.out).trim();
   if (outDir === '') throw new TypeError('--out kosong');
+  let params;
+  try {
+    params = JSON.parse(String(v.params));
+  } catch (err) {
+    throw new TypeError(`--params bukan JSON valid: ${err.message}`, { cause: err });
+  }
+  if (params === null || typeof params !== 'object' || Array.isArray(params)) throw new TypeError('--params harus objek JSON, mis. \'{"minEarlyGroups":1}\'');
 
   return {
     help: false,
@@ -198,6 +207,7 @@ export function parseReversalReplayArgs(argv, { now = Date.now() } = {}) {
     lookaheadSamples: number('lookahead-samples', v['lookahead-samples'], { integer: true, min: 1, max: 100 }),
     lookaheadSeries: number('lookahead-series', v['lookahead-series'], { integer: true, min: 1, max: 1000 }),
     out: outDir,
+    params,
     warnings,
   };
 }
