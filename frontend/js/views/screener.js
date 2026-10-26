@@ -6,6 +6,7 @@ import {
   alignmentBadge, confluenceFieldsOf, confluenceValue, directionOf, formatWinProbability, meetsMinTier, patternBadge,
   riskBadges, signalStage, tierBadge, tierRank,
 } from './signalFormat.js';
+import { screenerChipInfo } from './smartMoneyFormat.js';
 import { attachChartSidePanel } from './symbolChart.js';
 import { workerControlBar } from './workerControl.js';
 import { isWorkerActive } from './workerFormat.js';
@@ -135,6 +136,8 @@ const FLASH_MS = 1_300;
 const FLASH_MIN_GAP_MS = 1_000;
 /** Stagger masuk dibatasi pada N baris pertama agar tabel panjang tidak menunggu lama. */
 const STAGGER_MAX = 18;
+/** Batas tunggu ringkasan smart money untuk chip LONG Scanner; lewat batas = tanpa chip. */
+const SMART_LINKS_TIMEOUT_MS = 3_000;
 
 /** Kunci identitas kandidat: satu sinyal terbuka per simbol × timeframe × arah. */
 export const rowKey = (r) => `${r.symbol}|${r.timeframe}|${directionOf(r.direction)}`;
@@ -193,7 +196,9 @@ function decorateRows(table, rows, flashes, animate, lastFlashAt) {
     }
     if (flashes.size === 0) return;
     const cells = tr.children;
-    const row = byText.get(`${cells[0]?.textContent}|${cells[2]?.textContent}`);
+    // Sel Symbol dapat memuat chip "SM ×N" setelah simbol: baca teks simbolnya saja.
+    const symbolText = cells[0]?.querySelector('.mono')?.textContent ?? cells[0]?.textContent;
+    const row = byText.get(`${symbolText}|${cells[2]?.textContent}`);
     const key = row ? rowKey(row) : null;
     const flash = key ? flashes.get(key) : undefined;
     if (!flash || now - (lastFlashAt.get(key) ?? 0) < FLASH_MIN_GAP_MS) return;
@@ -229,6 +234,27 @@ function scanRadar(dir) {
   };
 }
 
+/**
+ * Chip smart money ("SM ×N", N = pembeli independen) pada sel Symbol LONG Scanner untuk simbol futures yang punya
+ * token on-chain MATCHED (GET /api/smart-money/screener-links). Tanpa data → kolom tidak diubah sama sekali.
+ * @param {Array<object>} columns
+ * @param {Record<string, object>|null} links
+ */
+export function withSmartMoneyChips(columns, links) {
+  if (!links || Object.keys(links).length === 0) return columns;
+  return columns.map((c) => (c.key !== 'symbol' ? c : {
+    ...c,
+    render: (r) => {
+      const info = screenerChipInfo(links, r.symbol);
+      if (!info) return c.render(r);
+      const chip = info.href
+        ? h('a', { class: 'sm-chip', href: info.href, title: info.title, 'aria-label': info.title }, info.text)
+        : h('span', { class: 'sm-chip', title: info.title, 'aria-label': info.title, tabindex: 0 }, info.text);
+      return h('span', { class: 'sm-chip-cell' }, c.render(r), chip);
+    },
+  }));
+}
+
 function buildQuery(form, cfg) {
   const params = new URLSearchParams();
   if (cfg.queryDirection) params.set('direction', cfg.queryDirection);
@@ -262,6 +288,14 @@ async function scannerPage(ctx, direction) {
   tierField.hidden = true;
   // Status kontrol scanner bersifat pelengkap: kegagalannya tidak boleh menggagalkan halaman.
   const workerStatus = api('/api/system/worker').catch(() => null);
+  // Ringkasan smart money untuk chip "SM ×N" — hanya LONG, sekali per render halaman; gagal = tanpa chip (diam).
+  // Dibatasi SMART_LINKS_TIMEOUT_MS agar endpoint yang lambat tidak pernah menahan tabel kandidat.
+  const smartLinks = dir === 'LONG'
+    ? Promise.race([
+      api('/api/smart-money/screener-links', { background: true }).then((d) => (d && typeof d.items === 'object' ? d.items : null)),
+      new Promise((resolve) => { setTimeout(() => resolve(null), SMART_LINKS_TIMEOUT_MS); }),
+    ]).catch(() => null)
+    : Promise.resolve(null);
 
   const filters = h('form', { class: 'toolbar', 'aria-label': cfg.filterLabel },
     selectField({ label: 'Timeframe', name: 'tf', options: TIMEFRAME_OPTIONS }),
@@ -304,6 +338,8 @@ async function scannerPage(ctx, direction) {
       return;
     }
     if (id !== request) return; // respons usang dari filter sebelumnya
+    const links = await smartLinks;
+    if (id !== request) return;
     // Penjaga kontrak, bukan filter: API hanya mengirim arah yang diminta (baris lama tanpa direction = LONG).
     // Baris arah lain tidak pernah ditampilkan dengan label arah halaman ini.
     // minTier juga disaring di klien: server yang belum mendukungnya mengabaikan parameter itu.
@@ -314,6 +350,7 @@ async function scannerPage(ctx, direction) {
     const previousColumns = columns;
     columns = fields.tier || fields.score || fields.winProbability ? scannerColumns(dir, fields)
       : dir === 'LONG' ? SCREENER_COLUMNS : scannerColumns(dir);
+    if (dir === 'LONG') columns = withSmartMoneyChips(columns, links);
     const filtered = [...new FormData(filters).values()].some(Boolean);
     const limitReached = data.count >= SCREENER_LIMIT;
     count.textContent = limitReached ? `≥ ${SCREENER_LIMIT} hasil` : `${rows.length} hasil`;
