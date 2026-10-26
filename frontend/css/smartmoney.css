@@ -727,6 +727,438 @@
   font-size: var(--lr-text-xs);
 }
 
+/* ---------- Peta Benang (wallet → token) ----------
+ * SVG selebar wadah (viewBox = lebar px, dibangun ulang saat lebar berubah) → teks tidak mengecil, tanpa gulir
+ * horizontal. Nada benang memakai semantik yang sama dengan badge jenis aktivitas: beli = bull, beli & jual = accent,
+ * jual via swap = bear, dipindah ke exchange = warn (belum tentu dijual). Putus-putus = nilai USD tidak diketahui.
+ * Warna tidak pernah satu-satunya penanda: panah keluar, titik "beli & jual", tooltip, aria-label, dan panel bukti. */
+.sm-viewbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2) var(--lr-space-3);
+}
+
+.sm-thr {
+  --sm-thr-buy: var(--lr-bull);
+  --sm-thr-mixed: var(--lr-accent);
+  --sm-thr-sell: var(--lr-bear);
+  --sm-thr-cex: var(--lr-warn);
+  --sm-thr-unknown: var(--lr-text-3);
+  --sm-thr-wallet: var(--lr-neural-violet, var(--lr-accent));
+  --sm-thr-violet-text: var(--lr-neural-violet-text, rgb(170 160 255));
+  display: grid;
+  gap: var(--lr-space-3);
+  min-width: 0;
+}
+
+.sm-thr__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2);
+}
+
+.sm-thr__count {
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-thr-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lr-space-1) var(--lr-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-2xs);
+}
+
+.sm-thr-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sm-thr-swatch {
+  flex: none;
+  overflow: visible;
+}
+
+.sm-thr-swatch__line {
+  fill: none;
+  stroke: var(--sm-thr-buy);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.sm-thr-swatch__line[data-tone="mixed"] { stroke: var(--sm-thr-mixed); }
+.sm-thr-swatch__line[data-tone="sell"] { stroke: var(--sm-thr-sell); }
+.sm-thr-swatch__line[data-tone="cex"] { stroke: var(--sm-thr-cex); }
+.sm-thr-swatch__line[data-tone="unknown"] { stroke: var(--sm-thr-unknown); }
+.sm-thr-swatch__line[data-dashed] { stroke-width: 1.5; stroke-dasharray: 4 3; }
+.sm-thr-swatch__arrow[data-tone="sell"] { fill: var(--sm-thr-sell); }
+.sm-thr-swatch__arrow[data-tone="cex"] { fill: var(--sm-thr-cex); }
+
+.sm-thr-swatch__mix,
+.sm-thr-strand__mix {
+  fill: var(--lr-bg);
+  stroke: var(--sm-thr-sell);
+  stroke-width: 1.5;
+}
+
+.sm-thr-legend__tag {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  color: var(--sm-thr-violet-text);
+  font-size: var(--lr-text-2xs);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-thr__cols {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--lr-space-3);
+  margin-bottom: calc(var(--lr-space-2) * -1);
+  padding: 0 var(--lr-space-2);
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-2xs);
+  letter-spacing: var(--lr-tracking-caps);
+  text-transform: uppercase;
+}
+
+.sm-thr__frame {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+  border-radius: var(--lr-radius-md);
+  background:
+    radial-gradient(70% 60% at 20% 0%, var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14)), transparent 70%),
+    radial-gradient(60% 60% at 85% 100%, var(--lr-neural-cyan-soft, rgb(56 225 255 / 0.12)), transparent 70%),
+    var(--lr-glass-strong, var(--lr-bg-sunken));
+}
+
+.sm-thr__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--lr-font-sans);
+  user-select: none;
+}
+
+.sm-thr__hint {
+  font-size: var(--lr-text-2xs);
+}
+
+.sm-thr__watermark {
+  fill: var(--lr-warn);
+  opacity: 0.07;
+  font-size: 56px;
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: 0.12em;
+  pointer-events: none;
+}
+
+.sm-thr__svg[data-compact="true"] .sm-thr__watermark {
+  font-size: 32px;
+}
+
+.sm-thr-band {
+  fill: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  stroke: var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.7;
+}
+
+/* Benang */
+.sm-thr-strand {
+  --sm-thr-tone: var(--sm-thr-buy);
+  cursor: pointer;
+  transition: opacity var(--lr-dur) var(--lr-ease);
+}
+
+.sm-thr-strand[data-tone="mixed"] { --sm-thr-tone: var(--sm-thr-mixed); }
+.sm-thr-strand[data-tone="sell"] { --sm-thr-tone: var(--sm-thr-sell); }
+.sm-thr-strand[data-tone="cex"] { --sm-thr-tone: var(--sm-thr-cex); }
+
+.sm-thr-strand__hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  stroke-linecap: round;
+  pointer-events: stroke;
+}
+
+.sm-thr-strand__line {
+  fill: none;
+  stroke: var(--sm-thr-tone);
+  stroke-linecap: round;
+  opacity: 0.6;
+  transition: opacity var(--lr-dur) var(--lr-ease);
+  pointer-events: none;
+}
+
+.sm-thr-strand[data-usd="unknown"] .sm-thr-strand__line {
+  stroke-dasharray: 4 4;
+  stroke-linecap: butt;
+}
+
+.sm-thr-strand__flow {
+  fill: none;
+  stroke: color-mix(in srgb, var(--sm-thr-tone) 45%, var(--lr-text));
+  stroke-linecap: round;
+  stroke-dasharray: 0.5 15.5;
+  opacity: 0.85;
+  pointer-events: none;
+  animation: sm-thr-flow 1.6s linear infinite;
+}
+
+@keyframes sm-thr-flow {
+  to { stroke-dashoffset: -16; }
+}
+
+.sm-thr-strand__mix {
+  pointer-events: none;
+}
+
+.sm-thr-mk--sell path { fill: var(--sm-thr-sell); }
+.sm-thr-mk--cex path { fill: var(--sm-thr-cex); }
+
+.sm-thr-strand:hover .sm-thr-strand__line,
+.sm-thr-strand.is-on .sm-thr-strand__line,
+.sm-thr-strand.is-selected .sm-thr-strand__line {
+  opacity: 1;
+}
+
+.sm-thr-strand.is-selected .sm-thr-strand__hit {
+  stroke: var(--lr-neural-glow-mid, rgb(56 225 255 / 0.16));
+}
+
+.sm-thr-strand:focus-visible .sm-thr-strand__hit {
+  stroke: var(--lr-accent-line);
+}
+
+/* Node */
+.sm-thr-node {
+  cursor: pointer;
+  transition: opacity var(--lr-dur) var(--lr-ease);
+}
+
+.sm-thr-node:hover {
+  text-decoration: none;
+}
+
+.sm-thr-node__hit {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 1.5;
+}
+
+.sm-thr-node:hover .sm-thr-node__hit,
+.sm-thr-node.is-on .sm-thr-node__hit {
+  fill: var(--lr-glass-highlight, rgb(255 255 255 / 0.05));
+}
+
+.sm-thr-node:focus-visible .sm-thr-node__hit {
+  fill: var(--lr-accent-soft);
+  stroke: var(--lr-accent);
+}
+
+.sm-thr-node__dot {
+  fill: var(--sm-thr-node, var(--sm-thr-wallet));
+  stroke: var(--lr-bg);
+  stroke-width: 1.5;
+}
+
+.sm-thr-node__halo {
+  fill: var(--sm-thr-node, var(--sm-thr-wallet));
+  opacity: 0.16;
+}
+
+.sm-thr-node.is-on .sm-thr-node__halo,
+.sm-thr-node:focus-visible .sm-thr-node__halo {
+  opacity: 0.38;
+}
+
+.sm-thr-wallet[data-scored="false"] { --sm-thr-node: var(--lr-text-3); }
+.sm-thr-token { --sm-thr-node: var(--lr-text-3); }
+.sm-thr-token[data-state="ACCUMULATING"] { --sm-thr-node: var(--lr-bull); }
+.sm-thr-token[data-state="MIXED"] { --sm-thr-node: var(--lr-accent); }
+.sm-thr-token[data-state="DISTRIBUTING"] { --sm-thr-node: var(--lr-warn); }
+.sm-thr-token[data-state="EXITING"] { --sm-thr-node: var(--lr-bear); }
+
+.sm-thr-wallet__addr {
+  fill: var(--lr-text-2);
+  font-family: var(--lr-font-mono);
+  font-size: 11px;
+}
+
+.sm-thr-wallet__score {
+  fill: var(--lr-text);
+  font-size: 10.5px;
+  font-weight: var(--lr-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-thr-chip rect {
+  fill: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  stroke: var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
+}
+
+.sm-thr-chip text {
+  fill: var(--sm-thr-violet-text);
+  font-size: 10px;
+  font-weight: var(--lr-weight-semibold);
+}
+
+/* Label tanpa sumber: nada peringatan + garis putus-putus (sama seperti chip label di tabel bukti). */
+.sm-thr-chip[data-sourced="false"] rect {
+  fill: var(--lr-warn-soft);
+  stroke: var(--lr-warn-line);
+  stroke-dasharray: 3 2;
+}
+
+.sm-thr-chip[data-sourced="false"] text {
+  fill: var(--lr-warn);
+}
+
+.sm-thr-tag rect {
+  fill: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  stroke: var(--sm-thr-wallet);
+}
+
+.sm-thr-tag text {
+  fill: var(--sm-thr-violet-text);
+  font-size: 9.5px;
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-thr-token__l1 {
+  fill: var(--lr-text-3);
+  font-size: 10px;
+}
+
+.sm-thr-token__sym {
+  fill: var(--lr-text);
+  font-size: 12.5px;
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-thr-token__sim {
+  fill: var(--lr-warn);
+  font-size: 9px;
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: var(--lr-tracking-caps);
+}
+
+.sm-thr-token__l2,
+.sm-thr-token__l3 {
+  fill: var(--lr-text-3);
+  font-size: 10px;
+}
+
+.sm-thr-token__state {
+  fill: var(--sm-thr-node);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-thr-token__conv {
+  fill: var(--lr-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-thr-token__match[data-status="MATCHED"] { fill: var(--lr-bull); }
+.sm-thr-token__match[data-status="SYMBOL_ONLY"],
+.sm-thr-token__match[data-status="AMBIGUOUS"] { fill: var(--lr-warn); }
+
+.sm-thr__svg[data-compact="true"] .sm-thr-wallet__addr { font-size: 10px; }
+.sm-thr__svg[data-compact="true"] .sm-thr-token__sym { font-size: 11.5px; }
+.sm-thr__svg[data-compact="true"] .sm-thr-token__l2,
+.sm-thr__svg[data-compact="true"] .sm-thr-token__l3 { font-size: 9.5px; }
+
+/* Sorot: wallet/token/benang yang diarahkan atau difokus beserta pasangannya; sisanya diredupkan. */
+.sm-thr__svg[data-focus] .sm-thr-strand:not(.is-on) {
+  opacity: 0.08;
+}
+
+.sm-thr__svg[data-focus] .sm-thr-strand:not(.is-on) .sm-thr-strand__flow {
+  animation-play-state: paused;
+}
+
+.sm-thr__svg[data-focus] .sm-thr-node:not(.is-on) {
+  opacity: 0.32;
+}
+
+/* Panel bukti */
+.sm-thr-evidence {
+  display: grid;
+  gap: var(--lr-space-2);
+  min-width: 0;
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-glass-soft, var(--lr-surface-2));
+  overflow-wrap: anywhere;
+}
+
+.sm-thr-evidence .sm-h {
+  margin: 0;
+}
+
+.sm-thr-evidence .badge {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.sm-thr-evidence__hint {
+  font-size: var(--lr-text-xs);
+}
+
+.sm-thr-ev__kind {
+  color: var(--sm-thr-buy);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-thr-ev__kind[data-tone="mixed"] { color: var(--sm-thr-mixed); }
+.sm-thr-ev__kind[data-tone="sell"] { color: var(--sm-thr-sell); }
+.sm-thr-ev__kind[data-tone="cex"] { color: var(--sm-thr-cex); }
+
+.sm-thr-ev__facts {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+}
+
+.sm-thr-clusters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-1);
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+}
+
+/* Gerak: aliran di benang beli dimatikan bila OS meminta reduced motion atau "Animasi latar" dimatikan. */
+:root[data-motion="off"] .sm-thr-strand__flow,
+:root[data-motion="reduced"] .sm-thr-strand__flow {
+  display: none;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sm-thr-strand__flow {
+    display: none;
+    animation: none;
+  }
+}
+
 /* ---------- Responsif ---------- */
 @media (max-width: 1100px) {
   .sm-card__body {
@@ -776,6 +1208,10 @@
   .sm-identity {
     padding: var(--lr-space-4);
   }
+
+  .sm-thr-evidence {
+    padding: var(--lr-space-3);
+  }
 }
 
 @media (forced-colors: active) {
@@ -786,5 +1222,10 @@
   .sm-meter__fill,
   .sm-component__fill {
     background: Highlight;
+  }
+
+  .sm-thr-node:focus-visible .sm-thr-node__hit,
+  .sm-thr-strand:focus-visible .sm-thr-strand__hit {
+    stroke: Highlight;
   }
 }

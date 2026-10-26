@@ -2,6 +2,8 @@
 // yang saling independen, dengan bukti per wallet/tx. GET /api/smart-money/radar (docs/15 §5).
 // Panel "Evaluasi historis" (GET /api/smart-money/evaluation) menampilkan laporan terakhir `npm run smart-money:evaluate`
 // apa adanya, atau keadaan kosong yang jujur bila belum pernah dijalankan.
+// Tampilan hasil: "Daftar" (kartu, bawaan) atau "Peta Benang" (smartThreads.js) dari respons yang SAMA — beralih
+// tampilan tidak mengirim request baru. Pilihan tersimpan di hash (?view=benang) lewat history.replaceState.
 import { api } from '../lib/api.js';
 import { badge, dataTable, emptyState, page, panel, segmented, selectField, toggle } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
@@ -16,7 +18,10 @@ import {
   evaluationSummary, excludedSummary, explorerTokenUrl, explorerTxUrl, formatSignedPct, isNoSourceState, parseRadarFilters,
   relevanceLabel, signalPatternLabels, signalsByTimeframe, smartTokenHref, smartWalletHref, stateLabel, symbolChartHref,
 } from './smartMoneyFormat.js';
+import { threadsView } from './smartThreads.js';
+import { parseRadarView, radarViewHash } from './smartThreadsLayout.js';
 
+const VIEW_OPTIONS = [{ value: 'daftar', label: 'Daftar' }, { value: 'benang', label: 'Peta Benang' }];
 const WINDOW_OPTIONS = [{ value: '1h', label: '1 jam' }, { value: '4h', label: '4 jam' }, { value: '24h', label: '24 jam' }, { value: '7d', label: '7 hari' }];
 const ALL = { value: '', label: 'Semua' };
 const CHAIN_OPTIONS = [ALL, ...CHAINS.map((c) => ({ value: c, label: CHAIN_LABELS[c] }))];
@@ -220,8 +225,57 @@ function setSelect(form, name, value) {
   if (el && value !== undefined) el.value = value;
 }
 
+/** Simpan tampilan di hash tanpa memicu hashchange (halaman tidak dirender ulang, tidak ada request baru). */
+function persistView(view) {
+  try {
+    const next = radarViewHash(window.location.hash, view);
+    if (next !== window.location.hash) window.history?.replaceState?.(window.history.state, '', next);
+  } catch {
+    // History API tidak tersedia — pilihan tetap berlaku sampai halaman dimuat ulang.
+  }
+}
+
+/**
+ * Pengalih "Daftar | Peta Benang" untuk hasil radar. Di luar <form> filter: perubahannya tidak memuat ulang radar.
+ * Peta dibangun malas pada kali pertama dibuka dari respons terakhir yang sudah dimuat.
+ */
+function resultViews(initialView) {
+  let mode = initialView;
+  let current = null; // { items, meta, now, list, mapHost }
+  const control = segmented({ name: 'radarView', options: VIEW_OPTIONS, value: mode, label: 'Tampilan hasil radar' });
+  const apply = () => {
+    if (!current) return;
+    current.list.hidden = mode !== 'daftar';
+    current.mapHost.hidden = mode !== 'benang';
+    if (mode === 'benang' && !current.mapHost.firstChild) {
+      current.mapHost.append(threadsView(current.items, current.meta, { now: current.now }));
+    }
+  };
+  control.addEventListener('change', (e) => {
+    const value = e.target?.value;
+    if (value !== 'daftar' && value !== 'benang') return;
+    mode = value;
+    apply();
+    persistView(mode);
+  });
+  return {
+    bar: h('div', { class: 'sm-viewbar' }, h('span', { class: 'sm-k', 'aria-hidden': 'true' }, 'Tampilan'), control),
+    /** Daftar kartu + wadah peta untuk satu respons; mengembalikan node yang ditampilkan. */
+    show({ items, meta, now, list }) {
+      const mapHost = h('div', { class: 'sm-thr-host', 'data-testid': 'sm-threads-host' });
+      current = { items, meta, now, list, mapHost };
+      apply();
+      return [list, mapHost];
+    },
+    reset() {
+      current = null;
+    },
+  };
+}
+
 export async function smartMoneyView() {
   const initial = parseRadarFilters(hashQuery());
+  const results = resultViews(parseRadarView(hashQuery()));
   const form = h('form', { class: 'toolbar sm-toolbar', 'aria-label': 'Filter radar smart money' },
     h('div', { class: 'field' }, h('span', { class: 'field__label', 'aria-hidden': 'true' }, 'Jendela'),
       segmented({ name: 'window', options: WINDOW_OPTIONS, value: initial.window, label: 'Jendela waktu radar' })),
@@ -242,6 +296,7 @@ export async function smartMoneyView() {
       const items = Array.isArray(data?.items) ? data.items : [];
       metaHost.replaceChildren(metaHeader(data?.meta, now));
       count.textContent = `${items.length} token`;
+      results.reset();
       if (isNoSourceState(data?.meta, items.length)) return noSourceState();
       if (!items.length) {
         const filtered = Boolean(form.elements.chain.value || form.elements.minBuyers.value || form.elements.state.value || form.elements.linked.checked);
@@ -253,7 +308,12 @@ export async function smartMoneyView() {
       }
       return [
         data.computedAt ? h('p', { class: 'muted sm-computed' }, `Dihitung ${formatRelative(data.computedAt, now)} · ${formatUtc(data.computedAt)} · jendela ${data.window ?? EMPTY}`) : null,
-        h('ul', { class: 'sm-radar', 'aria-label': 'Token yang diakumulasi' }, items.map((item, i) => radarCard(item, data.meta, i))),
+        ...results.show({
+          items,
+          meta: data.meta,
+          now,
+          list: h('ul', { class: 'sm-radar', 'aria-label': 'Token yang diakumulasi' }, items.map((item, i) => radarCard(item, data.meta, i))),
+        }),
       ];
     },
   });
@@ -271,7 +331,8 @@ export async function smartMoneyView() {
   },
   metaHost,
   h('p', { class: 'sm-insider-note', 'data-testid': 'sm-insider-note' }, icon('lock', 'sm-insider-note__icon'), d.insiderName),
-  panel({ title: 'Token yang diakumulasi', actions: count, flush: true, footer: `${d.conviction} ${d.readOnly}` }, form, h('div', { class: 'sm-panel-body' }, view.el)),
+  panel({ title: 'Token yang diakumulasi', actions: count, flush: true, footer: `${d.conviction} ${d.readOnly}` }, form,
+    h('div', { class: 'sm-panel-body stack' }, results.bar, view.el)),
   evaluation.el);
   el.classList.add('page--smart-money');
   return el;
