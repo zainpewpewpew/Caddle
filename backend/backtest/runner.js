@@ -17,7 +17,10 @@
 // melihat candle dengan closeTime ≤ candle evaluasi (HTF juga), sama seperti analyzeDirectionsAt live.
 import { setImmediate as nextMacrotask } from 'node:timers/promises';
 import { ANALYSIS_LOOKBACK, analyzeDirectionsAt } from '../analysis/pipeline.js';
+import { extractFeatures } from '../features/index.js';
 import { DIRECTIONS, HIGHER_TIMEFRAMES, TIMEFRAME_MS } from '../market/contracts.js';
+import { evaluateMetaModels } from '../ml/evaluate.js';
+import { metaFeatures } from '../ml/metaFeatures.js';
 import { ALERT_STATES_BY_DIRECTION, transition } from '../signals/index.js';
 import { fitCalibration, reliabilityReport } from './calibration.js';
 import { labelTrade } from './labeler.js';
@@ -27,7 +30,8 @@ import { aggregateCandles } from './synthetic.js';
 const OPEN_STATES = Object.freeze(['QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'EARLY_BEARISH', 'BREAKDOWN']);
 /** Candle minimum sebelum evaluasi pertama (warm-up pola terpanjang 70 + rezim/squeeze 139). */
 export const BACKTEST_WARMUP = 150;
-export const RUNNER_DEFAULTS = Object.freeze({ targetR: 2, maxBars: 48, trainFraction: 0.6, feeBps: 4, slippageBps: 2 });
+/** ml: true = setiap trade membawa vektor fitur meta-labeling (`trade.ml`) dan hasil memuat evaluasi ML (`result.ml`). */
+export const RUNNER_DEFAULTS = Object.freeze({ targetR: 2, maxBars: 48, trainFraction: 0.6, feeBps: 4, slippageBps: 2, ml: false });
 
 /** HTF tersedia pada waktu t: candle dengan closeTime ≤ t (indeks akhir eksklusif dimajukan monoton). */
 function htfCursor(list) {
@@ -74,6 +78,9 @@ export async function replaySeries({ symbol, timeframe, byTf, params = {}, optio
       symbol, timeframe, candlesByTimeframe, prevByDirection: state.v3, params, directions: DIRECTIONS,
     });
     evaluations += 1;
+    // Fitur v3 mentah untuk meta-labeling dihitung hanya bila ada entri pada candle ini (dari candle ≤ candle sinyal).
+    let rawFeatures;
+    const featuresNow = () => (rawFeatures ??= extractFeatures(candlesByTimeframe[timeframe]));
     for (const direction of DIRECTIONS) {
       const r = results[direction];
       // Varian v2: state machine yang sama tanpa gerbang tier, dari pola/view/konteks yang sama persis.
@@ -92,9 +99,14 @@ export async function replaySeries({ symbol, timeframe, byTf, params = {}, optio
           });
           if (trade) {
             const c = r.view.confluence ?? null;
+            const ml = o.ml ? metaFeatures({
+              direction, timeframe, state: event.toState, view: r.view, features: featuresNow(),
+              candles: candlesByTimeframe[timeframe], entryPrice: last.close, stopPrice: next.invalidationPrice, entryTime: last.closeTime,
+            }) : undefined;
             trades[variant].push({
               ...trade, symbol, timeframe, entryTime: last.closeTime, state: event.toState,
               tier: c?.tier ?? null, score: c?.score ?? null, patternScore: r.view.patternScore, alignment: r.context?.alignment ?? null,
+              ...(ml ? { ml } : {}),
             });
           }
         }
@@ -217,6 +229,8 @@ export async function runBacktest({ candles, symbols, timeframes, onProgress = (
     variants: { v2, v3 },
     calibrationTable: calibrationFile(all.v2, testStart, embargoMs),
     trades: { v2: all.v2.length, v3: all.v3.length },
+    // Meta-labeling dievaluasi pada entri v2 (semua sinyal alert): model sekunder yang memutuskan mana yang layak.
+    ml: o.ml ? evaluateMetaModels(all.v2, { embargoMs }) : null,
   };
 }
 

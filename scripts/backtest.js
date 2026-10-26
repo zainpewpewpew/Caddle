@@ -4,6 +4,7 @@
 //   npm run backtest -- --top 30 --target-r 2 --max-bars 48 --write-calibration config/calibration.json
 //   npm run backtest -- --csv data/vision/ --timeframes 1h
 //   npm run backtest -- --synthetic --seed 7
+//   npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01 --ml   (lab meta-labeling ML)
 // Hasil: reports/backtest-<timestamp>.md dan .json. Data Binance di-cache di data/backtest-cache (gitignored).
 
 import { mkdir, readdir, stat, writeFile } from 'node:fs/promises';
@@ -199,6 +200,7 @@ export async function main(argv = process.argv.slice(2), { loadRunner = () => im
     embargoBars: args.embargoBars,
     seed: args.seed,
     source: args.source,
+    ml: args.ml,
     onProgress: (msg) => log(typeof msg === 'string' ? msg : JSON.stringify(msg)),
   });
   if (!result || typeof result !== 'object' || !result.variants) throw new Error('runBacktest harus mengembalikan { meta, variants }');
