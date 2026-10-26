@@ -60,36 +60,62 @@ export function syntheticJobs(scenarios, args) {
   return jobs;
 }
 
-/** Pekerjaan replay dari peta candle nyata { [symbol]: { [timeframe]: Candle[] } }. */
-export function realJobs(map, timeframes) {
+/**
+ * Pekerjaan replay dari peta candle nyata { [symbol]: { [timeframe]: Candle[] } }. Seri tanpa candle pada rentang, atau
+ * dengan candle < `minBars` (tidak akan ada evaluasi setelah warm-up), dilewati dan dicatat ke `skipped` ({ symbol, reason })
+ * agar laporan menjelaskan mengapa simbol yang diminta tidak muncul.
+ */
+export function realJobs(map, timeframes, { minBars = 0, skipped = [] } = {}) {
   const jobs = [];
   for (const [symbol, byTf] of Object.entries(map)) {
     for (const timeframe of timeframes) {
-      if (!byTf?.[timeframe]?.length) continue;
+      const candles = byTf?.[timeframe];
+      if (!candles?.length) {
+        skipped.push({ symbol, reason: `${timeframe}: tidak ada candle pada rentang` });
+        continue;
+      }
+      if (candles.length < minBars) {
+        skipped.push({ symbol, reason: `${timeframe}: data kurang (${candles.length} candle, butuh ≥ ${minBars} agar ada evaluasi setelah warm-up)` });
+        continue;
+      }
       const higher = {};
       for (const htf of HIGHER_TIMEFRAMES[timeframe]) if (byTf[htf]?.length) higher[htf] = byTf[htf];
-      jobs.push({ symbol, timeframe, candles: byTf[timeframe], higher, scenario: null, seed: null });
+      jobs.push({ symbol, timeframe, candles, higher, scenario: null, seed: null });
     }
   }
   return jobs;
 }
 
+/**
+ * Muat data nyata: simbol dari --symbols atau discovery --top N (bisa < N karena filter kontrak/likuiditas). Simbol yang
+ * gagal diunduh (salah satu timeframe dasar/HTF) dilewati — dicatat ke `skipped` — bukan menggagalkan seluruh run.
+ * @returns {Promise<{ map: object, requested: string[], skipped: Array<{ symbol: string, reason: string }> }>}
+ */
 async function loadRealDataset(args, { loadDataSource, loadRestClient }) {
   const ds = await loadDataSource();
   const { createBinanceRestClient } = await loadRestClient();
   const client = createBinanceRestClient({ logger: { warn: (o, m) => log(`[binance] ${m ?? ''} ${JSON.stringify(o)}`) } });
-  const symbols = args.symbols ?? await ds.listTopSymbols({ client, limit: args.top, minQuoteVolume24h: args.minQuoteVolume24h });
-  log(`Simbol (${symbols.length}): ${symbols.join(', ')}`);
+  const requested = args.symbols ?? await ds.listTopSymbols({ client, limit: args.top, minQuoteVolume24h: args.minQuoteVolume24h });
+  log(`Simbol (${requested.length}${args.top ? ` dari --top ${args.top}` : ''}): ${requested.join(', ')}`);
+  if (args.top && requested.length < args.top) log(`PERINGATAN: discovery hanya mengembalikan ${requested.length} dari ${args.top} simbol yang diminta (filter kontrak/likuiditas).`);
   const map = {};
-  for (const symbol of symbols) {
-    for (const timeframe of requiredTimeframes(args.timeframes)) {
-      const { candles, stats } = await ds.loadFromBinance({ symbol, timeframe, from: args.from, to: args.to, client, cacheDir: args.cacheDir });
-      (map[symbol] ??= {})[timeframe] = candles;
-      const gapNote = stats.gaps.length ? `, ${stats.gaps.length} celah` : '';
-      log(`${symbol} ${timeframe}: ${candles.length} candle (${stats.cachedMonths}/${stats.months} bulan dari cache, ${stats.requests} request${gapNote})`);
+  const skipped = [];
+  for (const symbol of requested) {
+    const byTf = {};
+    try {
+      for (const timeframe of requiredTimeframes(args.timeframes)) {
+        const { candles, stats } = await ds.loadFromBinance({ symbol, timeframe, from: args.from, to: args.to, client, cacheDir: args.cacheDir });
+        byTf[timeframe] = candles;
+        const gapNote = stats.gaps.length ? `, ${stats.gaps.length} celah` : '';
+        log(`${symbol} ${timeframe}: ${candles.length} candle (${stats.cachedMonths}/${stats.months} bulan dari cache, ${stats.requests} request${gapNote})`);
+      }
+    } catch (err) {
+      skipped.push({ symbol, reason: `unduh gagal: ${String(err?.message ?? err).slice(0, 200)}` });
+      continue;
     }
+    map[symbol] = byTf;
   }
-  return map;
+  return { map, requested, skipped };
 }
 
 /** JSON dengan ±Infinity sebagai string (JSON standar tidak mendukungnya). */
@@ -139,18 +165,22 @@ export async function main(argv = process.argv.slice(2), {
     log('backend/reversal/index.js (evaluateReversal/transitionReversal) belum tersedia — replay belum dapat dijalankan.');
     return 3;
   }
-  const { replayReversalSeries, assertNoLookahead, LookaheadError } = await loadReplay();
+  const { replayReversalSeries, assertNoLookahead, LookaheadError, REPLAY_DEFAULTS } = await loadReplay();
   const { aggregateReplay, renderReplayReport, renderReplaySummary } = await loadReport();
 
   const startedAt = now();
   let jobs;
   let scenarioCatalog = [];
+  let real = null; // data nyata: { map, requested, skipped }
   if (args.source === 'synthetic') {
     const scenarios = await loadScenarios();
     scenarioCatalog = scenarios.scenarioCatalog();
     jobs = syntheticJobs(scenarios, args);
   } else {
-    jobs = realJobs(await loadRealDataset(args, { loadDataSource, loadRestClient }), args.timeframes);
+    real = await loadRealDataset(args, { loadDataSource, loadRestClient });
+    // Seri perlu > warm-up candle agar ada evaluasi (REPLAY_DEFAULTS.warmupBars = batas atas requiredCandles mesin).
+    jobs = realJobs(real.map, args.timeframes, { minBars: (REPLAY_DEFAULTS?.warmupBars ?? 150) + 1, skipped: real.skipped });
+    for (const s of real.skipped) log(`Dilewati: ${s.symbol} — ${s.reason}`);
   }
   if (jobs.length === 0) {
     log('Tidak ada seri untuk di-replay.');
@@ -220,9 +250,17 @@ export async function main(argv = process.argv.slice(2), {
     meta: {
       generatedAt: startedAt, source: args.source, timeframes: args.timeframes, horizonBars: args.horizonBars, targetAtr: args.targetAtr,
       oldMode: args.old === 'off' ? 'off' : args.old, seedSet: args.source === 'synthetic' ? args.seedSet : null,
-      ...(args.source === 'synthetic' ? { seeds: args.seeds, scenarios: args.scenarios, tuning: args.tuning } : { symbols: [...new Set(jobs.map((j) => j.symbol))], from: args.from, to: args.to }),
+      ...(args.source === 'synthetic'
+        ? { seeds: args.seeds, scenarios: args.scenarios, tuning: args.tuning }
+        : {
+          // symbols = yang benar-benar di-replay; symbolsRequested = dari --symbols/discovery; symbolsSkipped = { symbol, reason }.
+          symbols: [...new Set(jobs.map((j) => j.symbol))], symbolsRequested: real.requested, topRequested: args.top, symbolsSkipped: real.skipped,
+          from: args.from, to: args.to,
+        }),
       notes: [
         ...args.warnings,
+        ...(real && args.top && real.requested.length < args.top ? [`Discovery --top ${args.top} hanya mengembalikan ${real.requested.length} simbol (filter kontrak/likuiditas discoverSymbols).`] : []),
+        ...(real?.skipped.length ? [`${real.skipped.length} simbol/seri dilewati (lihat "Simbol dilewati").`] : []),
         ...(Object.keys(args.params).length > 0 ? [`Override parameter mesin (--params): ${JSON.stringify(args.params)}`] : []),
         `Durasi replay ${now() - startedAt} ms untuk ${evaluations} evaluasi mesin baru`,
       ],

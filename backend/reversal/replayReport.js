@@ -3,6 +3,9 @@
 // dihitung bila skor & jumlah bukti saat deteksi pertama memenuhi ambang), rasio selalu disertai jumlah sampel
 // (k/n) dan interval Wilson 95 %, median/kuartil MFE & MAE, lead vs mesin lama & vs breakout, false positive,
 // perbandingan lama vs baru, dan pemeriksaan target docs/19 §10 (definisi keberhasilan ditetapkan SEBELUM evaluasi).
+// Untuk data nyata multi-peristiwa: hasil per tahap awal & per status terlambat, distribusi skor saat deteksi per tahap,
+// jarak stop + dua basis pembanding tanpa keterampilan (random walk & empiris), breakout gagal sebelum target, lead per
+// peristiwa (sinyal lama terdekat ±horizon), dan target T-NYATA-1..3 (hanya bila ada grup dataNyata).
 // Data sintetis ≠ pasar nyata; laporan tidak pernah menyatakan probabilitas keberhasilan.
 import { wilsonInterval } from '../backtest/metrics.js';
 import { fmtNumber, fmtPct } from '../backtest/report.js';
@@ -29,6 +32,18 @@ export const TARGET_RULES = Object.freeze([
   { id: 'LEAD_POSITIVE', scenario: 'successfulReversal', sensitivity: 'MEDIUM', text: 'successfulReversal: median lead kandidat pertama vs sinyal lama pertama > 0 candle' },
 ]);
 
+/** Target tambahan untuk data nyata (grup dataNyata) — hanya diperiksa bila run memuat grup itu; hipotesis, bukan klaim. */
+export const REAL_DATA_TARGET_RULES = Object.freeze([
+  { id: 'T_NYATA_1', scenario: REAL_DATA_SCENARIO, sensitivity: 'MEDIUM', text: 'T-NYATA-1 dataNyata: SUCCESS pada MEDIUM melampaui basis acak empiris (CI bawah SUCCESS > basis)' },
+  { id: 'T_NYATA_2', scenario: REAL_DATA_SCENARIO, sensitivity: 'MEDIUM', text: 'T-NYATA-2 dataNyata: median lead per peristiwa (padanan ±horizon) > 0 pada MEDIUM' },
+  { id: 'T_NYATA_3', scenario: REAL_DATA_SCENARIO, sensitivity: 'MEDIUM', text: 'T-NYATA-3 dataNyata: kandidat pertama EARLY_FORMATION ≥ 10 % pada MEDIUM' },
+]);
+
+/** Bin skor 10 poin untuk histogram skor saat deteksi: 0–9, 10–19, …, 80–89, 90–100 (bin terakhir memuat 100). */
+export const SCORE_BINS = Object.freeze(Array.from({ length: 10 }, (_, i) => Object.freeze({
+  label: i === 9 ? '90–100' : `${10 * i}–${10 * i + 9}`, min: 10 * i, max: i === 9 ? 100 : 10 * i + 9,
+})));
+
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const finiteList = (xs) => xs.filter(isNum);
 const TF_ORDER = ['5m', '15m', '1h'];
@@ -52,6 +67,22 @@ export function quantiles(values) {
 export function rate(k, n) {
   if (!isNum(n) || n <= 0) return { k: isNum(k) ? k : 0, n: 0, p: null, ci: null };
   return { k, n, p: k / n, ci: wilsonInterval(k, n) };
+}
+
+/** Histogram skor per bin SCORE_BINS (hitungan per bin; skor di luar 0..100 dijepit ke bin tepi; non-angka diabaikan). */
+export function scoreHistogram(scores) {
+  const counts = SCORE_BINS.map(() => 0);
+  for (const s of scores ?? []) {
+    if (!isNum(s)) continue;
+    counts[Math.min(SCORE_BINS.length - 1, Math.max(0, Math.floor(s / 10)))] += 1;
+  }
+  return counts;
+}
+
+/** Rata-rata nilai hingga: { n, p } (p null bila n = 0) — untuk basis random walk (bukan proporsi, tanpa CI). */
+function meanOf(values) {
+  const xs = finiteList(values ?? []);
+  return { n: xs.length, p: xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null };
 }
 
 /** Kandidat lolos filter sensitivitas bila skor & jumlah bukti saat deteksi pertama ≥ ambang. */
@@ -139,13 +170,47 @@ export function summarizeCandidates(seriesList, sensitivity) {
   const counts = perSeries.map((xs) => xs.length);
   const nSeries = list.length;
   const n = cands.length;
-  const labeled = cands.filter((c) => c.outcome === 'SUCCESS' || c.outcome === 'FAIL' || c.outcome === 'TIMEOUT');
+  const isLabeled = (c) => c.outcome === 'SUCCESS' || c.outcome === 'FAIL' || c.outcome === 'TIMEOUT';
+  const labeled = cands.filter(isLabeled);
   const count = (pred) => cands.filter(pred).length;
   const firstStage = Object.fromEntries(STAGES.map((st) => [st, count((c) => c.firstStage === st)]));
   const reached = cands.filter((c) => (c.stages ?? []).some((s) => s.stage === 'CONFIRMED_BREAKOUT'));
   const closeReasons = Object.fromEntries(CLOSE_REASONS.map((r) => [r, count((c) => c.closeReason === r)]));
   closeReasons.other = count((c) => c.closeIndex !== null && c.closeIndex !== undefined && !CLOSE_REASONS.includes(c.closeReason));
   const oldOn = list.some((s) => s.old?.enabled);
+  // Rincian hasil triple barrier untuk sekumpulan kandidat (rasio atas kandidat berlabel; OPEN & tanpa label dikecualikan).
+  const outcomeRates = (xs) => {
+    const lab = xs.filter(isLabeled);
+    return {
+      labeled: lab.length,
+      open: xs.filter((c) => c.outcome === 'OPEN').length,
+      unlabeled: xs.filter((c) => c.outcome === null).length,
+      success: rate(lab.filter((c) => c.outcome === 'SUCCESS').length, lab.length),
+      fail: rate(lab.filter((c) => c.outcome === 'FAIL').length, lab.length),
+      timeout: rate(lab.filter((c) => c.outcome === 'TIMEOUT').length, lab.length),
+    };
+  };
+  const subset = (xs) => ({ candidates: xs.length, ...outcomeRates(xs) });
+  const byStage = (pick) => Object.fromEntries(STAGES.map((st) => [st, pick(cands.filter((c) => c.firstStage === st))]));
+  const outcomes = outcomeRates(cands);
+  // Basis pembanding tanpa keterampilan (dihitung per kandidat berlabel di replay.js; digabung per grup di sini).
+  const shuffled = labeled.reduce((acc, c) => {
+    const b = c.baselineShuffled;
+    if (b && isNum(b.k) && isNum(b.n)) { acc.k += b.k; acc.n += b.n; }
+    return acc;
+  }, { k: 0, n: 0 });
+  const baselineShuffled = rate(shuffled.k, shuffled.n);
+  // Breakout gagal yang tidak pernah mencapai target: BREAKOUT_FAILED dengan mfeAtr < targetAtr seri (penyebut = yang berlabel).
+  let failedBeforeTargetK = 0;
+  let failedBeforeTargetN = 0;
+  list.forEach((s, i) => {
+    for (const c of perSeries[i]) {
+      if (c.closeReason !== 'BREAKOUT_FAILED' || !isLabeled(c) || !isNum(c.mfeAtr) || !isNum(s.targetAtr)) continue;
+      failedBeforeTargetN += 1;
+      if (c.mfeAtr < s.targetAtr) failedBeforeTargetK += 1;
+    }
+  });
+  const nearest = finiteList(cands.map((c) => c.leadVsOldNearest));
   return {
     sensitivity,
     series: nSeries,
@@ -164,14 +229,20 @@ export function summarizeCandidates(seriesList, sensitivity) {
     barsOpen: quantiles(cands.map((c) => c.barsOpen)),
     evidence: evidenceShare(list, cands),
     phases: phaseSummary(list, perSeries),
-    outcomes: {
-      labeled: labeled.length,
-      open: count((c) => c.outcome === 'OPEN'),
-      unlabeled: count((c) => c.outcome === null),
-      success: rate(labeled.filter((c) => c.outcome === 'SUCCESS').length, labeled.length),
-      fail: rate(labeled.filter((c) => c.outcome === 'FAIL').length, labeled.length),
-      timeout: rate(labeled.filter((c) => c.outcome === 'TIMEOUT').length, labeled.length),
-    },
+    outcomes,
+    // Hasil per tahap awal & per status terlambat saat deteksi (LATE_ENTRY/EXTENDED) — kandidat & rasio berlabel.
+    outcomesByFirstStage: byStage(subset),
+    outcomesByExtended: { extended: subset(cands.filter((c) => c.extendedAtDetection === true)), notExtended: subset(cands.filter((c) => c.extendedAtDetection !== true)) },
+    // Distribusi skor & jumlah bukti saat deteksi per tahap awal (dasar memilih ambang sensitivitas per tahap).
+    firstScoreByStage: byStage((xs) => quantiles(xs.map((c) => c.firstScore))),
+    firstEvidenceByStage: byStage((xs) => quantiles(xs.map((c) => c.firstEvidenceCount))),
+    firstScoreHistogramByStage: byStage((xs) => scoreHistogram(xs.map((c) => c.firstScore))),
+    // Jarak stop (ATR deteksi) & basis pembanding tanpa keterampilan atas kandidat berlabel; selisih = SUCCESS − basis empiris.
+    stopDistanceAtr: quantiles(labeled.map((c) => c.stopDistanceAtr)),
+    baselineRandomWalk: meanOf(labeled.map((c) => c.baselineRandomWalk)),
+    baselineShuffled,
+    successMinusBaseline: isNum(outcomes.success.p) && isNum(baselineShuffled.p) ? outcomes.success.p - baselineShuffled.p : null,
+    failedBeforeTarget: rate(failedBeforeTargetK, failedBeforeTargetN),
     mfeAtr: quantiles(labeled.map((c) => c.mfeAtr)),
     maeAtr: quantiles(labeled.map((c) => c.maeAtr)),
     mfePct: quantiles(labeled.map((c) => c.mfePct)),
@@ -182,6 +253,10 @@ export function summarizeCandidates(seriesList, sensitivity) {
     leadVsOldAlert: quantiles(cands.map((c) => c.leadVsOldAlert)),
     leadVsOldFirst: quantiles(firstPerSeries.map((c) => c.leadVsOld)),
     leadVsOldAlertFirst: quantiles(firstPerSeries.map((c) => c.leadVsOldAlert)),
+    // Lead per peristiwa: sinyal lama TERDEKAT dalam ±horizon dari tiap deteksi (bermakna pada seri multi-peristiwa/data nyata).
+    leadVsOldNearest: quantiles(nearest),
+    leadVsOldNearestMatched: rate(nearest.length, n),
+    leadVsOldNearestPositive: rate(nearest.filter((v) => v > 0).length, nearest.length),
     leadVsBreakout: quantiles(cands.map((c) => c.leadVsBreakout)),
     barsToTrigger: quantiles(cands.map((c) => c.barsToTrigger)),
     barsToConfirmed: quantiles(cands.map((c) => c.barsToConfirmed)),
@@ -220,12 +295,15 @@ function targetStatus(ok) {
 export function checkTargets(groups, timeframes) {
   const out = [];
   const find = (tf, scenario, sensitivity) => groups.find((g) => g.timeframe === tf && g.scenario === scenario && g.sensitivity === sensitivity) ?? null;
+  // Target data nyata (T-NYATA) hanya bila run memuat grup dataNyata — pada run sintetis daftar target tidak berubah.
+  const rules = groups.some((g) => g.scenario === REAL_DATA_SCENARIO) ? [...TARGET_RULES, ...REAL_DATA_TARGET_RULES] : TARGET_RULES;
   for (const tf of timeframes) {
-    for (const rule of TARGET_RULES) {
+    for (const rule of rules) {
       const g = find(tf, rule.scenario, rule.sensitivity);
       let ok = null;
       let value = null;
       let n = 0;
+      let detail = null;
       if (g) {
         if (rule.id === 'SUCCESS_RATE') {
           n = g.outcomes.success.n;
@@ -243,9 +321,25 @@ export function checkTargets(groups, timeframes) {
           n = g.leadVsOldFirst.n;
           value = g.leadVsOldFirst.median;
           ok = n > 0 ? value > 0 : null;
+        } else if (rule.id === 'T_NYATA_1') {
+          // CI bawah SUCCESS harus di atas basis acak empiris (titik); tanpa basis (n = 0) → tanpa data.
+          const base = g.baselineShuffled ?? rate(0, 0);
+          n = g.outcomes.success.n;
+          value = g.outcomes.success.p;
+          detail = { ci: g.outcomes.success.ci, baseline: base.p, baselineN: base.n };
+          ok = n > 0 && base.n > 0 ? g.outcomes.success.ci[0] > base.p : null;
+        } else if (rule.id === 'T_NYATA_2') {
+          n = g.leadVsOldNearest?.n ?? 0;
+          value = g.leadVsOldNearest?.median ?? null;
+          ok = n > 0 ? value > 0 : null;
+        } else if (rule.id === 'T_NYATA_3') {
+          const early = rate(g.firstStage.EARLY_FORMATION, g.candidates);
+          n = early.n;
+          value = early.p;
+          ok = n > 0 ? value >= 0.1 : null;
         }
       }
-      out.push({ id: rule.id, text: rule.text, timeframe: tf, status: targetStatus(ok), value, n, smallSample: n > 0 && n < REPLAY_REPORT_THRESHOLDS.minSample });
+      out.push({ id: rule.id, text: rule.text, timeframe: tf, status: targetStatus(ok), value, n, smallSample: n > 0 && n < REPLAY_REPORT_THRESHOLDS.minSample, detail });
     }
   }
   return out;
@@ -346,6 +440,7 @@ export function aggregateReplay({ series, meta = {}, scenarios = [], lookahead =
       source: 'unknown', timeframes, scenarios: [...new Set(series.map((s) => s.scenario ?? REAL_DATA_SCENARIO))],
       seeds: [...new Set(series.map((s) => s.seed).filter(isNum))].sort((a, b) => a - b),
       seedSet: null, horizonBars: series[0]?.horizonBars ?? null, targetAtr: series[0]?.targetAtr ?? null,
+      baseline: series.find((s) => s.baseline)?.baseline ?? null, scoreBins: SCORE_BINS.map((b) => b.label),
       sensitivities: SENSITIVITIES, sensitivityFilters: SENSITIVITY_FILTERS, successDefinition: SUCCESS_DEFINITION,
       oldMode: series.find((s) => s.old)?.old?.enabled ? series.find((s) => s.old).old.mode : 'off',
       falsePositiveScenarios: [...fpSet], notes: [],
@@ -411,9 +506,18 @@ const STATUS_LABEL = Object.freeze({ TERPENUHI: 'TERPENUHI', TIDAK_TERPENUHI: 'T
 function targetValue(t) {
   if (t.status === 'TANPA_DATA') return '—';
   if (t.id === 'UPTREND_ZERO') return `${t.value} kandidat pada ${t.n} seri`;
-  if (t.id === 'LEAD_POSITIVE') return `median ${fmtSigned(t.value)} candle, n = ${t.n}`;
+  if (t.id === 'LEAD_POSITIVE' || t.id === 'T_NYATA_2') return `median ${fmtSigned(t.value)} candle, n = ${t.n}`;
+  if (t.id === 'T_NYATA_1') return `SUCCESS ${fmtPct(t.value)} (CI ${fmtCi(t.detail?.ci)}) vs basis empiris ${fmtPct(t.detail?.baseline)}, n = ${t.n}`;
   return `${fmtPct(t.value)}, n = ${t.n}`;
 }
+
+/** Rata-rata ringkas tanpa CI (basis random walk): "p %, n = m". */
+function fmtMean(m) {
+  return m && isNum(m.n) && m.n > 0 ? `${fmtPct(m.p)}, n = ${m.n}` : '— (n = 0)';
+}
+
+/** Selisih dalam poin persen bertanda: "+4,2 poin" atau "—". */
+const fmtPoints = (v) => (isNum(v) ? `${fmtSigned(v * 100, 1)} poin` : '—');
 
 /**
  * Render laporan Markdown (bahasa Indonesia).
@@ -446,6 +550,17 @@ export function renderReplayReport(result) {
     `- Pembanding mesin lama (SA/PVA analyzeAt): ${meta.oldMode ?? 'off'}`,
     `- Seri: ${result.totals?.series ?? 0} · evaluasi mesin baru: ${result.totals?.evaluations ?? 0} · evaluasi mesin lama: ${result.totals?.oldEvaluations ?? 0} · kandidat: ${result.totals?.candidates ?? 0}`,
   );
+  if (Array.isArray(meta.symbols)) {
+    // Data nyata: simbol yang diminta vs yang benar-benar di-replay, plus yang dilewati beserta alasannya (meta.symbolsSkipped).
+    const requested = Array.isArray(meta.symbolsRequested) ? meta.symbolsRequested : null;
+    const skipped = Array.isArray(meta.symbolsSkipped) ? meta.symbolsSkipped : [];
+    if (isNum(meta.from) && isNum(meta.to)) lines.push(`- Rentang data: ${fmtDate(meta.from)} – ${fmtDate(meta.to)}`);
+    lines.push(`- Simbol diminta: ${isNum(meta.topRequested)
+      ? `--top ${meta.topRequested} → discovery mengembalikan ${requested ? requested.length : '—'}${requested && requested.length < meta.topRequested ? ' (filter kontrak/likuiditas discovery)' : ''}`
+      : requested ? `${requested.length} (--symbols)` : '—'}`);
+    lines.push(`- Simbol di-replay (${meta.symbols.length}): ${meta.symbols.join(', ') || '—'}`);
+    lines.push(`- Simbol dilewati: ${skipped.length ? skipped.map((s) => `${s.symbol} (${s.reason})`).join('; ') : 'tidak ada'}`);
+  }
   for (const note of meta.notes ?? []) lines.push(`- Catatan: ${note}`);
   lines.push('');
 
@@ -462,12 +577,13 @@ export function renderReplayReport(result) {
     ])), '');
 
   lines.push('## Ringkasan per timeframe', '',
-    'Lead vs lama = indeks sinyal lama pertama − indeks deteksi (positif = Reversal Radar lebih awal): kandidat pertama tiap seri / semua kandidat.', '',
-    ...table(['TF', 'Sensitivitas', 'Seri', 'Kandidat', 'Kandidat/seri', 'SUCCESS', 'FAIL', 'TIMEOUT', 'Batal', 'Kedaluwarsa', 'Lead vs lama: kandidat pertama (median)', 'Lead vs lama: semua kandidat (median)'],
+    'Lead vs lama = indeks sinyal lama pertama − indeks deteksi (positif = Reversal Radar lebih awal): kandidat pertama tiap seri / semua kandidat.',
+    'Basis acak RW / empiris = rasio SUCCESS yang diharapkan tanpa keterampilan pada penghalang yang sama (lihat "Basis pembanding tanpa keterampilan").', '',
+    ...table(['TF', 'Sensitivitas', 'Seri', 'Kandidat', 'Kandidat/seri', 'SUCCESS', 'FAIL', 'TIMEOUT', 'Basis acak RW', 'Basis acak empiris', 'Batal', 'Kedaluwarsa', 'Lead vs lama: kandidat pertama (median)', 'Lead vs lama: semua kandidat (median)'],
       (result.byTimeframe ?? []).map((g) => [
         g.timeframe, g.sensitivity, String(g.series), String(g.candidates), fmtNumber(g.perSeries.mean, 2),
-        fmtRate(g.outcomes.success), fmtRate(g.outcomes.fail), fmtRate(g.outcomes.timeout), fmtRate(g.cancelled), fmtRate(g.expired),
-        fmtLead(g.leadVsOldFirst), fmtLead(g.leadVsOld),
+        fmtRate(g.outcomes.success), fmtRate(g.outcomes.fail), fmtRate(g.outcomes.timeout), fmtMean(g.baselineRandomWalk), fmtRate(g.baselineShuffled),
+        fmtRate(g.cancelled), fmtRate(g.expired), fmtLead(g.leadVsOldFirst), fmtLead(g.leadVsOld),
       ])), '');
 
   lines.push('## Per timeframe × skenario × sensitivitas', '',
@@ -480,16 +596,63 @@ export function renderReplayReport(result) {
         `${g.outcomes.open}/${g.outcomes.unlabeled}`, `${g.firstStage.EARLY_FORMATION}/${g.firstStage.DEVELOPING_REVERSAL}/${g.firstStage.CONFIRMED_BREAKOUT}`,
       ])), '');
 
+  const withCandidates = result.groups.filter((g) => g.candidates > 0);
+  const target = fmtNumber(meta.targetAtr, 1);
+  lines.push('## Basis pembanding tanpa keterampilan', '',
+    'Dua basis "tanpa keterampilan" untuk menilai apakah rasio SUCCESS melebihi yang diperoleh tanpa informasi pada penghalang yang sama.',
+    'Jarak stop s = (close deteksi − level invalidasi saat deteksi) / ATR deteksi, per kandidat berlabel (level yang benar-benar dipakai pelabelan).',
+    `**Basis acak RW** = rata-rata s / (${target} + s) atas kandidat berlabel: peluang random walk tanpa drift menyentuh +${target} × ATR sebelum −s × ATR`,
+    '(aproksimasi tanpa batas waktu, TIMEOUT diabaikan — pembanding kasar). **Basis acak empiris** = untuk tiap kandidat berlabel diambil',
+    `K = ${meta.baseline?.samples ?? '—'} indeks acak (PRNG berbenih, deterministik) pada seri yang sama setelah warm-up dan sebelum n − horizon, lalu dilabeli dengan aturan`,
+    `triple barrier yang SAMA: target = ${target} × ATR${meta.baseline?.atrPeriod ?? ''}(idx), stop = s × ATR${meta.baseline?.atrPeriod ?? ''}(idx); k/n digabung per grup. Selisih = SUCCESS − basis empiris`,
+    '(poin persen); sinyal melebihi kebetulan bila selisih positif DAN CI bawah SUCCESS di atas basis (target T-NYATA-1 pada data nyata).', '',
+    ...table(['TF', 'Skenario', 'Sens.', 'Berlabel', 'Jarak stop s (ATR) median (Q1–Q3)', 'Basis acak RW', 'Basis acak empiris', 'SUCCESS', 'Selisih SUCCESS − basis empiris'],
+      withCandidates.map((g) => [
+        g.timeframe, g.label ?? g.scenario, g.sensitivity, String(g.outcomes.labeled), fmtQ(g.stopDistanceAtr, 2), fmtMean(g.baselineRandomWalk),
+        fmtRate(g.baselineShuffled), fmtRate(g.outcomes.success), fmtPoints(g.successMinusBaseline),
+      ])), '');
+
+  lines.push('## Hasil per tahap awal', '',
+    'Hasil triple barrier dipisah menurut tahap saat kandidat pertama dibuka (EARLY_FORMATION / DEVELOPING_REVERSAL / CONFIRMED_BREAKOUT);',
+    'hanya grup & tahap yang berkandidat. Rasio atas kandidat berlabel.', '',
+    ...table(['TF', 'Skenario', 'Sens.', 'Tahap awal', 'Kandidat', 'Berlabel', 'SUCCESS', 'FAIL', 'TIMEOUT'],
+      withCandidates.flatMap((g) => STAGES.filter((st) => g.outcomesByFirstStage?.[st]?.candidates > 0).map((st) => {
+        const o = g.outcomesByFirstStage[st];
+        return [g.timeframe, g.label ?? g.scenario, g.sensitivity, st, String(o.candidates), String(o.labeled), fmtRate(o.success), fmtRate(o.fail), fmtRate(o.timeout)];
+      }))), '');
+
+  lines.push('## Hasil menurut status terlambat saat deteksi', '',
+    'Terlambat = saat deteksi pertama kandidat sudah membawa risiko LATE_ENTRY/EXTENDED (harga sudah jauh dari dasar); tepat waktu = tidak.',
+    'Hanya grup berkandidat; rasio atas kandidat berlabel.', '',
+    ...table(['TF', 'Skenario', 'Sens.', 'Status saat deteksi', 'Kandidat', 'Berlabel', 'SUCCESS', 'FAIL', 'TIMEOUT'],
+      withCandidates.flatMap((g) => [['extended', 'terlambat (LATE_ENTRY/EXTENDED)'], ['notExtended', 'tepat waktu']].flatMap(([key, label]) => {
+        const o = g.outcomesByExtended?.[key];
+        return o && o.candidates > 0 ? [[g.timeframe, g.label ?? g.scenario, g.sensitivity, label, String(o.candidates), String(o.labeled), fmtRate(o.success), fmtRate(o.fail), fmtRate(o.timeout)]] : [];
+      }))), '');
+
   const high = result.groups.filter((g) => g.sensitivity === 'HIGH');
   lines.push('## Alasan penutupan & breakout gagal (sensitivitas HIGH = semua kandidat)', '',
     'Mengukur kekhawatiran state machine: kandidat yang dibuka lalu CANCELLED/EXPIRED menurut alasan docs/19 §4, dan "CONFIRMED sesaat" =',
-    'kandidat yang mencapai CONFIRMED_BREAKOUT lalu ditutup BREAKOUT_FAILED. "CONFIRMED sejak awal → gagal" = dibuka langsung sebagai CONFIRMED lalu BREAKOUT_FAILED.', '',
-    ...table(['TF', 'Skenario', 'Kandidat', 'Close < invalidasi', 'Breakout gagal', 'Tanpa kemajuan', 'Bukti melemah', 'Lainnya', 'Masih terbuka', 'Mencapai CONFIRMED', 'CONFIRMED sesaat', 'CONFIRMED sejak awal → gagal', 'Candle terbuka (median)'],
+    'kandidat yang mencapai CONFIRMED_BREAKOUT lalu ditutup BREAKOUT_FAILED. "CONFIRMED sejak awal → gagal" = dibuka langsung sebagai CONFIRMED lalu BREAKOUT_FAILED.',
+    `"Breakout gagal sebelum target" = di antara kandidat BREAKOUT_FAILED yang berlabel, yang MFE-nya < ${target} × ATR (tidak pernah mencapai target sebelum gagal).`, '',
+    ...table(['TF', 'Skenario', 'Kandidat', 'Close < invalidasi', 'Breakout gagal', 'Tanpa kemajuan', 'Bukti melemah', 'Lainnya', 'Masih terbuka', 'Mencapai CONFIRMED', 'CONFIRMED sesaat', 'CONFIRMED sejak awal → gagal', 'Candle terbuka (median)', 'Breakout gagal sebelum target'],
       high.map((g) => [
         g.timeframe, g.label ?? g.scenario, String(g.candidates), String(g.closeReasons.CLOSE_BELOW_INVALIDATION), String(g.closeReasons.BREAKOUT_FAILED),
         String(g.closeReasons.NO_PROGRESS), String(g.closeReasons.EVIDENCE_FADED), String(g.closeReasons.other), String(g.stillOpen),
-        fmtRate(g.reachedConfirmed), fmtRate(g.falseBreakouts), fmtRate(g.confirmedFirstFailed), fmtQ(g.barsOpen, 0),
+        fmtRate(g.reachedConfirmed), fmtRate(g.falseBreakouts), fmtRate(g.confirmedFirstFailed), fmtQ(g.barsOpen, 0), fmtRate(g.failedBeforeTarget),
       ])), '');
+
+  lines.push('## Distribusi skor saat deteksi per tahap awal (sensitivitas HIGH)', '',
+    'Skor & jumlah bukti saat deteksi pertama per tahap awal (semua kandidat) — dasar memilih ambang sensitivitas per tahap dari data.',
+    `Histogram = jumlah kandidat per bin skor 10 poin, urutan ${SCORE_BINS.map((b) => b.label).join(' / ')}.`, '',
+    ...table(['TF', 'Skenario', 'Tahap awal', 'Kandidat', 'Skor median (Q1–Q3)', 'Skor min–maks', 'Bukti median (Q1–Q3)', 'Histogram skor (bin 10 poin)'],
+      high.filter((g) => g.candidates > 0).flatMap((g) => STAGES.filter((st) => g.firstScoreByStage?.[st]?.n > 0 || g.firstEvidenceByStage?.[st]?.n > 0).map((st) => {
+        const q = g.firstScoreByStage[st];
+        return [
+          g.timeframe, g.label ?? g.scenario, st, String(g.firstStage[st]), fmtQ(q, 0), q.n ? `${fmtNumber(q.min, 0)}–${fmtNumber(q.max, 0)}` : '—',
+          fmtQ(g.firstEvidenceByStage[st], 1), (g.firstScoreHistogramByStage?.[st] ?? []).join('/') || '—',
+        ];
+      }))), '');
 
   const phased = high.filter((g) => g.phases);
   if (phased.length) {
@@ -533,6 +696,15 @@ export function renderReplayReport(result) {
       g.timeframe, g.label ?? g.scenario, fmtQ(g.leadVsOldFirst, 0), fmtQ(g.leadVsOld, 0), fmtQ(g.leadVsOldAlertFirst, 0), fmtQ(g.leadVsBreakout, 0), fmtQ(g.barsToTrigger, 0), fmtQ(g.barsToConfirmed, 0),
     ])), '');
 
+  lines.push('## Lead per peristiwa (padanan sinyal lama terdekat ±horizon)', '',
+    `Untuk tiap kandidat (sensitivitas MEDIUM): indeks mulai sinyal lama (QUIET/EARLY_BULLISH) TERDEKAT dalam ±${meta.horizonBars ?? '—'} candle dari deteksi − indeks deteksi`,
+    '(positif = Reversal Radar lebih awal; bila sama dekat dipilih yang sesudah deteksi). Berbeda dengan "vs mesin lama — semua kandidat" (sinyal lama PERTAMA seri),',
+    'yang hanya bermakna pada seri satu-peristiwa (sintetis); pada data nyata multi-peristiwa pakai tabel ini. Tanpa padanan = tidak ada sinyal lama dalam jendela.', '',
+    ...table(['TF', 'Skenario', 'Kandidat', 'Berpadanan', 'Tanpa padanan', 'Lead median (Q1–Q3)', 'Lead > 0 (dari yang berpadanan)'], medium.map((g) => [
+      g.timeframe, g.label ?? g.scenario, String(g.candidates), fmtRate(g.leadVsOldNearestMatched), String(g.candidates - (g.leadVsOldNearestMatched?.k ?? 0)),
+      fmtQ(g.leadVsOldNearest, 0), fmtRate(g.leadVsOldNearestPositive),
+    ])), '');
+
   lines.push('## False positive (skenario yang seharusnya tanpa kandidat)', '',
     'Setiap kandidat pada skenario ini dihitung sebagai false positive; kolom terlambat = kandidat yang saat deteksi sudah LATE_ENTRY/EXTENDED.', '',
     ...table(['TF', 'Skenario', 'Sens.', 'Seri', 'Kandidat (FP)', 'FP/seri', 'Seri berkandidat', 'Terlambat saat deteksi'], (result.falsePositives ?? []).map((g) => [
@@ -562,6 +734,14 @@ export function renderReplayReport(result) {
     '- **Batal/Kedaluwarsa**: kandidat ditutup CANCELLED (close < invalidasi, breakout gagal) / EXPIRED (tanpa kemajuan atau bukti melemah) — terpisah dari hasil harga.',
     '- **CONFIRMED sesaat**: kandidat mencapai CONFIRMED_BREAKOUT lalu ditutup BREAKOUT_FAILED (close < pemicu − failedBreakAtr × ATR).',
     '- **Lead**: selisih candle; positif = Reversal Radar lebih awal. "Kandidat pertama" = kandidat pertama tiap seri vs sinyal lama pertama.',
+    '- **Lead vs lama — semua kandidat**: setiap kandidat vs sinyal lama PERTAMA seri — hanya bermakna pada seri satu-peristiwa (sintetis); pada data nyata',
+    '  multi-peristiwa kandidat lanjutan wajar bernilai sangat negatif. Pakai **lead per peristiwa** = sinyal lama terdekat dalam ±horizon dari tiap deteksi.',
+    '- **Jarak stop s**: (close deteksi − level invalidasi saat deteksi) / ATR deteksi — risiko awal kandidat dalam ATR.',
+    '- **Basis acak RW**: rata-rata s / (target + s) — peluang random walk tanpa drift mencapai +target × ATR sebelum −s × ATR (tanpa batas waktu).',
+    '- **Basis acak empiris**: K indeks acak berbenih per kandidat berlabel pada seri yang sama (setelah warm-up, sebelum n − horizon), dilabeli dengan aturan',
+    '  triple barrier yang sama memakai ATR di indeks itu; SUCCESS k/n gabungan = rasio SUCCESS tanpa keterampilan pada pasar & penghalang yang sama.',
+    '- **Breakout gagal sebelum target**: kandidat BREAKOUT_FAILED berlabel dengan MFE < target × ATR (gagal tanpa pernah mencapai target).',
+    '- **Terlambat saat deteksi**: kandidat yang saat deteksi pertama sudah membawa risiko LATE_ENTRY/EXTENDED.',
     '- **Sensitivitas**: filter tampilan skor/bukti minimum; mesin selalu mengevaluasi pada ambang HIGH.',
     '');
   return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
@@ -583,7 +763,8 @@ export function renderReplaySummary(result) {
   const lines = [`Replay Reversal Radar — ${result.totals?.series ?? 0} seri, ${result.totals?.evaluations ?? 0} evaluasi, ${result.totals?.candidates ?? 0} kandidat (sumber: ${result.meta?.source ?? '—'})`];
   for (const g of (result.groups ?? []).filter((x) => x.sensitivity === 'MEDIUM')) {
     const lead = g.leadVsOldFirst.n ? `lead kandidat pertama vs lama med. ${fmtSigned(g.leadVsOldFirst.median)} (n = ${g.leadVsOldFirst.n})` : 'lead vs lama —';
-    lines.push(`  ${g.timeframe.padEnd(3)} ${g.scenario.padEnd(20)} seri ${String(g.series).padStart(3)} · kandidat ${String(g.candidates).padStart(3)} (${fmtNumber(g.perSeries.mean, 2)}/seri) · SUCCESS ${fmtRate(g.outcomes.success)} · FAIL ${fmtRate(g.outcomes.fail)} · TIMEOUT ${fmtRate(g.outcomes.timeout)} · ${lead}`);
+    const nearest = g.leadVsOldNearest?.n ? `lead per peristiwa med. ${fmtSigned(g.leadVsOldNearest.median)} (n = ${g.leadVsOldNearest.n})` : 'lead per peristiwa —';
+    lines.push(`  ${g.timeframe.padEnd(3)} ${g.scenario.padEnd(20)} seri ${String(g.series).padStart(3)} · kandidat ${String(g.candidates).padStart(3)} (${fmtNumber(g.perSeries.mean, 2)}/seri) · SUCCESS ${fmtRate(g.outcomes.success)} · FAIL ${fmtRate(g.outcomes.fail)} · TIMEOUT ${fmtRate(g.outcomes.timeout)} · basis empiris ${fmtRate(g.baselineShuffled)} · ${lead} · ${nearest}`);
   }
   for (const t of result.targets ?? []) lines.push(`  [§10] ${t.timeframe} ${t.text}: ${STATUS_LABEL[t.status]}${t.status === 'TANPA_DATA' ? '' : ` (${targetValue(t)})`}${t.smallSample ? ' — sampel terlalu kecil' : ''}`);
   for (const w of result.warnings ?? []) lines.push(`  ⚠️ ${w.replace(/\*\*/g, '')}`);

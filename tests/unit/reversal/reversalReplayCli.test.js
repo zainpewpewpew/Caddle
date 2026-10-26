@@ -4,6 +4,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { aggregateCandles } from '../../../backend/backtest/synthetic.js';
 import { classifySeeds, parseReversalReplayArgs, parseSeeds } from '../../../scripts/lib/reversalReplayArgs.js';
 import { main, realJobs, requiredTimeframes, syntheticJobs } from '../../../scripts/reversal-replay.js';
 import { SCENARIO_IDS } from '../../fixtures/candles/reversalScenarios.js';
@@ -97,6 +98,15 @@ describe('helper pekerjaan replay', () => {
     expect(Object.keys(real[0].higher)).toEqual(['15m', '1h']);
     expect(real[2].higher).toEqual({});
     expect(real[0]).toMatchObject({ scenario: null, seed: null });
+    // Seri tanpa candle / di bawah minBars dilewati dan dicatat dengan alasan (data nyata: simbol yang diminta tidak hilang diam-diam).
+    const skipped = [];
+    const few = realJobs({ BTCUSDT: { '5m': c('5m'), '15m': [...c('15m'), { openTime: 1, timeframe: '15m' }] }, ETHUSDT: { '15m': c('15m') } }, ['5m', '15m'], { minBars: 2, skipped });
+    expect(few.map((j) => `${j.symbol}@${j.timeframe}`)).toEqual(['BTCUSDT@15m']);
+    expect(skipped).toEqual([
+      { symbol: 'BTCUSDT', reason: '5m: data kurang (1 candle, butuh ≥ 2 agar ada evaluasi setelah warm-up)' },
+      { symbol: 'ETHUSDT', reason: '5m: tidak ada candle pada rentang' },
+      { symbol: 'ETHUSDT', reason: '15m: data kurang (1 candle, butuh ≥ 2 agar ada evaluasi setelah warm-up)' },
+    ]);
   });
 });
 
@@ -165,5 +175,52 @@ describe('main (ujung ke ujung offline dengan mesin palsu)', () => {
     const json = JSON.parse(await readFile(join(out, 'reversal-replay-20261026T000000Z.json'), 'utf8'));
     expect(json.meta.oldMode).toBe('off');
     expect(json.lookahead.failures).toHaveLength(1);
+  });
+
+  it('UNIT-RR-RC-001 data nyata (loader tersuntik, offline): --top N vs simbol di-replay, simbol dilewati (unduh gagal / data kurang) di meta & laporan, target T-NYATA', async () => {
+    const out = join(dir, 'reports');
+    const built = scenarios.buildScenario('successfulReversal', 21, { timeframe: '15m' });
+    const byTf = { '15m': built.candles, '1h': aggregateCandles(built.candles, '1h') };
+    const calls = [];
+    const loadDataSource = async () => ({
+      listTopSymbols: async ({ limit, minQuoteVolume24h }) => { calls.push(`top:${limit}:${minQuoteVolume24h}`); return ['AAAUSDT', 'BBBUSDT', 'CCCUSDT']; },
+      loadFromBinance: async ({ symbol, timeframe, from, to, cacheDir }) => {
+        calls.push(`${symbol}:${timeframe}:${from}:${to}:${cacheDir}`);
+        if (symbol === 'BBBUSDT') throw new Error('HTTP 451 unavailable for legal reasons');
+        const candles = symbol === 'AAAUSDT' ? byTf[timeframe] : timeframe === '15m' ? byTf['15m'].slice(0, 20) : [];
+        return { candles, stats: { months: 4, cachedMonths: 4, fetchedMonths: 0, requests: 0, gaps: [] } };
+      },
+    });
+    const loadRestClient = async () => ({ createBinanceRestClient: () => ({}) });
+    const argv = ['--top', '5', '--timeframes', '15m', '--from', '2025-06-01', '--to', '2025-10-01', '--no-cache', '--out', out];
+    const code = await main(argv, { loadEngine: async () => engineModule, loadDataSource, loadRestClient, now: () => NOW });
+    expect(code).toBe(0);
+    expect(calls[0]).toBe('top:5:0');
+    expect(calls).toContain(`AAAUSDT:1h:${Date.UTC(2025, 5, 1)}:${Date.UTC(2025, 9, 1)}:null`);
+    const json = JSON.parse(await readFile(join(out, 'reversal-replay-20261026T000000Z.json'), 'utf8'));
+    expect(json.meta).toMatchObject({ source: 'binance', symbols: ['AAAUSDT'], symbolsRequested: ['AAAUSDT', 'BBBUSDT', 'CCCUSDT'], topRequested: 5, from: Date.UTC(2025, 5, 1), to: Date.UTC(2025, 9, 1) });
+    expect(json.meta.symbolsSkipped).toEqual([
+      { symbol: 'BBBUSDT', reason: 'unduh gagal: HTTP 451 unavailable for legal reasons' },
+      { symbol: 'CCCUSDT', reason: '15m: data kurang (20 candle, butuh ≥ 151 agar ada evaluasi setelah warm-up)' },
+    ]);
+    expect(json.meta.notes).toContain('Discovery --top 5 hanya mengembalikan 3 simbol (filter kontrak/likuiditas discoverSymbols).');
+    expect(json.meta.notes).toContain('2 simbol/seri dilewati (lihat "Simbol dilewati").');
+    expect(json.totals.series).toBe(1);
+    expect(json.groups.every((g) => g.scenario === 'dataNyata')).toBe(true);
+    expect(json.targets.map((t) => t.id)).toEqual(['SUCCESS_RATE', 'DOWNTREND_FP', 'UPTREND_ZERO', 'LEAD_POSITIVE', 'T_NYATA_1', 'T_NYATA_2', 'T_NYATA_3']);
+    expect(json.meta.baseline).toEqual({ samples: 3, atrPeriod: 14 });
+    const md = await readFile(join(out, 'reversal-replay-20261026T000000Z.md'), 'utf8');
+    expect(md).toContain('- Simbol diminta: --top 5 → discovery mengembalikan 3 (filter kontrak/likuiditas discovery)');
+    expect(md).toContain('- Simbol di-replay (1): AAAUSDT');
+    expect(md).toContain('- Simbol dilewati: BBBUSDT (unduh gagal: HTTP 451 unavailable for legal reasons); CCCUSDT (15m: data kurang (20 candle, butuh ≥ 151 agar ada evaluasi setelah warm-up))');
+    expect(md).toContain('T-NYATA-1 dataNyata');
+    expect(md).toContain('## Basis pembanding tanpa keterampilan');
+    expect(md).not.toContain('Data sintetis ≠ pasar nyata');
+    expect(md).not.toMatch(/NaN|undefined/);
+    // Semua simbol gagal diunduh → tidak ada seri, kode 1, tanpa laporan.
+    const out2 = join(dir, 'kosong');
+    const failing = async () => ({ listTopSymbols: async () => ['AAAUSDT'], loadFromBinance: async () => { throw new Error('ECONNRESET'); } });
+    expect(await main(['--top', '1', '--timeframes', '15m', '--no-cache', '--out', out2], { loadEngine: async () => engineModule, loadDataSource: failing, loadRestClient, now: () => NOW })).toBe(1);
+    await expect(readdir(out2)).rejects.toThrow();
   });
 });

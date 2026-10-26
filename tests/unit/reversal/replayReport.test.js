@@ -6,8 +6,8 @@ import { wilsonInterval } from '../../../backend/backtest/metrics.js';
 import { SENSITIVITY_FILTERS } from '../../../backend/reversal/constants.js';
 import { replayReversalUniverse } from '../../../backend/reversal/replay.js';
 import {
-  DEFAULT_FALSE_POSITIVE_SCENARIOS, SUCCESS_DEFINITION, TARGET_RULES, aggregateReplay, checkTargets, collectReplayWarnings, fmtRate,
-  passesSensitivity, quantiles, rate, renderReplayReport, renderReplaySummary, summarizeCandidates,
+  DEFAULT_FALSE_POSITIVE_SCENARIOS, REAL_DATA_TARGET_RULES, SCORE_BINS, SUCCESS_DEFINITION, TARGET_RULES, aggregateReplay, checkTargets, collectReplayWarnings,
+  fmtRate, passesSensitivity, quantiles, rate, renderReplayReport, renderReplaySummary, scoreHistogram, summarizeCandidates,
 } from '../../../backend/reversal/replayReport.js';
 import { scenarioCatalog, scenarioUniverse } from '../../fixtures/candles/reversalScenarios.js';
 import { fakeEngine } from '../../helpers/fakeReversalEngine.js';
@@ -126,9 +126,17 @@ describe('aggregateReplay', () => {
     const r = aggregateReplay({ series: sample(), meta: { source: 'synthetic', seedSet: 'evaluation', generatedAt: Date.UTC(2026, 9, 26, 8) }, scenarios: scenarioCatalog() });
     const md = renderReplayReport(r);
     for (const heading of ['# Laporan Replay Reversal Radar', '## Parameter', '## Peringatan kejujuran', '## Pemeriksaan target §10', '## Ringkasan per timeframe',
-      '## Per timeframe × skenario × sensitivitas', '## Ekskursi MFE/MAE', '## Lead deteksi', '## False positive', '## Perbandingan mesin lama', '## Glosarium']) {
+      '## Per timeframe × skenario × sensitivitas', '## Basis pembanding tanpa keterampilan', '## Hasil per tahap awal', '## Hasil menurut status terlambat saat deteksi',
+      '## Alasan penutupan & breakout gagal', '## Distribusi skor saat deteksi per tahap awal (sensitivitas HIGH)', '## Ekskursi MFE/MAE', '## Lead deteksi',
+      '## Lead per peristiwa (padanan sinyal lama terdekat ±horizon)', '## False positive', '## Perbandingan mesin lama', '## Glosarium']) {
       expect(md).toContain(heading);
     }
+    // Fixture tanpa field basis/lead per peristiwa (seri satu-peristiwa lama) → bagian baru tetap benar: "— (n = 0)", tanpa NaN.
+    expect(md).toContain('| Basis acak RW | Basis acak empiris |');
+    expect(md).toContain('| Breakout gagal sebelum target |');
+    expect(md).toMatch(/\| 15m \| Reversal sukses \| MEDIUM \| 2 \| — \(n = 0\) \| — \(n = 0\) \| — \(n = 0\) \| 1\/2 = 50,0% \(CI 9,5–90,5 %\) \| — \|/);
+    expect(md).not.toContain('Simbol dilewati'); // hanya data nyata
+    expect(md).not.toMatch(/\| T-NYATA-/); // baris target data nyata hanya bila ada grup dataNyata
     expect(md).toContain('Data sintetis ≠ pasar nyata');
     expect(md).toContain('**bukan probabilitas**');
     expect(md).toContain('Dibuat: 2026-10-26 08:00:00 UTC');
@@ -195,7 +203,9 @@ describe('aggregateReplay', () => {
     const r = aggregateReplay({ series: list, meta: { source: 'synthetic', generatedAt: 0, timeframes: ['15m'] }, scenarios: scenarioCatalog() });
     const md = renderReplayReport(r);
     expect(md).toContain('## Alasan penutupan & breakout gagal');
-    expect(md).toContain('| 15m | Reversal sukses | 5 | 1 | 2 | 1 | 0 | 0 | 1 | 3/5 = 60,0% (CI 23,1–88,2 %) | 2/3 = 66,7% (CI 20,8–93,9 %) | 1/1 = 100,0% (CI 20,7–100,0 %) | 10 (4–13), n = 5 |');
+    // Kolom baru "Breakout gagal sebelum target": kedua kandidat BREAKOUT_FAILED berlabel punya mfeAtr 2 = target → 0/2.
+    expect(g.failedBeforeTarget).toMatchObject({ k: 0, n: 2 });
+    expect(md).toContain(`| 15m | Reversal sukses | 5 | 1 | 2 | 1 | 0 | 0 | 1 | 3/5 = 60,0% (CI 23,1–88,2 %) | 2/3 = 66,7% (CI 20,8–93,9 %) | 1/1 = 100,0% (CI 20,7–100,0 %) | 10 (4–13), n = 5 | ${fmtRate(rate(0, 2))} |`);
     expect(md).toContain('## Deteksi per fase rencana skenario');
     expect(md).toContain('| decline 1 · base 4 | decline 1 · base 1 | 2/5 = 40,0% (CI 11,8–76,9 %) | 20 (20–20), n = 2 |');
     expect(md).toContain('## Frekuensi bukti per skenario');
@@ -223,5 +233,130 @@ describe('aggregateReplay', () => {
     const md = renderReplayReport(r);
     expect(md).not.toMatch(/NaN|undefined/);
     expect(JSON.parse(JSON.stringify(r)).groups).toHaveLength(r.groups.length);
+    // Mesin palsu pada seri skenario: basis empiris & lead per peristiwa terisi dan ter-render (bukan "tanpa data").
+    expect(sr.baselineShuffled.n).toBeGreaterThan(0);
+    expect(sr.stopDistanceAtr.n).toBe(sr.outcomes.labeled);
+    expect(sr.baselineRandomWalk.n).toBe(sr.outcomes.labeled);
+    expect(sr.leadVsOldNearestMatched.n).toBe(sr.candidates);
+    expect(md).toMatch(/\| 15m \| Reversal sukses \| HIGH \| \d+ \| \d+,\d{2} \(\d+,\d{2}–\d+,\d{2}\), n = \d+ \| \d+,\d%, n = \d+ \| \d+\/\d+ = \d+,\d% \(CI [\d,]+–[\d,]+ %\) \| \d+\/\d+ = \d+,\d% \(CI [\d,]+–[\d,]+ %\) \| [+−]?\d+,\d poin \|/);
+  });
+});
+
+describe('agregat data nyata multi-peristiwa', () => {
+  const b = (k, n) => ({ k, n, indexes: [], outcomes: [] });
+  const list = () => [
+    series({
+      symbol: 'A', candidates: [
+        cand({ firstStage: 'EARLY_FORMATION', firstScore: 12, firstEvidenceCount: 2, outcome: 'SUCCESS', stopDistanceAtr: 2, baselineRandomWalk: 0.5, baselineShuffled: b(1, 3), leadVsOldNearest: 4, extendedAtDetection: false }),
+        cand({ firstStage: 'EARLY_FORMATION', firstScore: 48, firstEvidenceCount: 3, outcome: 'FAIL', stopDistanceAtr: 1, baselineRandomWalk: 1 / 3, baselineShuffled: b(0, 3), leadVsOldNearest: -2, extendedAtDetection: true, status: 'CANCELLED', closeReason: 'BREAKOUT_FAILED', closeIndex: 210, mfeAtr: 1.2 }),
+        cand({ firstStage: 'CONFIRMED_BREAKOUT', firstScore: 100, firstEvidenceCount: 6, outcome: 'TIMEOUT', stopDistanceAtr: 4, baselineRandomWalk: 2 / 3, baselineShuffled: b(2, 2), leadVsOldNearest: null, extendedAtDetection: true, status: 'CANCELLED', closeReason: 'BREAKOUT_FAILED', closeIndex: 240, mfeAtr: 2.5 }),
+        // OPEN: jarak stop ada tetapi tanpa basis; BREAKOUT_FAILED tanpa label tidak masuk "gagal sebelum target".
+        cand({ firstStage: 'DEVELOPING_REVERSAL', firstScore: 70, firstEvidenceCount: 5, outcome: 'OPEN', stopDistanceAtr: 3, baselineRandomWalk: null, baselineShuffled: null, leadVsOldNearest: 0, status: 'CANCELLED', closeReason: 'BREAKOUT_FAILED', closeIndex: 260, mfeAtr: 0.5 }),
+      ],
+    }),
+  ];
+
+  it('UNIT-RR-RR-001 summarizeCandidates: hasil per tahap awal & status terlambat, distribusi skor/bukti + histogram, jarak stop, basis RW/empiris, breakout gagal sebelum target, lead per peristiwa', () => {
+    expect(SCORE_BINS.map((x) => x.label)).toEqual(['0–9', '10–19', '20–29', '30–39', '40–49', '50–59', '60–69', '70–79', '80–89', '90–100']);
+    expect(scoreHistogram([-5, 0, 9, 10, 99, 100, 150, null, NaN, undefined])).toEqual([3, 1, 0, 0, 0, 0, 0, 0, 0, 3]);
+    expect(scoreHistogram([])).toEqual(Array(10).fill(0));
+    const high = summarizeCandidates(list(), 'HIGH');
+    expect(high.outcomes).toMatchObject({ labeled: 3, open: 1, unlabeled: 0, success: { k: 1, n: 3 } });
+    expect(high.outcomesByFirstStage.EARLY_FORMATION).toMatchObject({ candidates: 2, labeled: 2, success: { k: 1, n: 2, p: 0.5 }, fail: { k: 1, n: 2 }, timeout: { k: 0, n: 2 } });
+    expect(high.outcomesByFirstStage.DEVELOPING_REVERSAL).toMatchObject({ candidates: 1, labeled: 0, open: 1, success: { k: 0, n: 0, p: null, ci: null } });
+    expect(high.outcomesByFirstStage.CONFIRMED_BREAKOUT).toMatchObject({ candidates: 1, labeled: 1, timeout: { k: 1, n: 1, p: 1 } });
+    expect(high.outcomesByExtended.extended).toMatchObject({ candidates: 2, labeled: 2, success: { k: 0, n: 2 }, fail: { k: 1, n: 2 }, timeout: { k: 1, n: 2 } });
+    expect(high.outcomesByExtended.notExtended).toMatchObject({ candidates: 2, labeled: 1, open: 1, success: { k: 1, n: 1, p: 1 } });
+    expect(high.firstScoreByStage.EARLY_FORMATION).toMatchObject({ n: 2, min: 12, median: 30, max: 48 });
+    expect(high.firstScoreByStage.CONFIRMED_BREAKOUT).toMatchObject({ n: 1, median: 100 });
+    expect(high.firstEvidenceByStage.EARLY_FORMATION).toMatchObject({ n: 2, median: 2.5 });
+    expect(high.firstScoreHistogramByStage).toEqual({
+      EARLY_FORMATION: [0, 1, 0, 0, 1, 0, 0, 0, 0, 0], DEVELOPING_REVERSAL: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0], CONFIRMED_BREAKOUT: [0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    });
+    expect(high.stopDistanceAtr).toMatchObject({ n: 3, min: 1, median: 2, max: 4 }); // hanya berlabel (OPEN dikecualikan)
+    expect(high.baselineRandomWalk.n).toBe(3);
+    expect(high.baselineRandomWalk.p).toBeCloseTo(0.5, 9);
+    expect(high.baselineShuffled).toEqual({ k: 3, n: 8, p: 0.375, ci: wilsonInterval(3, 8) });
+    expect(high.successMinusBaseline).toBeCloseTo(1 / 3 - 0.375, 9);
+    expect(high.failedBeforeTarget).toMatchObject({ k: 1, n: 2 }); // FAIL mfe 1,2 < 2 ya; TIMEOUT mfe 2,5 tidak; OPEN tidak berlabel
+    expect(high.leadVsOldNearest).toMatchObject({ n: 3, min: -2, median: 0, max: 4 });
+    expect(high.leadVsOldNearestMatched).toMatchObject({ k: 3, n: 4 });
+    expect(high.leadVsOldNearestPositive).toMatchObject({ k: 1, n: 3 });
+    // Filter sensitivitas ikut berlaku: MEDIUM (skor ≥ 45, bukti ≥ 3) → FAIL, TIMEOUT, OPEN.
+    const medium = summarizeCandidates(list(), 'MEDIUM');
+    expect(medium.candidates).toBe(3);
+    expect(medium.baselineShuffled).toMatchObject({ k: 2, n: 5 });
+    expect(medium.outcomesByFirstStage.EARLY_FORMATION).toMatchObject({ candidates: 1, success: { k: 0, n: 1 } });
+    expect(medium.firstScoreHistogramByStage.EARLY_FORMATION).toEqual([0, 0, 0, 0, 1, 0, 0, 0, 0, 0]);
+    // Tanpa targetAtr seri → "gagal sebelum target" tanpa data; grup kosong → semua n = 0 / null tanpa error.
+    expect(summarizeCandidates(list().map((s) => ({ ...s, targetAtr: undefined })), 'HIGH').failedBeforeTarget).toEqual(rate(0, 0));
+    const empty = summarizeCandidates([], 'HIGH');
+    expect(empty.outcomesByFirstStage.EARLY_FORMATION).toMatchObject({ candidates: 0, labeled: 0, success: { n: 0, p: null } });
+    expect(empty.outcomesByExtended.extended.candidates).toBe(0);
+    expect(empty.firstScoreHistogramByStage.EARLY_FORMATION).toEqual(Array(10).fill(0));
+    expect(empty).toMatchObject({ baselineRandomWalk: { n: 0, p: null }, baselineShuffled: { n: 0, p: null }, successMinusBaseline: null, failedBeforeTarget: { n: 0 }, leadVsOldNearest: { n: 0 } });
+  });
+
+  it('UNIT-RR-RR-002 target T-NYATA-1..3 hanya pada grup dataNyata; render bagian baru, simbol dilewati & ringkasan stdout tanpa NaN', () => {
+    const real = (symbol, timeframe, n, { success, early, lead, baseline = b(1, 3) }) => series({
+      symbol, timeframe, scenario: undefined, seed: undefined,
+      candidates: Array.from({ length: n }, (_, i) => cand({
+        firstDetectedIndex: 200 + 10 * i, firstStage: i < early ? 'EARLY_FORMATION' : 'DEVELOPING_REVERSAL', firstScore: 50 + (i % 5), firstEvidenceCount: 3 + (i % 3),
+        outcome: i < success ? 'SUCCESS' : 'FAIL', stopDistanceAtr: 1.5, baselineRandomWalk: 1.5 / 3.5, baselineShuffled: baseline, leadVsOldNearest: lead(i),
+        extendedAtDetection: i % 4 === 0, closeReason: i % 3 === 0 ? 'BREAKOUT_FAILED' : 'NO_PROGRESS', mfeAtr: i < success ? 2 : 0.8,
+      })),
+    });
+    const list = [
+      real('AAAUSDT', '15m', 40, { success: 32, early: 10, lead: (i) => (i < 30 ? 5 : -3) }), // TERPENUHI semua
+      real('AAAUSDT', '1h', 40, { success: 10, early: 2, lead: () => -3 }), // TIDAK terpenuhi semua
+      real('AAAUSDT', '5m', 0, { success: 0, early: 0, lead: () => null }), // tanpa kandidat → tanpa data
+    ];
+    const meta = {
+      source: 'binance', generatedAt: Date.UTC(2026, 9, 26), from: Date.UTC(2025, 5, 1), to: Date.UTC(2025, 9, 1),
+      symbols: ['AAAUSDT'], symbolsRequested: ['AAAUSDT', 'BBBUSDT'], topRequested: 3, symbolsSkipped: [{ symbol: 'BBBUSDT', reason: 'unduh gagal: HTTP 451' }],
+    };
+    const r = aggregateReplay({ series: list, meta });
+    expect(r.meta.timeframes).toEqual(['5m', '15m', '1h']);
+    expect(r.targets).toHaveLength((TARGET_RULES.length + REAL_DATA_TARGET_RULES.length) * 3);
+    const t = (tf) => Object.fromEntries(r.targets.filter((x) => x.timeframe === tf && x.id.startsWith('T_NYATA')).map((x) => [x.id, x]));
+    expect(t('15m').T_NYATA_1).toMatchObject({ status: 'TERPENUHI', value: 0.8, n: 40, smallSample: false, detail: { baseline: 1 / 3, baselineN: 120, ci: wilsonInterval(32, 40) } });
+    expect(t('15m').T_NYATA_2).toMatchObject({ status: 'TERPENUHI', value: 5, n: 40 });
+    expect(t('15m').T_NYATA_3).toMatchObject({ status: 'TERPENUHI', value: 0.25, n: 40 });
+    expect(t('1h').T_NYATA_1).toMatchObject({ status: 'TIDAK_TERPENUHI', value: 0.25, n: 40 });
+    expect(t('1h').T_NYATA_2).toMatchObject({ status: 'TIDAK_TERPENUHI', value: -3, n: 40 });
+    expect(t('1h').T_NYATA_3).toMatchObject({ status: 'TIDAK_TERPENUHI', value: 0.05, n: 40 });
+    expect(Object.values(t('5m')).map((x) => x.status)).toEqual(['TANPA_DATA', 'TANPA_DATA', 'TANPA_DATA']);
+    // Basis empiris kosong → T-NYATA-1 tanpa data meski SUCCESS ada.
+    const noBase = aggregateReplay({ series: [real('AAAUSDT', '15m', 40, { success: 32, early: 10, lead: () => 5, baseline: null })], meta: { source: 'binance' } });
+    expect(noBase.targets.find((x) => x.id === 'T_NYATA_1')).toMatchObject({ status: 'TANPA_DATA', n: 40 });
+    // Run sintetis (tanpa grup dataNyata) tidak mendapat target T-NYATA.
+    expect(checkTargets(aggregateReplay({ series: sample() }).groups, ['15m']).map((x) => x.id)).toEqual(TARGET_RULES.map((x) => x.id));
+
+    const md = renderReplayReport(r);
+    expect(md).not.toMatch(/NaN|undefined/);
+    expect(md).toContain('- Rentang data: 2025-06-01 00:00:00 UTC – 2025-10-01 00:00:00 UTC');
+    expect(md).toContain('- Simbol diminta: --top 3 → discovery mengembalikan 2 (filter kontrak/likuiditas discovery)');
+    expect(md).toContain('- Simbol di-replay (1): AAAUSDT');
+    expect(md).toContain('- Simbol dilewati: BBBUSDT (unduh gagal: HTTP 451)');
+    expect(renderReplayReport(aggregateReplay({ series: list, meta: { ...meta, topRequested: null, symbolsSkipped: [] } }))).toContain('- Simbol diminta: 2 (--symbols)\n- Simbol di-replay (1): AAAUSDT\n- Simbol dilewati: tidak ada');
+    expect(md).toMatch(/\| 15m \| T-NYATA-1 dataNyata: SUCCESS pada MEDIUM melampaui basis acak empiris \(CI bawah SUCCESS > basis\) \| TERPENUHI \| SUCCESS 80,0% \(CI [\d,]+–[\d,]+ %\) vs basis empiris 33,3%, n = 40 \| — \|/);
+    expect(md).toContain('| 15m | T-NYATA-2 dataNyata: median lead per peristiwa (padanan ±horizon) > 0 pada MEDIUM | TERPENUHI | median +5 candle, n = 40 | — |');
+    expect(md).toContain('| 1h | T-NYATA-3 dataNyata: kandidat pertama EARLY_FORMATION ≥ 10 % pada MEDIUM | TIDAK terpenuhi | 5,0%, n = 40 | — |');
+    expect(md).toContain('| 5m | T-NYATA-1 dataNyata: SUCCESS pada MEDIUM melampaui basis acak empiris (CI bawah SUCCESS > basis) | tanpa data | — | — |');
+    expect(md).toContain(`| 15m | dataNyata | MEDIUM | 40 | 1,50 (1,50–1,50), n = 40 | 42,9%, n = 40 | ${fmtRate(rate(40, 120))} | ${fmtRate(rate(32, 40))} | +46,7 poin |`);
+    expect(md).toContain(`| 15m | dataNyata | MEDIUM | EARLY_FORMATION | 10 | 10 | ${fmtRate(rate(10, 10))} | ${fmtRate(rate(0, 10))} | ${fmtRate(rate(0, 10))} |`);
+    expect(md).toContain(`| 15m | dataNyata | MEDIUM | terlambat (LATE_ENTRY/EXTENDED) | 10 | 10 | ${fmtRate(rate(8, 10))} |`);
+    expect(md).toContain('| 15m | dataNyata | EARLY_FORMATION | 10 | 52 (51–53), n = 10 | 50–54 | 4,0 (3,0–4,8), n = 10 | 0/0/0/0/0/10/0/0/0/0 |');
+    expect(md).toContain(`| 15m | dataNyata | 40 | ${fmtRate(rate(40, 40))} | 0 | 5 (3–5), n = 40 | ${fmtRate(rate(30, 40))} |`);
+    // Breakout gagal sebelum target (HIGH): BREAKOUT_FAILED pada i % 3 === 0 → 14 kandidat; yang FAIL (i ≥ 32: 33, 36, 39) mfe 0,8 < 2 → 3/14.
+    expect(md).toContain(`| 15m | dataNyata | 40 | 0 | 14 | 26 | 0 | 0 | 0 | ${fmtRate(rate(0, 40))} | — (n = 0) | — (n = 0) | — (n = 0) | ${fmtRate(rate(3, 14))} |`);
+    expect(md).toContain('- **Lead vs lama — semua kandidat**: setiap kandidat vs sinyal lama PERTAMA seri — hanya bermakna pada seri satu-peristiwa (sintetis)');
+    expect(md).toContain('- **Basis acak empiris**');
+    const summary = renderReplaySummary(r);
+    expect(summary).not.toMatch(/NaN|undefined/);
+    expect(summary).toContain(`basis empiris ${fmtRate(rate(40, 120))}`);
+    expect(summary).toContain('lead per peristiwa med. +5 (n = 40)');
+    expect(summary).toContain('[§10] 15m T-NYATA-2 dataNyata: median lead per peristiwa (padanan ±horizon) > 0 pada MEDIUM: TERPENUHI (median +5 candle, n = 40)');
+    expect(summary).toContain('[§10] 5m T-NYATA-3 dataNyata: kandidat pertama EARLY_FORMATION ≥ 10 % pada MEDIUM: tanpa data');
   });
 });
