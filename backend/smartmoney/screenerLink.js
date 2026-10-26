@@ -15,7 +15,9 @@
 //                          atau konfirmasi konfluensi "Struktur pasar BULLISH …" (HH + HL, backend/scoring/confluence.js)
 //     kompresi           → konfirmasi konfluensi "Rezim SQUEEZE …" (volatilitas terkompresi)
 // - Relevansi: TINGGI = keyakinan ≥ 60 dan ada sinyal LONG tier A/B; SEDANG = salah satunya; RENDAH = hanya MATCHED;
-//   TIDAK_TERHUBUNG = tidak MATCHED.
+//   TIDAK_TERHUBUNG = tidak MATCHED. Radar ber-state EXITING atau DISTRIBUTING (wallet berkualitas keluar/menjual)
+//   tidak pernah TINGGI/SEDANG: relevansi dibatasi RENDAH dengan alasan yang menyebut state tersebut — keyakinan
+//   atau sinyal LONG tidak menutupi bukti distribusi.
 // - `note` selalu memuat DISCLAIMERS.spotVsFutures.
 // Token tanpa entri di `matches` diperlakukan NOT_LISTED (mapping belum tersedia).
 
@@ -24,6 +26,11 @@ import { DISCLAIMERS } from './contracts.js';
 export const SCREENER_TIMEFRAMES = Object.freeze(['5m', '15m', '1h']);
 export const HIGH_CONVICTION = 60;
 const STRONG_TIERS = Object.freeze(['A', 'B']);
+/** State radar yang membatasi relevansi di RENDAH. */
+const BEARISH_STATES = Object.freeze({
+  EXITING: 'EXITING (wallet berkualitas keluar dari posisi)',
+  DISTRIBUTING: 'DISTRIBUTING (penjualan wallet berkualitas mendominasi)',
+});
 
 export const PATTERN_LABELS = Object.freeze({
   SA: 'kenaikan perlahan volume rendah (SA)',
@@ -104,6 +111,14 @@ export function linkToScreener(radarTokens, { matches = new Map(), activeSignals
         : binance.status === 'AMBIGUOUS'
           ? 'Mapping Binance ambigu untuk kontrak ini — tidak ditautkan ke sinyal'
           : 'Token tidak terdaftar di Binance (berdasarkan kontrak)';
+    } else if (Object.hasOwn(BEARISH_STATES, r.state)) {
+      relevance = 'RENDAH';
+      const despite = [
+        highConviction ? `keyakinan ${r.conviction}` : null,
+        strong.length ? `sinyal LONG tier ${strong.map((s) => `${s.tier} (${s.timeframe})`).join(', ')}` : null,
+      ].filter(Boolean);
+      relevanceReason = `Status radar ${BEARISH_STATES[r.state]} — relevansi dibatasi RENDAH`
+        + (despite.length ? ` walau ada ${despite.join(' dan ')}` : '');
     } else if (highConviction && strong.length) {
       relevance = 'TINGGI';
       relevanceReason = `Keyakinan ${r.conviction} ≥ ${HIGH_CONVICTION} dan ada sinyal LONG tier ${strong.map((s) => `${s.tier} (${s.timeframe})`).join(', ')}`;
