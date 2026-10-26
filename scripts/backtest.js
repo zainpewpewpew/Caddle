@@ -97,10 +97,20 @@ async function loadDataset(args) {
   if (args.source === 'synthetic') {
     const synthetic = await importOptional(SYNTHETIC_URL);
     if (!synthetic?.generateUniverse) throw new Error('backend/backtest/synthetic.js (generateUniverse) belum tersedia');
-    const universe = await synthetic.generateUniverse({
-      symbols: args.syntheticSymbols, timeframes: tfs, bars: args.syntheticBars, seed: args.seed, start: args.from,
+    // Generator membuat satu timeframe (yang terkecil); timeframe lain diagregasi dari situ (OHLCV konsisten).
+    const order = ['5m', '15m', '1h'];
+    const smallest = order.find((tf) => tfs.includes(tf));
+    const ms = { '5m': 300_000, '15m': 900_000, '1h': 3_600_000 }[smallest];
+    const universe = synthetic.generateUniverse({
+      symbols: args.syntheticSymbols, bars: args.syntheticBars, seed: args.seed, timeframe: smallest,
+      startTime: Math.floor(args.from / 3_600_000) * 3_600_000 - (Math.floor(args.from / 3_600_000) * 3_600_000) % ms,
     });
-    return normalizeUniverse(universe);
+    const out = {};
+    for (const [symbol, candles] of universe) {
+      out[symbol] = { [smallest]: candles };
+      for (const tf of tfs) if (tf !== smallest) out[symbol][tf] = synthetic.aggregateCandles(candles, tf);
+    }
+    return normalizeUniverse(out);
   }
 
   if (args.source === 'csv') {

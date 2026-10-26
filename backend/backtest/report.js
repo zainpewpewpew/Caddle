@@ -309,7 +309,9 @@ export function renderMarkdownReport(result) {
     `- Timeframe: ${Array.isArray(meta.timeframes) && meta.timeframes.length ? meta.timeframes.join(', ') : '—'}`,
     `- Rentang: ${fmtDate(meta.from)} → ${fmtDate(meta.to)}`,
     `- Target: ${isNum(meta.targetR) ? `${fmtNumber(meta.targetR, 1)}R` : '—'} · batas waktu ${isNum(meta.maxBars) ? `${meta.maxBars} candle` : '—'} · TP & SL di candle yang sama = LOSS (konservatif)`,
-    `- Validasi: walk-forward ${isNum(meta.folds) ? `${meta.folds} fold` : '—'}, embargo ${isNum(meta.embargoBars) ? `${meta.embargoBars} candle` : '—'}`,
+    typeof meta.validation === 'string'
+      ? `- Validasi: ${meta.validation}`
+      : `- Validasi: walk-forward ${isNum(meta.folds) ? `${meta.folds} fold` : '—'}, embargo ${isNum(meta.embargoBars) ? `${meta.embargoBars} candle` : '—'}`,
   ];
   if (isNum(meta.seed)) lines.push(`- Seed: ${meta.seed}`);
   for (const note of meta.notes ?? []) lines.push(`- Catatan: ${note}`);

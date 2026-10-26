@@ -260,7 +260,7 @@ describe('createAnalysisPipeline (SQLite)', () => {
   it('EDGE-PIPE-007 restart setelah candle tanpa event: candle yang sudah dievaluasi tidak di-replay (kursor analisis persisten), hanya candle baru', async () => {
     const ctx = await setup();
     const all = saThenSideways(60);
-    await feedBase({ ...ctx, pipeline: createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals }) }, all.slice(0, -1));
+    await feedBase({ ...ctx, pipeline: createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, params: MECHANICS }) }, all.slice(0, -1));
     const lastEvent = await ctx.signals.lastEventCandleTime({ symbol: SYMBOL, timeframe: '5m' });
     // Guard fixture: event terakhir (candle 89) jauh sebelum candle terakhir yang dievaluasi (134).
     expect(lastEvent).toBe(all[89].openTime);
@@ -268,11 +268,11 @@ describe('createAnalysisPipeline (SQLite)', () => {
     const events = count(ctx.db, 'signal_events');
 
     // Restart tanpa candle baru → tidak ada yang dievaluasi ulang.
-    const restarted = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals });
+    const restarted = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, params: MECHANICS });
     expect(await restarted.onClosedCandles({ symbol: SYMBOL, timeframe: '5m' })).toMatchObject({ skipped: 'ALREADY_EVALUATED' });
     // Satu candle baru → tepat satu evaluasi (bukan 135 − 89 = 46 candle sejak event terakhir).
     await ctx.repos.candles.upsertClosed([all.at(-1)], { now: NOW });
-    const r = await createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals }).onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
+    const r = await createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, params: MECHANICS }).onClosedCandles({ symbol: SYMBOL, timeframe: '5m' });
     expect(r.evaluated).toBe(1);
     expect(count(ctx.db, 'signal_events')).toBe(events);
     expect(await ctx.signals.lastEvaluatedCandleTime({ symbol: SYMBOL, timeframe: '5m' })).toBe(all.at(-1).openTime);

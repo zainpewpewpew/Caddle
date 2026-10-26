@@ -54,8 +54,8 @@ export const DEFAULT_SIGNAL_PARAMS = Object.freeze({
    * di-override eksplisit, resolveSignalParams menyalin nilai cermin hasil resolve (termasuk override-nya).
    */
   /**
-   * Tier konfluensi v3 minimum agar sinyal naik ke EARLY_BULLISH/EARLY_BEARISH (state alert pertama). Di bawahnya
-   * sinyal tetap QUIET (terlihat, tanpa alert). Hanya berlaku bila view membawa `confluence` (pipeline v3); view
+   * Tier konfluensi v3 minimum agar sinyal QUIET naik ke state alert mana pun (EARLY_*, MOMENTUM_BUILDING,
+   * BREAKOUT/BREAKDOWN) atau dibuka langsung sebagai EARLY_*. Di bawahnya sinyal tetap QUIET (terlihat, tanpa alert). Hanya berlaku bila view membawa `confluence` (pipeline v3); view
    * lama tanpa konfluensi tidak digerbang. null = gerbang mati. Default 'B': hipotesis untuk menaikkan presisi
    * (lebih sedikit sinyal, lebih selektif) yang WAJIB diverifikasi backtest (npm run backtest).
    */

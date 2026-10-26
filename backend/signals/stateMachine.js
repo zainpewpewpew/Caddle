@@ -303,6 +303,11 @@ function nextStateLong(prev, input, view, barsInState, p) {
   // Jatuh tempo sebelum candle ini (di dalam gap): kedaluwarsa dulu, tanpa promosi/alert dari harga basi.
   if (barsInState - 1 >= p.expiryBars[prev.state]) return ['EXPIRED', 'NO_PROGRESS'];
   if (prev.invalidationPrice !== null && close < prev.invalidationPrice) return ['INVALIDATED', 'CLOSE_BELOW_INVALIDATION'];
+  // Gerbang tier v3: sinyal QUIET dengan tier di bawah minEarlyTier tidak naik ke state alert mana pun (EARLY,
+  // MOMENTUM, BREAKOUT) — hanya boleh kedaluwarsa/invalid. Tanpa konfluensi (pemanggil lama) gerbang tidak berlaku.
+  if (prev.state === 'QUIET' && !tierAllowsEarly(view, p)) {
+    return barsInState >= p.expiryBars[prev.state] ? ['EXPIRED', 'NO_PROGRESS'] : [null, null];
+  }
   if (rank < STATE_RANK.BREAKOUT && resistance !== null && rvol !== null && rvol >= p.breakoutRvol
     && close > Math.max(resistance, prev.firstDetectedPrice)) return ['BREAKOUT', 'BREAKOUT_CONFIRMED'];
   if (rank < STATE_RANK.MOMENTUM_BUILDING) {
@@ -328,6 +333,11 @@ function nextStateShort(prev, input, view, barsInState, p) {
 
   if (barsInState - 1 >= p.expiryBars[prev.state]) return ['EXPIRED', 'NO_PROGRESS'];
   if (prev.invalidationPrice !== null && close > prev.invalidationPrice) return ['INVALIDATED', 'CLOSE_ABOVE_INVALIDATION'];
+  // Gerbang tier v3: sinyal QUIET dengan tier di bawah minEarlyTier tidak naik ke state alert mana pun (EARLY,
+  // MOMENTUM, BREAKDOWN) — hanya boleh kedaluwarsa/invalid. Tanpa konfluensi (pemanggil lama) gerbang tidak berlaku.
+  if (prev.state === 'QUIET' && !tierAllowsEarly(view, p)) {
+    return barsInState >= p.expiryBars[prev.state] ? ['EXPIRED', 'NO_PROGRESS'] : [null, null];
+  }
   if (rank < STATE_RANK.BREAKDOWN && support !== null && rvol !== null && rvol >= p.breakoutRvol
     && close < Math.min(support, prev.firstDetectedPrice)) return ['BREAKDOWN', 'BREAKDOWN_CONFIRMED'];
   if (rank < STATE_RANK.MOMENTUM_BUILDING) {
