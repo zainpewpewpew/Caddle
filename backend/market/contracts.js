@@ -41,6 +41,16 @@ export const SIGNAL_STATES = Object.freeze([
   'EARLY_BEARISH', 'BREAKDOWN',
 ]);
 export const TERMINAL_STATES = Object.freeze(['INVALIDATED', 'EXPIRED']);
+/**
+ * Tier keyakinan skor konfluensi v3 (backend/scoring/confluence.js): A tertinggi … D terendah. Tier adalah
+ * aturan yang dapat dijelaskan, BUKAN probabilitas; peluang historis hanya dari kalibrasi backtest.
+ */
+export const CONFIDENCE_TIERS = Object.freeze(['A', 'B', 'C', 'D']);
+/** Peringkat tier (A = 4 … D = 1); tier tidak dikenal/null = 0. */
+export function tierRank(tier) {
+  const i = CONFIDENCE_TIERS.indexOf(tier);
+  return i < 0 ? 0 : CONFIDENCE_TIERS.length - i;
+}
 export const RISK_FLAGS = Object.freeze([
   'POOR_LIQUIDITY', 'WIDE_SPREAD', 'EXCESSIVE_VOLATILITY', 'COUNTERTREND_HTF', 'EXTENDED_PRICE', 'DATA_QUALITY',
 ]);

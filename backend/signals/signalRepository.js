@@ -13,7 +13,8 @@
 // explanation_json sebagai { factors: [...penjelasan skor], tracking: {...} }.
 
 import {
-  ALIGNMENTS, DIRECTIONS, RISK_FLAGS, SIGNAL_STATES, TERMINAL_STATES, TIMEFRAMES, TIMEFRAME_MS, resolveDirection,
+  ALIGNMENTS, CONFIDENCE_TIERS, DIRECTIONS, RISK_FLAGS, SIGNAL_STATES, TERMINAL_STATES, TIMEFRAMES, TIMEFRAME_MS, resolveDirection,
+  tierRank,
 } from '../market/contracts.js';
 import { MONITORING_STOP_REASONS, PATTERN_STATES, PATTERN_STATES_BY_DIRECTION } from './params.js';
 
@@ -86,6 +87,13 @@ function assertSnapshot(s) {
   if (s.alignment !== null && s.alignment !== undefined && !ALIGNMENTS.includes(s.alignment)) throw new RangeError('snapshot.alignment tidak valid');
   if (!Array.isArray(s.riskFlags) || s.riskFlags.some((f) => !RISK_FLAGS.includes(f))) throw new RangeError('snapshot.riskFlags harus subset RISK_FLAGS');
   if (!Number.isInteger(s.lastCandleTime)) throw new TypeError('snapshot.lastCandleTime harus bilangan bulat');
+  if (s.confluenceScore !== undefined && s.confluenceScore !== null) assertScore(s.confluenceScore, 'confluenceScore');
+  if (s.confidenceTier !== undefined && s.confidenceTier !== null && !CONFIDENCE_TIERS.includes(s.confidenceTier)) {
+    throw new RangeError('snapshot.confidenceTier tidak valid');
+  }
+  if (s.winProbability !== undefined && s.winProbability !== null && !(isFiniteNumber(s.winProbability) && s.winProbability >= 0 && s.winProbability <= 1)) {
+    throw new RangeError('snapshot.winProbability harus 0..1 atau null');
+  }
   return direction;
 }
 
@@ -137,7 +145,14 @@ function toSnapshot(row) {
     barsInState: tracking?.barsInState ?? 0,
     peakPrice: tracking?.peakPrice ?? row.first_detected_price,
     peakState: tracking?.peakState ?? row.state,
+    ...confluenceOfRow(row),
   };
+}
+
+/** Kolom konfluensi v3 (migrasi 006) → field snapshot/view; baris tanpa skor konfluensi tidak menambah field. */
+function confluenceOfRow(row) {
+  if (row.confluence_score === null || row.confluence_score === undefined) return {};
+  return { confluenceScore: row.confluence_score, confidenceTier: row.confidence_tier, winProbability: row.win_probability ?? null };
 }
 
 function toView(row) {
@@ -165,6 +180,9 @@ function toView(row) {
     finalOutcome: row.final_outcome,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
+    confluenceScore: row.confluence_score ?? null,
+    confidenceTier: row.confidence_tier ?? null,
+    winProbability: row.win_probability ?? null,
   };
 }
 
@@ -190,15 +208,16 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
     insertSignal: db.prepare(`INSERT INTO signals
       (symbol_id, timeframe, direction, pattern_definition_id, classification, state, first_detected_at, first_detected_price,
        invalidation_price, pattern_score, early_score, alignment, risk_flags_json, explanation_json, final_outcome,
-       updated_at, closed_at)
+       updated_at, closed_at, confluence_score, confidence_tier, win_probability)
       VALUES (@symbolId, @timeframe, @direction, @definitionId, @classification, @state, @firstDetectedAt, @firstDetectedPrice,
        @invalidationPrice, @patternScore, @earlyScore, @alignment, @riskFlagsJson, @explanationJson, @finalOutcome,
-       @updatedAt, @closedAt)`),
+       @updatedAt, @closedAt, @confluenceScore, @confidenceTier, @winProbability)`),
     updateSignal: db.prepare(`UPDATE signals SET
       classification = @classification, state = @state, invalidation_price = @invalidationPrice,
       pattern_score = @patternScore, early_score = @earlyScore, alignment = @alignment,
       risk_flags_json = @riskFlagsJson, explanation_json = @explanationJson, final_outcome = @finalOutcome,
-      updated_at = @updatedAt, closed_at = @closedAt
+      updated_at = @updatedAt, closed_at = @closedAt,
+      confluence_score = @confluenceScore, confidence_tier = @confidenceTier, win_probability = @winProbability
       WHERE id = @id AND closed_at IS NULL`),
     insertEvent: db.prepare(`INSERT INTO signal_events
       (signal_id, occurred_at, candle_time, from_state, to_state, price, detail_json)
@@ -214,7 +233,9 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
         AND (@state IS NULL OR s.state = @state)
         AND (@alignment IS NULL OR s.alignment = @alignment)
         AND (@minScore IS NULL OR s.pattern_score >= @minScore)
-      ORDER BY s.pattern_score DESC, s.updated_at DESC, s.id DESC
+        AND (@minTierRank IS NULL OR (CASE s.confidence_tier WHEN 'A' THEN 4 WHEN 'B' THEN 3 WHEN 'C' THEN 2 WHEN 'D' THEN 1 ELSE 0 END) >= @minTierRank)
+      ORDER BY (CASE s.confidence_tier WHEN 'A' THEN 4 WHEN 'B' THEN 3 WHEN 'C' THEN 2 WHEN 'D' THEN 1 ELSE 0 END) DESC,
+        COALESCE(s.confluence_score, -1) DESC, s.pattern_score DESC, s.updated_at DESC, s.id DESC
       LIMIT @limit`),
     // Dua statement (tanpa / dengan simbol) agar masing-masing memakai indeks migrasi 004:
     // bentuk `(@symbol IS NULL OR …)` memaksa SCAN seluruh tabel (+ sort sementara) pada setiap request.
@@ -328,6 +349,10 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       earlyScore: snapshot.earlyScore ?? null,
       alignment: snapshot.alignment ?? null,
       riskFlagsJson: JSON.stringify(snapshot.riskFlags),
+      // Konfluensi v3 (migrasi 006); snapshot lama/v2 tanpa field ini → NULL.
+      confluenceScore: isFiniteNumber(snapshot.confluenceScore) ? snapshot.confluenceScore : null,
+      confidenceTier: snapshot.confidenceTier ?? null,
+      winProbability: isFiniteNumber(snapshot.winProbability) ? snapshot.winProbability : null,
       finalOutcome: terminal ? `${snapshot.state}:${snapshot.peakState ?? 'UNKNOWN'}` : null,
       updatedAt,
       closedAt: terminal ? (event?.occurredAt ?? updatedAt) : null,
@@ -568,10 +593,11 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
      */
     async listActive(filters = {}) {
       if (filters === null || typeof filters !== 'object') throw new TypeError('filter harus objek');
-      const allowed = ['direction', 'timeframe', 'classification', 'state', 'alignment', 'minScore', 'limit'];
+      const allowed = ['direction', 'timeframe', 'classification', 'state', 'alignment', 'minScore', 'minTier', 'limit'];
       for (const key of Object.keys(filters)) if (!allowed.includes(key)) throw new TypeError(`Filter tidak dikenal: ${key}`);
       const {
-        direction = 'LONG', timeframe = null, classification = null, state = null, alignment = null, minScore = null, limit = 200,
+        direction = 'LONG', timeframe = null, classification = null, state = null, alignment = null, minScore = null, minTier = null,
+        limit = 200,
       } = filters;
       assertDirection(direction);
       if (timeframe !== null) assertTimeframe(timeframe);
@@ -580,8 +606,11 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       // Alignment null (konteks HTF tidak diketahui) tidak dapat dipilih sebagai filter; tanpa filter tetap tampil.
       if (alignment !== null && !ALIGNMENTS.includes(alignment)) throw new RangeError('Filter alignment tidak valid');
       if (minScore !== null && !(isFiniteNumber(minScore) && minScore >= 0 && minScore <= 100)) throw new RangeError('minScore harus 0..100');
+      // minTier (v3): hanya sinyal dengan tier konfluensi ≥ minTier; sinyal lama tanpa tier tersaring keluar.
+      if (minTier !== null && !CONFIDENCE_TIERS.includes(minTier)) throw new RangeError('minTier harus A/B/C/D');
       assertLimit(limit, ACTIVE_MAX);
-      return stmt.listActive.all({ direction, timeframe, classification, state, alignment, minScore, limit }).map(toView);
+      const minTierRank = minTier === null ? null : tierRank(minTier);
+      return stmt.listActive.all({ direction, timeframe, classification, state, alignment, minScore, minTierRank, limit }).map(toView);
     },
 
     /**

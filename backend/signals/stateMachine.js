@@ -85,7 +85,8 @@
 
 import { atr as atrSeries, confirmedAt, findSwings, rvol as rvolSeries } from '../indicators/index.js';
 import {
-  ALIGNMENTS, PATTERN_KEYS_BY_DIRECTION, RISK_FLAGS, SIGNAL_STATES, TERMINAL_STATES, TIMEFRAME_MS, resolveDirection,
+  ALIGNMENTS, CONFIDENCE_TIERS, PATTERN_KEYS_BY_DIRECTION, RISK_FLAGS, SIGNAL_STATES, TERMINAL_STATES, TIMEFRAME_MS,
+  resolveDirection, tierRank,
 } from '../market/contracts.js';
 import { collectRiskFlags, directionOf, relevantResults, selectScores } from '../scoring/index.js';
 import {
@@ -144,6 +145,32 @@ function assertSnapshot(prev) {
   return direction;
 }
 
+/**
+ * Ringkasan konfluensi v3 dari view ({ score, tier, probability }) atau null bila view tidak membawanya (pemanggil
+ * lama/backtest v2). Nilai di luar kontrak ditolak agar tier palsu tidak pernah membuka gerbang EARLY.
+ */
+function confluenceOf(view) {
+  const c = view.confluence;
+  if (c === undefined || c === null) return null;
+  if (typeof c !== 'object' || !isFiniteNumber(c.score) || c.score < 0 || c.score > 100 || !CONFIDENCE_TIERS.includes(c.tier)) {
+    throw new RangeError('view.confluence harus { score 0..100, tier A/B/C/D }');
+  }
+  const prob = c.calibration?.probability;
+  return { score: c.score, tier: c.tier, probability: isFiniteNumber(prob) ? prob : null };
+}
+
+/** Gerbang tier v3 untuk state EARLY: lolos bila tidak ada konfluensi (perilaku lama) atau gerbang dimatikan. */
+function tierAllowsEarly(view, p) {
+  if (view.confluence === null || p.minEarlyTier === null) return true;
+  return tierRank(view.confluence.tier) >= tierRank(p.minEarlyTier);
+}
+
+/** Field konfluensi snapshot — hanya ditambahkan bila view membawa konfluensi (bentuk snapshot lama tidak berubah). */
+function confluenceFields(view) {
+  if (view.confluence === null) return {};
+  return { confluenceScore: view.confluence.score, confidenceTier: view.confluence.tier, winProbability: view.confluence.probability };
+}
+
 /** Skor & risk flag saat ini: dari signal view bila diberikan, bila tidak diturunkan dari pola + konteks. */
 function currentView(input) {
   const { view } = input;
@@ -154,11 +181,11 @@ function currentView(input) {
     if (!Array.isArray(view.riskFlags) || view.riskFlags.some((f) => !RISK_FLAGS.includes(f))) {
       throw new RangeError('view.riskFlags harus subset RISK_FLAGS');
     }
-    return { patternScore: view.patternScore, earlyScore: view.earlyScore, riskFlags: [...view.riskFlags] };
+    return { patternScore: view.patternScore, earlyScore: view.earlyScore, riskFlags: [...view.riskFlags], confluence: confluenceOf(view) };
   }
   const s = selectScores(input.patterns);
   const { flags } = collectRiskFlags({ patterns: input.patterns, timeframe: input.candle.timeframe, context: input.context });
-  return { patternScore: s.patternScore, earlyScore: s.earlyScore, riskFlags: flags };
+  return { patternScore: s.patternScore, earlyScore: s.earlyScore, riskFlags: flags, confluence: null };
 }
 
 const RESULT_FIELD = Object.freeze({ SA: 'sa', PVA: 'pva', SD: 'sd', PVD: 'pvd' });
@@ -194,6 +221,7 @@ function idle(prev, input, view, direction) {
     lastCandleTime: candle.openTime, lastEvaluatedAt: candle.closeTime,
     barsInState: continuing ? prev.barsInState + barsElapsed(prev, candle) : 0,
     peakPrice: null, peakState: 'NO_PATTERN',
+    ...confluenceFields(view),
   };
 }
 
@@ -222,7 +250,7 @@ function open(prev, input, p, direction) {
     return { next: idle(prev, input, view, direction), event: null, alert: false };
   }
 
-  const state = view.earlyScore >= p.earlyMinScore ? EARLY_STATE[direction] : 'QUIET';
+  const state = view.earlyScore >= p.earlyMinScore && tierAllowsEarly(view, p) ? EARLY_STATE[direction] : 'QUIET';
   const next = {
     direction,
     state, classification: patterns.classification, patternKey: primary.pattern, patternVersion: primary.version,
@@ -230,12 +258,13 @@ function open(prev, input, p, direction) {
     patternScore: view.patternScore, earlyScore: view.earlyScore, alignment: context?.alignment ?? null, riskFlags: view.riskFlags,
     lastCandleTime: candle.openTime, lastEvaluatedAt: candle.closeTime, barsInState: 0,
     peakPrice: candle.close, peakState: state,
+    ...confluenceFields(view),
   };
   const event = {
     fromState: 'NO_PATTERN', toState: state, candleTime: candle.openTime, occurredAt: candle.closeTime, price: candle.close,
     reason: state === 'QUIET' ? 'PATTERN_DETECTED' : 'PATTERN_DETECTED_EARLY',
     detail: { ...marketDetail(input.market ?? {}, direction), patternKey: primary.pattern, patternVersion: primary.version,
-      patternScore: view.patternScore, earlyScore: view.earlyScore, invalidationPrice },
+      patternScore: view.patternScore, earlyScore: view.earlyScore, invalidationPrice, ...confluenceFields(view) },
   };
   return { next, event, alert: ALERT_STATES_BY_DIRECTION[direction].includes(state) };
 }
@@ -280,7 +309,7 @@ function nextStateLong(prev, input, view, barsInState, p) {
     if (atr !== null && atr > 0 && close >= prev.firstDetectedPrice + p.momentumAtrMultiple * atr) return ['MOMENTUM_BUILDING', 'PRICE_ATR_ADVANCE'];
     if (rvol !== null && rvol >= p.momentumRvol && close > prev.firstDetectedPrice) return ['MOMENTUM_BUILDING', 'RVOL_EXPANSION'];
   }
-  if (prev.state === 'QUIET' && patterns.classification !== 'NONE' && view.earlyScore >= p.earlyMinScore) {
+  if (prev.state === 'QUIET' && patterns.classification !== 'NONE' && view.earlyScore >= p.earlyMinScore && tierAllowsEarly(view, p)) {
     return ['EARLY_BULLISH', 'EARLY_SCORE_THRESHOLD'];
   }
   if (barsInState >= p.expiryBars[prev.state]) return ['EXPIRED', 'NO_PROGRESS'];
@@ -305,7 +334,7 @@ function nextStateShort(prev, input, view, barsInState, p) {
     if (atr !== null && atr > 0 && close <= prev.firstDetectedPrice - p.momentumAtrMultiple * atr) return ['MOMENTUM_BUILDING', 'PRICE_ATR_DECLINE'];
     if (rvol !== null && rvol >= p.momentumRvol && close < prev.firstDetectedPrice) return ['MOMENTUM_BUILDING', 'RVOL_EXPANSION'];
   }
-  if (prev.state === 'QUIET' && patterns.classification !== 'NONE' && view.earlyScore >= p.earlyMinScore) {
+  if (prev.state === 'QUIET' && patterns.classification !== 'NONE' && view.earlyScore >= p.earlyMinScore && tierAllowsEarly(view, p)) {
     return ['EARLY_BEARISH', 'EARLY_SCORE_THRESHOLD'];
   }
   if (barsInState >= p.expiryBars[prev.state]) return ['EXPIRED', 'NO_PROGRESS'];
@@ -323,6 +352,7 @@ function advance(prev, input, p, direction) {
     classification: mergeClassification(prev.classification, patterns.classification),
     patternScore: view.patternScore, earlyScore: view.earlyScore,
     alignment: context?.alignment ?? null, riskFlags: view.riskFlags,
+    ...confluenceFields(view),
     lastCandleTime: candle.openTime, lastEvaluatedAt: candle.closeTime,
     barsInState,
     // Ekskursi searah sinyal: LONG harga tertinggi, SHORT harga terendah.
@@ -349,7 +379,7 @@ function advance(prev, input, p, direction) {
   const event = {
     fromState: prev.state, toState, candleTime: candle.openTime, occurredAt: candle.closeTime, price: candle.close, reason,
     detail: { ...marketDetail(input.market ?? {}, direction), invalidationPrice: prev.invalidationPrice, firstDetectedPrice: prev.firstDetectedPrice,
-      barsInPrevState: barsInState, patternScore: view.patternScore, earlyScore: view.earlyScore,
+      barsInPrevState: barsInState, patternScore: view.patternScore, earlyScore: view.earlyScore, ...confluenceFields(view),
       ...(elapsed > 1 ? { gapBars: elapsed - 1 } : {}) },
   };
   const alertStates = ALERT_STATES_BY_DIRECTION[direction];
@@ -366,7 +396,10 @@ function advance(prev, input, p, direction) {
  *   direction?: 'LONG'|'SHORT',
  *   context?: { alignment: string|null },
  *   market?: { atr?: number|null, rvol?: number|null, resistance?: number|null, support?: number|null },
- *   view?: { patternScore: number, earlyScore: number, riskFlags: string[] } }} input
+ *   view?: { patternScore: number, earlyScore: number, riskFlags: string[],
+ *     confluence?: { score: number, tier: 'A'|'B'|'C'|'D', calibration?: { probability: number }|null } } }} input
+ *   view.confluence (pipeline v3): tier < params.minEarlyTier menahan sinyal di QUIET (tanpa alert); snapshot & event
+ *   membawa confluenceScore, confidenceTier, winProbability. Tanpa view.confluence perilaku identik versi lama.
  *   direction: default arah `patterns` (tanpa keduanya = LONG). SHORT memakai market.support & candle.low.
  * @param {object} [params] override DEFAULT_SIGNAL_PARAMS
  * @returns {{ next: object, event: object|null, alert: boolean }} next.direction = arah sinyal
