@@ -85,7 +85,7 @@ function buyersTable(item) {
       {
         key: 'txs', label: 'Transaksi', sortable: false, render: (b) => h('ul', { class: 'sm-txs' }, (b.txs ?? []).slice(0, 8).map((t) => h('li', null,
           typeBadge(t.type), ' ', usdText(t.usd), ' ', h('span', { class: 'muted', title: formatUtc(t.at) }, formatRelative(t.at)), ' ',
-          txLink(t.explorerUrl ?? explorerTxUrl(item.chain, t.txHash), t.txHash)))),
+          txLink(t.explorerUrl ?? explorerTxUrl(item.chain, t.txHash), t.txHash), simBadge(t.isSimulated)))),
       },
     ],
     rows: buyers,
@@ -105,7 +105,8 @@ export function evidencePanel(item, meta) {
       h('h4', { class: 'sm-h' }, 'Indikasi keluar'),
       h('ul', { class: 'sm-txs' }, exits.map((e) => h('li', null,
         typeBadge(e.type), ' ', addressLink(e.wallet, smartWalletHref(item.chain, e.wallet)), ' ', usdText(e.usd), ' ',
-        h('span', { class: 'muted' }, formatRelative(e.at)), ' ', txLink(e.explorerUrl ?? explorerTxUrl(item.chain, e.txHash), e.txHash))))),
+        h('span', { class: 'muted' }, formatRelative(e.at)), ' ', txLink(e.explorerUrl ?? explorerTxUrl(item.chain, e.txHash), e.txHash),
+        simBadge(e.isSimulated))))),
     h('div', { class: 'grid grid--2 sm-reasons' },
       h('div', null, h('h4', { class: 'sm-h' }, 'Alasan'), textList(item.reasons, { empty: h('p', { class: 'muted' }, EMPTY) })),
       h('div', null, h('h4', { class: 'sm-h' }, 'Risiko'), textList(item.risks, { className: 'sm-list sm-list--risk', empty: h('p', { class: 'muted' }, 'Tidak ada risiko tercatat.') }))),

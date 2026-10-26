@@ -129,6 +129,21 @@ volume progresif (PVA)*, *breakout akumulasi*, *higher low (struktur naik)*, *ko
 **Buka chart** membuka Symbol Intelligence simbol futures itu (15m, LONG). Panel **Evaluasi historis radar** di bawah
 halaman dijelaskan di §4.
 
+#### Peta Benang
+
+Tombol **Daftar | Peta Benang** di atas hasil radar menampilkan data yang sama sebagai graf: wallet di kiri, token di
+kanan, dan satu benang per pasangan wallet → token. Pilihan tersimpan di alamat halaman (`#/smart-money?view=benang`),
+jadi tetap terbuka setelah reload. Filter radar (jendela, chain, dan lainnya) tetap berlaku.
+
+- **Warna benang:** hijau = beli via swap; merah/jingga = indikasi keluar (jual via swap atau setor ke exchange — setoran
+  ke exchange *belum tentu dijual*). Benang putus-putus = nilai USD tidak diketahui (tidak pernah dianggap 0).
+- **Tebal benang** mengikuti nilai net beli USD (skala log). **Wallet tertaut** (satu klaster, mis. `K1`) dikelompokkan
+  dan dihitung sebagai satu pembeli independen.
+- Arahkan kursor atau fokus keyboard ke wallet/token untuk menyorot benangnya. Klik benang untuk panel **Bukti benang**
+  (jumlah beli/jual, net USD, waktu, link transaksi). Klik wallet/token untuk membuka profil atau detail token.
+- Agar tetap terbaca, peta menampilkan token dengan skor keyakinan tertinggi dan wallet terbaiknya, dengan keterangan
+  "Menampilkan X dari Y". Animasi aliran benang mati bila sistem meminta gerak dikurangi.
+
 ### 2.2 Wallet Discovery
 
 Daftar wallet yang dilacak, urut skor tertinggi. Filter: chain, gaya (Scalper: median lama pegang < 1 jam, Swing:
