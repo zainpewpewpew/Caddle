@@ -144,15 +144,26 @@ daun, λ = 5) dan **tidak di-tuning** pada data uji. Setiap kandidat tambahan me
 | Opsi | Kelebihan | Kekurangan untuk AlphaLens | Putusan |
 | --- | --- | --- | --- |
 | **JS murni** (dipilih) | Tanpa dependensi, tanpa biner native, jalan di Mac & cloud, deterministik, mudah diuji | Harus menulis & menguji sendiri (±400 baris) | ✅ Cukup untuk ribuan–puluhan ribu baris × 31 fitur |
-| `onnxruntime-node` | Menjalankan model LightGBM/XGBoost/NN yang diekspor (ONNX-ML) | Biner native besar; perlu pipeline Python untuk melatih & mengekspor | Hanya bila nanti butuh model besar |
-| `@tensorflow/tfjs-node` | DL di Node | Biner native, perawatan melambat, sangat besar | ❌ |
+| `onnxruntime-node` | Menjalankan model LightGBM/XGBoost/NN yang diekspor (ONNX-ML) | ±290 MB; **tidak ada biner Mac Intel** sejak 1.24; perlu pipeline Python untuk melatih & mengekspor | Hanya bila nanti butuh model besar |
+| `onnxruntime-web` (WASM) | Jalan di semua platform, tanpa skrip instalasi | ±2× lebih lambat dari native (masih ±1 ms per 300 baris); tetap butuh Python untuk melatih | Cadangan terbaik bila kelak pakai LightGBM |
+| `@tensorflow/tfjs-node` | DL di Node | Skrip instalasi mengunduh libtensorflow → gagal dengan `ignore-scripts=true`; tanpa rilis stabil sejak 10-2024 | ❌ |
 | `@tensorflow/tfjs` (JS murni) | Tanpa native | Lambat untuk melatih; tidak dibutuhkan model kecil | ❌ |
 | Paket ml.js (`ml-logistic-regression`, `ml-random-forest`, dll.) | Pure JS | Banyak yang jarang dirawat; tidak ada boosting yang matang | ❌ |
 | Sidecar Python (LightGBM, scikit-learn) | Ekosistem terbaik | Anda harus memasang & menjalankan Python di Mac; dua runtime, dua sumber kebenaran | Hanya untuk riset offline bila diperlukan |
 
-Detail versi/ukuran/lisensi yang terverifikasi dari registry npm ada di §6a.
+### 6a. Fakta yang diuji di lingkungan cloud (Linux 4 vCPU, Node 22)
 
-<!-- RUNTIME_FACTS -->
+- `onnxruntime-node` 1.30.0 (MIT): biner CPU untuk darwin-arm64 & linux-x64 sudah dibundel, bisa dipasang dengan
+  `ignore-scripts=true`; darwin-x64 (Mac Intel) terakhir ada di 1.23.2.
+- `onnxruntime-web` 1.30.0 (MIT): terpasang tanpa skrip, berjalan dari ESM biasa. Model LightGBM yang diekspor via
+  onnxmltools memberi prediksi yang sama dengan LightGBM aslinya.
+- Paket npm `lightgbm`/`xgboost` butuh build cmake-js/node-gyp (bertentangan dengan `.npmrc` proyek). `ml-random-forest`:
+  20 pohon pada 3 ribu baris butuh 48 detik. `ml-xgboost` tidak dirawat sejak 2022.
+- **JS murni cukup cepat**: 50 ribu baris × 40 fitur — regresi logistik IRLS 0,75 detik, GBDT 200 pohon 7,3 detik.
+- Bila kelak pakai LightGBM dari Python: ekspor JSON-nya bisa dibaca ±15 baris JS (prediksi identik) tanpa dependensi.
+  LightGBM di Mac butuh `brew install libomp` — hambatan untuk pemakaian sehari-hari.
+- DL: satu epoch LSTM(32) atas 200 ribu sekuens ±8,7 menit (tfjs WASM) s/d 38 menit (tfjs JS murni) → melatih ulang
+  rutin di Node tidak praktis. Inferensi murah (300 sekuens ±3–11 ms).
 
 ## 7. Protokol evaluasi (tanpa lookahead) dan aturan adopsi
 
