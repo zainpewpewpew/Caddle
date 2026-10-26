@@ -25,7 +25,7 @@ describe('alur positif API', () => {
     expect(res.database.status).toBe('ok');
     expect(res.database.schemaVersion).toBe(5);
     expect(res.memory.rssBytes).toBeGreaterThan(0);
-    expect(res.scanner).toEqual({ status: 'not_running', heartbeatAt: null });
+    expect(res.scanner).toEqual({ status: 'not_running', heartbeatAt: null, sync: null });
     expect(res.binance).toEqual({ status: 'unknown', ws: null });
     expect(res.ingestion).toEqual({ lastRun: null, recentErrors: [] });
   });

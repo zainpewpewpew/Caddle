@@ -1046,3 +1046,284 @@ th[aria-sort="descending"] .sort-btn::after {
 .worker-bar__confirm {
   flex: 1 1 100%;
 }
+
+/* ---- Proses sync scanner (frontend/js/views/syncProgress.js, docs/09-proses-sync.md) ---- */
+/* Header panel boleh membungkus: badge langkah dapat lebih panjang dari judul di layar sempit. */
+#sync-progress .panel__header {
+  flex-wrap: wrap;
+}
+
+#sync-progress .panel__actions .status {
+  white-space: normal;
+}
+
+.sync-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-4);
+  min-width: 0;
+}
+
+.sync-progress__message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  color: var(--lr-text-2);
+}
+
+.sync-progress__message:empty {
+  display: none;
+}
+
+.sync-progress__subtitle {
+  margin-bottom: var(--lr-space-2);
+  color: var(--lr-text);
+  font-size: var(--lr-text-sm);
+  font-weight: var(--lr-weight-semibold);
+}
+
+/* Stepper vertikal: penanda + garis penghubung, detail & bar di bawah label. */
+.sync-steps {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sync-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: var(--lr-space-3);
+  padding-bottom: var(--lr-space-4);
+}
+
+.sync-step:last-child {
+  padding-bottom: 0;
+}
+
+.sync-step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 22px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--lr-border-subtle);
+}
+
+.sync-step[data-state="done"]:not(:last-child)::before {
+  background: var(--lr-bull-line);
+}
+
+.sync-step__marker {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--lr-border-strong);
+  border-radius: 50%;
+  background: var(--lr-surface);
+}
+
+.sync-step[data-state="done"] .sync-step__marker {
+  border-color: var(--lr-bull);
+  background: var(--lr-bull);
+}
+
+/* Tanda centang. */
+.sync-step[data-state="done"] .sync-step__marker::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--lr-text-inverse);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Langkah aktif: cincin berputar. */
+.sync-step[data-state="active"] .sync-step__marker {
+  border-color: var(--lr-accent-soft);
+}
+
+.sync-step[data-state="active"] .sync-step__marker::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border: 2px solid transparent;
+  border-top-color: var(--lr-accent);
+  border-right-color: var(--lr-accent);
+  border-radius: 50%;
+  animation: lr-sync-spin 0.9s linear infinite;
+}
+
+/* Langkah live (stream & analisis berjalan terus): titik hijau berdenyut. */
+.sync-step[data-state="live"] .sync-step__marker {
+  border-color: var(--lr-bull);
+  background: var(--lr-bull-soft);
+}
+
+.sync-step[data-state="live"] .sync-step__marker::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--lr-bull);
+}
+
+.sync-step[data-state="live"] .sync-step__marker::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 1px solid var(--lr-bull);
+  border-radius: 50%;
+  opacity: 0;
+  animation: lr-pulse 2.4s var(--lr-ease) infinite;
+}
+
+@keyframes lr-sync-spin {
+  to { transform: rotate(360deg); }
+}
+
+.sync-step__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-1);
+  min-width: 0;
+}
+
+.sync-step__label {
+  color: var(--lr-text);
+  font-weight: var(--lr-weight-medium);
+  line-height: 18px;
+}
+
+.sync-step[data-state="pending"] .sync-step__label {
+  color: var(--lr-text-3);
+  font-weight: var(--lr-weight-regular);
+}
+
+.sync-step__detail {
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.sync-step__detail[data-tone="warn"] {
+  color: var(--lr-warn);
+}
+
+.sync-step__bar {
+  max-width: 28rem;
+  margin-top: var(--lr-space-1);
+}
+
+.sync-step__bar:empty {
+  display: none;
+}
+
+/* Bar progres determinate (backfill: seri selesai / seri direncanakan). */
+.sync-bar {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--lr-radius-pill);
+  background: var(--lr-accent-soft);
+}
+
+.sync-bar__fill {
+  display: block;
+  width: calc(var(--lr-sync-pct, 0) * 1%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--lr-accent);
+  transition: width var(--lr-dur-slow) var(--lr-ease);
+}
+
+.sync-facts dd {
+  min-width: 0;
+}
+
+.sync-errors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--lr-text-xs);
+}
+
+.sync-errors li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--lr-space-2) var(--lr-space-3);
+  border-left: 2px solid var(--lr-bear-line);
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-surface-2);
+}
+
+.sync-errors__meta {
+  color: var(--lr-text-3);
+}
+
+.sync-errors__msg {
+  color: var(--lr-text-2);
+  overflow-wrap: anywhere;
+}
+
+/* Varian ringkas satu baris (di samping tombol Jalankan/Hentikan scanner). */
+.sync-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  min-width: 0;
+  max-width: 100%;
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+}
+
+.sync-inline__state .status {
+  color: var(--lr-text);
+}
+
+.sync-inline__bar {
+  flex: 0 0 4.5rem;
+  width: 4.5rem;
+}
+
+.sync-inline__bar:empty {
+  display: none;
+}
+
+.sync-inline__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Tanpa gerakan: cincin penuh statis menandakan langkah aktif; denyut live & transisi lebar dimatikan. */
+  .sync-step[data-state="active"] .sync-step__marker::after {
+    border-color: var(--lr-accent);
+    animation: none;
+  }
+
+  .sync-step[data-state="live"] .sync-step__marker::before {
+    animation: none;
+  }
+
+  .sync-bar__fill {
+    transition: none;
+  }
+}
+

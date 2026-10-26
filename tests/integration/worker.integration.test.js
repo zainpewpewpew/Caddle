@@ -668,6 +668,11 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       state: {
         state: 'running', lastIngestionAt: START, candleLagMs: 7_001, reconnects: 0, errors: 0, scanDurationMs: 0, queue: 0,
         symbols: 2, streams: 6, staleStreams: 0, ws: 'open', gaps: 0, duplicates: 0, clockOffsetMs: 0, clockFault: null,
+        // Progres sync siklus start: 6 seri di-backfill, candle tersimpan = candles recordRun; bootstrap tidak dianalisis.
+        sync: expect.objectContaining({
+          step: 'live', cycle: 'initial', streamsTotal: 6, streamsDone: 6, streamsFailed: 0, candlesStored: 136,
+          symbolsDiscovered: 2, lastCandleAt: START - 7_001, lastAnalysisAt: null,
+        }),
       },
     });
 

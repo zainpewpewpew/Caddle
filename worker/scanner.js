@@ -24,6 +24,9 @@
 // `closureClock` (default = clock; worker: serverClock.closureNow) khusus untuk keputusan "sudah tertutup" di
 // rencana REST (bootstrap, gap, repair, sweep): tidak pernah di depan waktu server saat jam host diketahui salah.
 // Semua timer lewat setTimer/clearTimer injeksi.
+// Progres sync (status().sync, docs/09-proses-sync.md): langkah clock → discovery → bootstrap → live beserta hitungan
+// siklus. Selama clock/discovery/bootstrap, perubahan progres memicu "heartbeat progres" (paling cepat tiap
+// progressHeartbeatMs, trailing) di samping heartbeat 30 detik, agar UI dapat menampilkan proses sync secara langsung.
 
 import { HIGHER_TIMEFRAMES, TIMEFRAMES, TIMEFRAME_MS, expectedCloseTime } from '../backend/market/contracts.js';
 import { CLOSE_MARGIN_MS, MAX_KLINES_PER_REQUEST, lastClosedOpenTime, planBackfill, planGapFill } from '../backend/ingestion/backfill.js';
@@ -31,6 +34,8 @@ import { REJECT_REASONS } from '../backend/ingestion/symbolDiscovery.js';
 
 export const SCANNER_DEFAULTS = Object.freeze({
   heartbeatMs: 30_000,
+  // Jarak minimum heartbeat progres selama sinkron jam/discovery/backfill (tidak pernah saat live).
+  progressHeartbeatMs: 2_000,
   rediscoveryMs: 3_600_000,
   discoveryRetryMs: 60_000,
   restConcurrency: 3,
@@ -54,6 +59,9 @@ const MESSAGE_MAX = 500;
 const DELIVERY_SYMBOL = /^[A-Z0-9]+_\d{6}$/;
 const SKIPPED_LOG_MAX = 20;
 const noopLogger = Object.freeze({ debug() {}, info() {}, warn() {}, error() {} });
+// Langkah status().sync.step: idle | clock | discovery | bootstrap | live | stopping | stopped. Hanya langkah siklus
+// (sebelum live) yang memicu heartbeat progres.
+const PROGRESS_STEPS = new Set(['clock', 'discovery', 'bootstrap']);
 
 class ScannerStopped extends Error {
   constructor() {
@@ -289,6 +297,18 @@ export function createScanner({
   let clockFault = null;
   let cycleStats = null;
   const counters = { gaps: 0, duplicates: 0 };
+  /**
+   * Progres sync untuk status().sync: langkah saat ini + hitungan siklus berjalan/terakhir (di-reset di awal
+   * runCycle; null = belum diketahui di siklus ini). Stempel cycleStartedAt/updatedAt memakai localClock.
+   */
+  const sync = {
+    step: 'idle', cycle: null, cycleStartedAt: null, streamsTotal: null, streamsDone: null, streamsFailed: null,
+    candlesStored: null, symbolsDiscovered: null, updatedAt: null,
+  };
+  /** Waktu (localClock) callback analisis per candle terakhir yang selesai tanpa error. */
+  let lastAnalysisAt = null;
+  /** Jumlah heartbeat progres yang ditulis di siklus berjalan (lihat runCycle: heartbeat penutup). */
+  let progressBeats = 0;
 
   const isStopping = () => phase === 'stopping' || phase === 'stopped';
   const checkStopping = () => {
@@ -347,6 +367,38 @@ export function createScanner({
     }
   }
 
+  /**
+   * Mencatat perubahan progres sync. Selama langkah clock/discovery/bootstrap, perubahan menjadwalkan SATU
+   * heartbeat progres cfg.progressHeartbeatMs kemudian (trailing throttle: paling banyak satu tulis per interval,
+   * tidak pernah per candle). Langkah lain (live, idle, berhenti) membatalkan jadwal itu — saat live hanya hitungan
+   * di memori yang berubah; heartbeat 30 detik tetap berjalan.
+   */
+  function syncProgress(patch) {
+    Object.assign(sync, patch);
+    sync.updatedAt = localClock();
+    if (!PROGRESS_STEPS.has(sync.step)) {
+      cancel('progress-heartbeat');
+      return;
+    }
+    if (timers.has('progress-heartbeat')) return;
+    schedule('progress-heartbeat', cfg.progressHeartbeatMs, async () => {
+      if (!PROGRESS_STEPS.has(sync.step)) return;
+      progressBeats += 1;
+      await heartbeat();
+    });
+  }
+
+  /** Langkah siklus berikutnya; tidak menimpa 'stopping'/'stopped' saat scanner sedang berhenti. */
+  function syncStep(step, patch = {}) {
+    syncProgress(isStopping() ? patch : { ...patch, step });
+  }
+
+  /** Menambah hitungan candle tersimpan siklus ini, lalu mengembalikan daftar yang sama. */
+  function noteStored(list) {
+    if (sync.candlesStored !== null && list.length > 0) syncProgress({ candlesStored: sync.candlesStored + list.length });
+    return list;
+  }
+
   /** Antrean serial per stream; tidak pernah reject. */
   function enqueue(st, task) {
     pending += 1;
@@ -397,11 +449,11 @@ export function createScanner({
     const result = await repos.candles.upsertClosed(candles);
     lastIngestionAt = localClock();
     const rejected = Array.isArray(result?.rejected) ? result.rejected : [];
-    if (rejected.length === 0) return candles;
+    if (rejected.length === 0) return noteStored(candles);
     const bad = new Set(rejected.map((r) => r?.candle?.openTime));
     const reasons = Array.isArray(rejected[0]?.errors) ? rejected[0].errors.join(', ') : 'tidak valid';
     await report('validation', `${rejected.length} candle ditolak: ${reasons}`, st);
-    return candles.filter((c) => !bad.has(c.openTime));
+    return noteStored(candles.filter((c) => !bad.has(c.openTime)));
   }
 
   /**
@@ -419,6 +471,7 @@ export function createScanner({
     if (!emit || emitted.length === 0 || !isActive(st) || !st.analyze) return;
     try {
       await onClosedCandles({ symbol: st.symbol, timeframe: st.timeframe, candles: emitted, reason });
+      lastAnalysisAt = localClock();
     } catch (err) {
       await report('analysis', err, st);
     }
@@ -488,6 +541,7 @@ export function createScanner({
       }
       n += await syncStream(st, 'bootstrap');
     } catch (err) {
+      if (!(err instanceof ScannerStopped) && sync.streamsFailed !== null) sync.streamsFailed += 1;
       await report('bootstrap', err, st);
       return n;
     }
@@ -844,13 +898,21 @@ export function createScanner({
       streams.set(k, st);
       added.push(st);
     }
+    syncStep('bootstrap', { streamsTotal: added.length });
     monitored = [...target];
     if (added.length > 0 || removed.length > 0 || (stream === null && streams.size > 0)) replaceStream();
     // Stream lama sudah dilepas (candle baru untuknya diabaikan) → aman menutup sinyal terbukanya.
     const notified = notifyStopped(stopped, unanalyzed, target, at);
     const counts = await Promise.all(added.map((st) => {
       let n = 0;
-      return enqueue(st, async () => { n = await bootstrapStream(st); }).then(() => n);
+      return enqueue(st, async () => {
+        try {
+          n = await bootstrapStream(st);
+        } finally {
+          // Seri selesai (berhasil atau gagal) → progres backfill.
+          if (sync.streamsDone !== null) syncProgress({ streamsDone: sync.streamsDone + 1 });
+        }
+      }).then(() => n);
     }));
     const covered = await notified;
     // Hanya setelah discovery berhasil (statusBySymbol ada); fallback daftar DB tidak pernah melepas apa pun.
@@ -887,8 +949,15 @@ export function createScanner({
   async function runCycle(kind) {
     const stats = { candles: 0, errors: 0 };
     cycleStats = stats;
+    // Progres sync siklus baru: hitungan siklus sebelumnya di-reset (lastCandleAt/lastAnalysisAt tetap).
+    progressBeats = 0;
+    syncStep('clock', {
+      cycle: kind === 'start' ? 'initial' : 'rediscovery', cycleStartedAt: localClock(),
+      streamsTotal: null, streamsDone: 0, streamsFailed: 0, candlesStored: 0, symbolsDiscovered: null,
+    });
     // Jam disinkronkan dulu agar waktu siklus, validasi "tertutup", dan rencana backfill memakai waktu server.
     await syncClock();
+    syncStep('discovery');
     // startedAt/finishedAt (recordRun, scanDurationMs) = jam host; `at` = waktu server untuk stempel simbol & sinyal.
     const startedAt = localClock();
     const at = clock();
@@ -901,6 +970,7 @@ export function createScanner({
       let statusBySymbol = null;
       try {
         const found = await discover();
+        syncProgress({ symbolsDiscovered: found.selected.length });
         checkStopping();
         stopped = await syncSymbols(found.symbols, found.selected, at);
         target = found.selected;
@@ -933,6 +1003,9 @@ export function createScanner({
       }
     } finally {
       cycleStats = null;
+      // Siklus selesai: live bila ada stream, selain itu idle (menunggu siklus berikutnya). Membatalkan heartbeat
+      // progres yang masih terjadwal.
+      syncStep(streams.size > 0 ? 'live' : 'idle');
       const finishedAt = localClock();
       scanDurationMs = finishedAt - startedAt;
       try {
@@ -940,6 +1013,9 @@ export function createScanner({
       } catch (err) {
         logger.error({ err: errorMessage(err) }, 'gagal mencatat run ingesti');
       }
+      // Heartbeat progres siklus ini memperlihatkan langkah siklus: satu heartbeat penutup agar UI tidak menampilkan
+      // langkah lama sampai heartbeat 30 detik berikutnya. Siklus start ditutup heartbeat di start().
+      if (kind !== 'start' && progressBeats > 0 && !isStopping()) await heartbeat();
       schedule('rediscovery', nextDelay, () => runCycle('rediscovery'));
     }
   }
@@ -975,6 +1051,9 @@ export function createScanner({
       duplicates: counters.duplicates,
       clockOffsetMs: serverClock ? serverClock.offsetMs() : null,
       clockFault,
+      // Proses sync (salinan): lastCandleAt = closeTime candle tertutup tersimpan terbaru (waktu server, sama dengan
+      // acuan candleLagMs); lastAnalysisAt = jam host saat callback analisis terakhir selesai.
+      sync: { ...sync, lastCandleAt: latestCloseTime, lastAnalysisAt },
     };
   }
 
@@ -1029,6 +1108,7 @@ export function createScanner({
     stop() {
       if (stopPromise) return stopPromise;
       phase = 'stopping';
+      syncProgress({ step: 'stopping' });
       stopPromise = (async () => {
         for (const name of [...timers.keys()]) cancel(name);
         if (stream) {
@@ -1039,6 +1119,7 @@ export function createScanner({
         await drain();
         for (const name of [...timers.keys()]) cancel(name);
         phase = 'stopped';
+        syncProgress({ step: 'stopped' });
         await heartbeat();
       })();
       return stopPromise;
