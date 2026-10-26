@@ -50,7 +50,9 @@ export const SCANNER_DEFAULTS = Object.freeze({
   maxGapCandles: 10_000,
   gapMergeWithin: 50,
   errorThrottleMs: 60_000,
-  // Bootstrap awal = histori murni; default tidak memicu analisis.
+  // Bootstrap awal = histori murni; default tidak memicu analisis per candle. Seri yang SUDAH punya data di DB
+  // tetap dievaluasi ulang sekali setelah bootstrap (reason 'resume', lihat resumeAnalysis) agar sinyal terbuka
+  // tidak basi sampai candle live berikutnya tutup.
   emitBootstrap: false,
 });
 
@@ -434,6 +436,8 @@ export function createScanner({
       syncing: 0,
       provisionalAt: null,
       provisionalOpenTime: null,
+      // true = seri sudah punya candle tersimpan sebelum bootstrap ini → resumeAnalysis setelah semua bootstrap.
+      resume: false,
     };
   }
 
@@ -534,6 +538,26 @@ export function createScanner({
     return n;
   }
 
+  /**
+   * Evaluasi lanjutan sekali setelah bootstrap seri yang sudah punya data (worker di-restart / simbol kembali
+   * dipantau). Candle yang tutup selama worker mati disimpan bootstrap sebagai histori; tanpa langkah ini pipeline
+   * baru mengejarnya saat candle live berikutnya tutup (hingga 1 jam untuk 1h), sehingga kolom "Update" sinyal
+   * terbuka menunjukkan waktu sebelum restart. Pipeline mengevaluasi ulang dari kursor analisis (dibatasi
+   * maxReplay); candle yang sudah dievaluasi tidak diulang. Dijalankan setelah SEMUA bootstrap siklus selesai agar
+   * konteks HTF sudah mutakhir.
+   */
+  async function resumeAnalysis(st) {
+    if (!st.resume) return;
+    st.resume = false;
+    if (!isActive(st) || !st.analyze || st.lastOpenTime === null) return;
+    try {
+      await onClosedCandles({ symbol: st.symbol, timeframe: st.timeframe, candles: [], reason: 'resume' });
+      lastAnalysisAt = localClock();
+    } catch (err) {
+      await report('analysis', err, st);
+    }
+  }
+
   async function bootstrapStream(st) {
     if (!isActive(st)) return 0;
     let n = 0;
@@ -541,6 +565,7 @@ export function createScanner({
     try {
       const last = await repos.candles.getLastOpenTime({ symbol: st.symbol, timeframe: st.timeframe });
       if (Number.isSafeInteger(last) && st.lastOpenTime === null) {
+        st.resume = st.analyze;
         st.lastOpenTime = last;
         st.lastCloseTime = expectedCloseTime(last, st.timeframe);
         if (latestCloseTime === null || st.lastCloseTime > latestCloseTime) latestCloseTime = st.lastCloseTime;
@@ -920,6 +945,8 @@ export function createScanner({
         }
       }).then(() => n);
     }));
+    // Tidak ditunggu: siklus (recordRun, langkah Live) tidak tertahan oleh analisis; stop() tetap menunggunya (track).
+    for (const st of added) if (st.resume) enqueue(st, () => resumeAnalysis(st));
     const covered = await notified;
     // Hanya setelah discovery berhasil (statusBySymbol ada); fallback daftar DB tidak pernah melepas apa pun.
     if (statusBySymbol) await reconcileOpenSignals(target, statusBySymbol, covered, at);

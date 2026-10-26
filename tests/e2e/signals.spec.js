@@ -127,3 +127,79 @@ test('E2E-SIG-003 System Health menampilkan heartbeat worker & error ingesti dar
   expect(errors).toEqual([]);
 });
 
+
+// Kolom "Update" scanner: baris SINTETIS (bukan data pasar) dengan updatedAt terkendali, jam browser palsu.
+const UPDATE_NOW = Date.UTC(2026, 9, 26, 12, 0, 0);
+function updateRow(symbol, timeframe, updatedAt, earlyScore) {
+  return {
+    id: earlyScore, symbol, timeframe, classification: 'SA', state: 'QUIET', patternKey: 'SA', patternVersion: 1,
+    firstDetectedAt: UPDATE_NOW - 6 * 3_600_000, firstDetectedPrice: 1, invalidationPrice: null, patternScore: 60, earlyScore,
+    alignment: null, riskFlags: [], explanation: [], peakPrice: null, peakState: 'QUIET', barsInState: 0, finalOutcome: null,
+    updatedAt, closedAt: null, lastPrice: null, lastCandleAt: null,
+  };
+}
+const WORKER_RUNNING = { enabled: true, state: 'running', startedAt: UPDATE_NOW - 3_600_000, stoppedAt: null, exitCode: null, signal: null };
+
+test('E2E-SIG-007 kolom Update: teks relatif terus berdetak walau scanner berhenti; sinyal 1h yang 4 jam tidak dievaluasi ditandai "Basi"', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.clock.install({ time: UPDATE_NOW });
+  const items = [updateRow('FRSHUSDT', '5m', UPDATE_NOW - 30_000, 90), updateRow('OLDXUSDT', '1h', UPDATE_NOW - 4 * 3_600_000, 80)];
+  await page.route('**/api/signals/active?*', (route) => route.fulfill({ json: { items, count: items.length } }));
+  await signIn(page);
+  await page.goto('/#/screener');
+  const results = page.getByTestId('screener-results');
+  const fresh = results.locator('tbody tr', { hasText: 'FRSHUSDT' }).getByTestId('updated-at');
+  const stale = results.locator('tbody tr', { hasText: 'OLDXUSDT' }).getByTestId('updated-at');
+  await expect(fresh.locator('.updated-at__text')).toHaveText(/detik lalu/);
+  await expect(fresh).not.toHaveAttribute('data-stale', 'true');
+  await expect(fresh.getByText('Basi')).toBeHidden();
+  await expect(stale).toHaveAttribute('data-stale', 'true');
+  await expect(stale.locator('.updated-at__text')).toHaveText('4 jam lalu');
+  await expect(stale.getByText('Basi')).toBeVisible();
+  await expect(stale).toHaveAttribute('title', /Basi: evaluasi terakhir pada candle 1h/);
+
+  // Server E2E tidak menjalankan worker → tidak ada penyegaran data; ticker tetap menghitung ulang umur.
+  await page.clock.fastForward(60_000);
+  await expect(fresh.locator('.updated-at__text')).toHaveText('1 menit lalu');
+  // 5m: lewat 12 menit (2 candle + 2 menit) tanpa evaluasi baru → basi.
+  await page.clock.fastForward(12 * 60_000);
+  await expect(fresh).toHaveAttribute('data-stale', 'true');
+  await expect(fresh.getByText('Basi')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('E2E-SIG-008 scanner berjalan + baris kandidat sedang fokus → penyegaran latar tetap jalan (Update maju) dan fokus kembali ke baris yang sama', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.clock.install({ time: UPDATE_NOW });
+  await page.route('**/api/system/worker', (route) => route.fulfill({ json: WORKER_RUNNING }));
+  await page.route('**/api/system/sync*', async (route) => {
+    const response = await route.fetch();
+    return route.fulfill({ response, json: { ...(await response.json()), worker: WORKER_RUNNING } });
+  });
+  let advanced = false;
+  let laterCalls = 0;
+  await page.route('**/api/signals/active?*', (route) => {
+    if (advanced) laterCalls += 1;
+    // Setelah jam dimajukan = worker sudah mengevaluasi candle yang baru tutup.
+    const at = advanced ? UPDATE_NOW + 85_000 : UPDATE_NOW - 4 * 60_000;
+    const items = [updateRow('FRSHUSDT', '5m', at, 90), updateRow('SECNUSDT', '5m', at, 80)];
+    return route.fulfill({ json: { items, count: items.length } });
+  });
+  await signIn(page);
+  await page.goto('/#/screener');
+  const results = page.getByTestId('screener-results');
+  const row = () => results.locator('tbody tr', { hasText: 'SECNUSDT' });
+  const text = () => row().getByTestId('updated-at').locator('.updated-at__text');
+  await expect(text()).toHaveText('4 menit lalu');
+  await row().focus();
+
+  advanced = true;
+  await page.clock.fastForward(31_000);
+  await expect.poll(() => laterCalls).toBeGreaterThan(0);
+  await page.clock.fastForward(60_000);
+  await expect(text()).toHaveText(/baru saja|\d+ detik lalu/);
+  await expect(row()).toBeFocused();
+  expect(errors).toEqual([]);
+});
