@@ -282,8 +282,9 @@ export function patternDefinitions(params = {}, { maxWarmup, directions = ['LONG
  *   sleep?: (ms: number) => Promise<void>, yieldEvery?: number, yieldToEventLoop?: () => Promise<void>,
  *   directions?: Array<'LONG'|'SHORT'>, directionTimeframes?: { LONG?: string[], SHORT?: string[] } | null,
  *   onAlert?: (alert: { symbol: string, timeframe: string, direction: 'LONG'|'SHORT', state: string, event: object, view: object }) => void }} deps
- *   settleMs: bila candle timeframe lebih tinggi yang tutup bersamaan belum tersimpan, tunggu sekali
- *   selama ini agar konteks live sama dengan replay (stream per timeframe diproses paralel).
+ *   settleMs: bila candle timeframe lebih tinggi yang seharusnya sudah tutup pada candle dasar terbaru (termasuk yang
+ *   tutup bersamaan) belum tersimpan, tunggu sekali selama ini agar konteks live sama dengan replay (stream per
+ *   timeframe diproses — dan di-backfill setelah gap — paralel).
  *   getLiquidity: ukuran likuiditas dari discovery terakhir; `thresholds` (ambang pengaturan yang dipakai
  *   discovery yang sama) menggantikan `params.view` agar risk flag & penjelasan memakai batas pengguna.
  *   Ukuran itu menggambarkan pasar SAAT INI, jadi hanya dipakai untuk candle terbaru batch; candle
@@ -354,14 +355,19 @@ export function createAnalysisPipeline({
     return definitionsReady;
   }
 
-  /** Tunggu sekali bila candle HTF yang seharusnya tutup bersamaan dengan candle dasar belum tersimpan. */
+  /**
+   * Tunggu sekali bila candle HTF terakhir yang seharusnya sudah tutup pada `evaluationTime` (closeTime candle dasar
+   * terbaru batch) belum tersimpan — baik candle HTF yang tutup bersamaan (race antar-stream live) maupun candle HTF
+   * yang lebih tua: setelah reconnect/gap, stream per timeframe mem-backfill paralel, sehingga replay candle dasar
+   * bisa mendahului backfill HTF dan setiap titik replay dinilai STALE_DATA permanen (kursor sudah maju).
+   */
   async function settleHigherTimeframes(symbol, timeframe, evaluationTime) {
     if (settleMs === 0) return;
     for (const tf of HIGHER_TIMEFRAMES[timeframe]) {
       const htfMs = TIMEFRAME_MS[tf];
-      if ((evaluationTime + 1) % htfMs !== 0) continue;
+      const expectedOpen = Math.floor((evaluationTime + 1) / htfMs) * htfMs - htfMs;
       const lastOpen = await repos.candles.getLastOpenTime({ symbol, timeframe: tf });
-      if (lastOpen === null || lastOpen < evaluationTime + 1 - htfMs) {
+      if (lastOpen === null || lastOpen < expectedOpen) {
         await sleep(settleMs);
         return;
       }
