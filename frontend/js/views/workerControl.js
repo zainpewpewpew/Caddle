@@ -252,7 +252,11 @@ const STOP_LABEL_STATES = new Set(['running', 'starting', 'external']);
  * jatuh ke <body> saat label/state berubah. Analyst hanya melihat pill dan pesan, tanpa tombol.
  * Satu worker memindai LONG dan SHORT dari candle yang sama, sehingga satu kontrol mencakup kedua arah.
  * Saat scanner berjalan, baris proses sync ringkas (syncProgressInline) menampilkan langkah yang sedang berjalan —
- * sinkron jam, discovery, backfill x/y seri, lalu Live — dengan tautan ke panel lengkap di System Health.
+ * sinkron jam, discovery, backfill x/y seri, lalu Live — dengan tautan ke panel lengkap di System Health. Baris itu
+ * hanya tampil bila umpan sync (GET /api/system/sync) sudah melaporkan state supervisor yang sama dengan kontrol, dan
+ * snapshot supervisor dari umpan itu (dibaca tiap 2–10 detik) diadopsi bila berbeda (onSyncData): pesan/tombol kontrol
+ * dan baris sync tidak pernah saling bertentangan, dan worker yang crash tampil dalam ≤10 detik walau kontrol sendiri
+ * hanya membaca ulang tiap STEADY_POLL_MS saat stabil.
  * Selama transisi/pemantauan GET /api/system/worker dipantau tiap POLL_MS (latar), selain itu tiap STEADY_POLL_MS.
  * Halaman pemakainya tidak punya cleanup: polling berhenti sendiri bila elemen sudah tidak ada di halaman. Karena itu
  * elemen dibuat setelah seluruh await view selesai, tepat sebelum halaman dipasang.
@@ -269,6 +273,11 @@ export function workerControlBar({ user, status: initial }) {
   let pollTimer = null;
   // Naik setiap kali perintah dikirim: respons polling yang dimulai sebelum perintah itu dianggap basi.
   let epoch = 0;
+  // Waktu (Date.now()) request yang menghasilkan `status` dikirim; 0 untuk status awal halaman. Snapshot dari request
+  // yang dikirim lebih dulu tidak boleh menimpa yang dikirim belakangan, apa pun sumbernya (urutan respons tidak dijamin).
+  let statusAt = 0;
+  // State supervisor terakhir menurut umpan sync (onSyncData); baris sync tampil hanya bila sama dengan `status`.
+  let syncState = null;
   let shownKey = '';
   const settling = () => status?.state === 'running' && Date.now() < settleUntil;
   const busy = () => pending || isWorkerTransitional(status) || settling();
@@ -283,9 +292,10 @@ export function workerControlBar({ user, status: initial }) {
   const errorEl = h('p', { class: 'field__error', role: 'alert', hidden: true });
   // Proses sync ringkas (langkah + bar + x/y seri, lalu Live · candle terakhir) dan tautan ke panel lengkap di System
   // Health. Varian ringkas syncProgress.js memantau GET /api/system/sync sendiri (latar) dan berhenti saat kontrol
-  // dilepas — tanpa cleanup. Disembunyikan selama scanner dapat dijalankan (berhenti/crash) agar pesan tidak ganda.
+  // dilepas — tanpa cleanup. Disembunyikan selama scanner dapat dijalankan (berhenti/crash) agar pesan tidak ganda,
+  // dan sampai umpan sync melaporkan state supervisor yang sama dengan kontrol (render/onSyncData).
   const syncRow = h('div', { class: 'cluster callout__sync', 'data-testid': 'worker-callout-sync', hidden: true },
-    syncProgressInline({ initial: null }),
+    syncProgressInline({ initial: null, onData: (d) => onSyncData(d) }),
     h('a', { href: '#/health' }, 'Lihat proses sync di System Health'));
   const content = h('div', { class: 'callout__content' }, stateEl, message, progressEl, syncRow, errorEl);
   const el = callout([content]);
@@ -304,6 +314,8 @@ export function workerControlBar({ user, status: initial }) {
   h('p', { id: 'worker-bar-confirm-text' }, 'Hentikan scanner? Ingesti candle dan analisis pola LONG & SHORT berhenti sampai dijalankan lagi.'),
   h('div', { class: 'cluster' }, confirmBtn, cancelBtn));
   if (isAdmin) el.append(toggle, confirmEl);
+  // Analyst tidak punya tombol: callout dapat menerima fokus (tabindex -1) saat baris sync yang sedang difokus disembunyikan.
+  if (!toggle) el.setAttribute('tabindex', '-1');
 
   function showError(text) {
     errorEl.textContent = text ?? '';
@@ -323,7 +335,11 @@ export function workerControlBar({ user, status: initial }) {
     el.classList.toggle('callout--warn', !crashed && canStartWorker(status));
     el.setAttribute('aria-busy', String(busy()));
     progressEl.hidden = !busy();
-    syncRow.hidden = canStartWorker(status);
+    // Baris sync hanya saat scanner tidak dapat dijalankan DAN umpan sync sudah melihat state yang sama (onSyncData).
+    const hideSync = canStartWorker(status) || syncState !== status?.state;
+    // Fokus di dalam baris yang akan disembunyikan (tautan System Health) dipindahkan dulu agar tidak jatuh ke <body>.
+    if (hideSync && !syncRow.hidden && syncRow.contains(document.activeElement)) (toggle ?? el).focus({ preventScroll: true });
+    syncRow.hidden = hideSync;
     if (!toggle) return;
     const stopLabel = STOP_LABEL_STATES.has(status?.state);
     const label = stopLabel ? 'Hentikan scanner' : 'Jalankan scanner';
@@ -334,6 +350,24 @@ export function workerControlBar({ user, status: initial }) {
     confirmBtn.disabled = pending;
     cancelBtn.disabled = pending;
     if (confirming && status?.state !== 'running') closeConfirm({ restoreFocus: false });
+  }
+
+  /**
+   * Umpan sync (GET /api/system/sync, dipantau syncProgressInline tiap 2–10 detik) memuat snapshot supervisor yang sama
+   * dengan GET /api/system/worker dan jauh lebih sering dibaca daripada polling kontrol saat stabil (STEADY_POLL_MS).
+   * State yang berbeda diadopsi agar pesan/tombol kontrol dan baris sync tidak bertentangan — worker yang crash tampil
+   * dalam ≤10 detik, bukan ≤30. Diabaikan selama perintah berjalan dan untuk respons yang diminta sebelum `status` ini.
+   */
+  function onSyncData(d) {
+    if (pending || typeof d.worker?.state !== 'string' || !(d.requestedAt > statusAt)) return;
+    syncState = d.worker.state;
+    const changed = syncState !== status?.state;
+    if (changed) {
+      status = d.worker;
+      statusAt = d.requestedAt;
+    }
+    render();
+    if (changed) schedulePoll();
   }
 
   function onToggle() {
@@ -374,6 +408,8 @@ export function workerControlBar({ user, status: initial }) {
     render();
     try {
       status = await api(`/api/system/worker/${action}`, { method: 'POST' });
+      // Respons perintah selalu berlaku: snapshot apa pun yang diminta sebelum perintah selesai sudah basi.
+      statusAt = Date.now();
       settleUntil = action === 'start' ? Date.now() + SETTLE_MS : 0;
       toast(action === 'start' ? 'Scanner dijalankan' : 'Scanner sedang dihentikan', 'bull');
       // Proses sync dipantau cepat (tiap 2 detik) agar langkah pertama langsung terlihat.
@@ -383,6 +419,7 @@ export function workerControlBar({ user, status: initial }) {
       showError(workerErrorMessage(err));
       try {
         status = await api('/api/system/worker');
+        statusAt = Date.now();
       } catch {
         // State terakhir yang diketahui tetap ditampilkan.
       }
@@ -402,11 +439,16 @@ export function workerControlBar({ user, status: initial }) {
       // Selama perintah berjalan, run() menjadwalkan ulang setelah selesai.
       if (!el.isConnected || pending) return;
       const started = epoch;
+      const sentAt = Date.now();
       try {
         // Polling otomatis bukan aktivitas pengguna: tidak memperpanjang idle timeout sesi.
         const next = await api('/api/system/worker', { background: true });
         if (started !== epoch) return; // perintah baru dikirim selama polling: respons ini basi
-        status = next;
+        // Umpan sync mungkin sudah memberi snapshot dari request yang lebih baru (onSyncData): itu yang dipertahankan.
+        if (sentAt >= statusAt) {
+          status = next;
+          statusAt = sentAt;
+        }
         render();
       } catch {
         if (started !== epoch) return;

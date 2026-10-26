@@ -11,7 +11,7 @@ aturan pola, **bukan probabilitas profit**. AlphaLens tetap alat riset — tidak
 | File vendor library | `GET /vendor/lightweight-charts.js` (`backend/app/buildApp.js`) |
 | Pembungkus grafik | `frontend/js/lib/chart.js` |
 | Panel grafik + helper side panel | `frontend/js/views/symbolChart.js` |
-| Side panel terpasang di tabel kandidat | `frontend/js/views/screener.js` (LONG Screener, route `/screener`) |
+| Side panel terpasang di tabel kandidat | `frontend/js/views/screener.js` (`scannerPage`: LONG Scanner route `/screener`, SHORT Scanner route `/short-scanner`) |
 | Halaman detail | `frontend/js/views/symbol.js` (route `/symbol`, label "Symbol Intelligence") |
 | Seleksi baris tabel | `frontend/js/lib/components.js` (`dataTable` opsi `onRowSelect`, `refreshRowSelection`) |
 | Query hash | `frontend/js/lib/router.js` (`splitHash`, `hashQuery`) |
@@ -182,17 +182,17 @@ const chartSide = attachChartSidePanel({ layoutHost, direction: 'LONG', onSelect
 
 ### Cara screener memasangnya (satu hook)
 
-`screener.js` (LONG Screener `/screener`) sudah memasangnya: klik / Enter pada baris kandidat membuka grafik koin di
-sebelah tabel, dengan tombol "Buka detail" ke `#/symbol`. Halaman scanner lain (mis. SHORT Scanner bila route-nya
-ditambahkan) cukup memanggil `attachChartSidePanel` sekali per halaman dengan arahnya, lalu menyebarkan `tableOptions`
-ke setiap `dataTable` yang dibuat:
+`screener.js` sudah memasangnya untuk LONG Scanner (`/screener`) dan SHORT Scanner (`/short-scanner`) lewat
+`scannerPage(ctx, direction)`: klik / Enter pada baris kandidat membuka grafik koin di sebelah tabel, dengan tombol
+"Buka detail" ke `#/symbol`. Halaman lain yang menampilkan tabel kandidat cukup memanggil `attachChartSidePanel` sekali
+per halaman dengan arahnya, lalu menyebarkan `tableOptions` ke setiap `dataTable` yang dibuat:
 
 ```js
 import { attachChartSidePanel } from './symbolChart.js';
 
-export async function screenerView() {
+async function scannerPage(ctx, direction) { // 'LONG' (route /screener) atau 'SHORT' (route /short-scanner)
   const host = h('div', { 'data-testid': 'screener-results' });
-  const chartSide = attachChartSidePanel({ layoutHost: host, direction: 'LONG' }); // SHORT Scanner: 'SHORT'
+  const chartSide = attachChartSidePanel({ layoutHost: host, direction });
 
   async function load() {
     // ...
@@ -215,9 +215,8 @@ URL: `#/symbol?s=BTCUSDT&tf=15m&dir=LONG&signal=12` (`tf`, `dir`, `signal` opsio
 query (`splitHash`); view membaca query lewat `hashQuery()`. Semua nilai divalidasi: simbol dinormalisasi ke kapital lalu
 dicek `^[A-Z0-9]{2,30}$`, `tf` ∈ {5m, 15m, 1h}, `dir` ∈ {LONG, SHORT}, `signal` angka.
 
-- **Tanpa simbol:** empty state "Pilih koin terlebih dahulu" dengan tautan ke LONG Screener (`#/screener`); simbol tidak
-  valid di URL → callout peringatan. Library grafik tidak dimuat. (Tautan SHORT Scanner baru relevan setelah route
-  `/short-scanner` ada.)
+- **Tanpa simbol:** empty state "Pilih koin terlebih dahulu" dengan tombol ke LONG Scanner (`#/screener`) dan SHORT
+  Scanner (`#/short-scanner`); simbol tidak valid di URL → callout peringatan. Library grafik tidak dimuat.
 - **Form cari:** input simbol (`role="search"`, saran dari simbol yang pernah punya sinyal), validasi klien yang sama.
   Pencarian baru selalu ke `#/symbol?s=<SIMBOL>` saja — `dir`/`tf`/`signal` halaman sebelumnya tidak ikut terbawa.
 - **Grafik besar** (480px) memakai panel di atas, dengan level dari sinyal fokus dan penanda transisi sinyal searah pada

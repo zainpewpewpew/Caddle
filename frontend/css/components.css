@@ -1047,7 +1047,7 @@ th[aria-sort="descending"] .sort-btn::after {
   flex: 1 1 100%;
 }
 
-/* Proses sync ringkas di callout Overview setelah "Jalankan scanner" (syncProgressInline + tautan System Health). */
+/* Baris proses sync ringkas di kontrol scanner persisten saat scanner berjalan (syncProgressInline + tautan System Health). */
 .callout__sync {
   font-size: var(--lr-text-xs);
 }

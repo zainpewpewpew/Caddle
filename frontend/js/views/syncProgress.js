@@ -54,6 +54,9 @@ function normalize(data) {
     scanner: data.scanner,
     binance: data.binance ?? null,
     recentErrors: Array.isArray(errors) ? errors : [],
+    // Waktu request dikirim (Date.now() klien); diisi poll(), null untuk data awal. Pelanggan onData memakainya untuk
+    // mengabaikan respons yang diminta sebelum state yang sudah dipegangnya (urutan respons tidak dijamin).
+    requestedAt: null,
   };
 }
 
@@ -168,6 +171,7 @@ async function poll() {
     return;
   }
   hub.inflight = true;
+  const requestedAt = Date.now();
   let next = null;
   try {
     // Polling otomatis bukan aktivitas pengguna: tidak memperpanjang idle timeout sesi.
@@ -179,6 +183,7 @@ async function poll() {
   }
   if (!prune()) return;
   if (next) {
+    next.requestedAt = requestedAt;
     hub.data = next;
     for (const sub of hub.subs) sub.render(next);
   }
@@ -447,17 +452,22 @@ function messageOf(d, mode) {
   switch (mode) {
     case 'loading':
       return { key: 'loading', nodes: [h('p', null, 'Memuat status proses sync…'), busyBar('Memuat status proses sync')] };
-    case 'off':
+    case 'off': {
+      // Kontrol dari website nonaktif (WORKER_CONTROL=false): tidak ada tombol "Jalankan scanner" yang dapat ditekan.
+      const manual = d.worker?.enabled === false;
       return {
-        key: `off|${d.worker?.state}`,
+        key: `off|${d.worker?.state}|${manual}`,
         nodes: [emptyState({
           iconName: 'radar',
-          title: 'Scanner tidak berjalan — tekan Jalankan scanner',
-          text: d.worker?.state === 'crashed'
-            ? 'Worker terakhir berhenti tak terduga (lihat Kontrol scanner di atas). Langkah sync tampil di sini begitu scanner dijalankan lagi.'
-            : 'Langkah sync tampil di sini secara langsung begitu scanner dijalankan: sinkron jam, discovery simbol, backfill candle, stream live, lalu analisis pola.',
+          title: manual ? 'Scanner tidak berjalan' : 'Scanner tidak berjalan — tekan Jalankan scanner',
+          text: manual
+            ? 'Jalankan worker dengan npm run worker di terminal terpisah; langkah sync tampil di sini begitu heartbeat pertama ditulis.'
+            : d.worker?.state === 'crashed'
+              ? 'Worker terakhir berhenti tak terduga (lihat Kontrol scanner di atas). Langkah sync tampil di sini begitu scanner dijalankan lagi.'
+              : 'Langkah sync tampil di sini secara langsung begitu scanner dijalankan: sinkron jam, discovery simbol, backfill candle, stream live, lalu analisis pola.',
         })],
       };
+    }
     case 'waiting': {
       const since = d.worker?.startedAt;
       if (d.worker?.state === 'running' && isNum(since) && nowOf(d) - since >= STARTUP_MS) {
@@ -558,10 +568,13 @@ export function syncProgressPanel({ initial } = {}) {
 /**
  * Varian ringkas satu baris untuk disematkan di samping tombol Jalankan/Hentikan scanner: label langkah + bar kecil +
  * 'x/y seri', atau 'Live · candle terakhir … lalu'. Tanpa wilayah aria-live (pengumuman milik panel lengkap).
- * @param {{ initial?: object|null }} [options] sama dengan syncProgressPanel
+ * @param {{ initial?: object|null, onData?: (d: object) => void }} [options] initial: sama dengan syncProgressPanel;
+ *   onData: dipanggil setelah setiap render dengan data ternormalisasi — d.worker = snapshot supervisor (bentuk
+ *   GET /api/system/worker), d.requestedAt = waktu request dikirim — agar pemakainya (kontrol scanner persisten) dapat
+ *   mengadopsi state supervisor yang lebih segar daripada polling-nya sendiri. Tidak dipanggil untuk data null (memuat).
  * @returns {HTMLElement}
  */
-export function syncProgressInline({ initial } = {}) {
+export function syncProgressInline({ initial, onData } = {}) {
   const pill = h('span', { class: 'sync-inline__state' });
   const bar = h('div', { class: 'sync-inline__bar' });
   const text = h('span', { class: 'sync-inline__text num', hidden: true });
@@ -589,6 +602,7 @@ export function syncProgressInline({ initial } = {}) {
     setBar(bar, barSpec, 'sync-inline__progress');
     setText(text, line);
     text.hidden = !line;
+    if (d && onData) onData(d);
   }
 
   subscribe(el, initial, render);

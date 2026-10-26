@@ -1,6 +1,6 @@
 # 09 — Proses sync scanner
 
-Satu klik **Jalankan scanner** sudah cukup: worker menyinkronkan jam, memilih simbol, mengisi histori candle, membuka stream live, lalu menganalisis setiap candle tertutup secara otomatis. Dokumen ini menjelaskan bagaimana proses itu **terlihat langsung** di website — panel **Proses sync scanner** di System Health (tepat di bawah kartu **Kontrol scanner**) dan varian ringkasnya, yang langsung tampil di callout Overview setelah **Jalankan scanner** ditekan dan dapat disematkan di bar kontrol scanner.
+Satu klik **Jalankan scanner** sudah cukup: worker menyinkronkan jam, memilih simbol, mengisi histori candle, membuka stream live, lalu menganalisis setiap candle tertutup secara otomatis. Dokumen ini menjelaskan bagaimana proses itu **terlihat langsung** di website — panel **Proses sync scanner** di System Health (tepat di bawah kartu **Kontrol scanner**) dan varian ringkasnya di kontrol scanner persisten (Overview, LONG Scanner, SHORT Scanner), yang tampil selama scanner berjalan — termasuk langsung setelah **Jalankan scanner** ditekan.
 
 Prinsip yang sama dengan seluruh aplikasi: hanya data nyata dari heartbeat worker. Nilai yang belum diketahui tampil `—`; tidak ada angka contoh, perkiraan, atau sisa waktu rekaan. Teks dari server (pesan error) selalu dirender lewat `textContent` (`h()`).
 
@@ -98,9 +98,9 @@ Di sampingnya: siklus, simbol dipantau, stream (basi), candle tersimpan siklus i
 
 Langkah *Sinkron jam* menampilkan offset hanya bila offset itu pernah terukur (`clockSynced`); bila belum ada sync jam yang berhasil, langkah itu memberi peringatan *offset belum terukur* tanpa angka (baris *Offset jam Binance* di System Health menampilkan `—`).
 
-Mode lain: scanner tidak berjalan → empty state tenang *"Scanner tidak berjalan — tekan Jalankan scanner"* (tanpa angka); worker baru dijalankan → *menunggu heartbeat pertama* (setelah 30 detik tanpa heartbeat: peringatan untuk memeriksa log); menghentikan; heartbeat basi — termasuk worker yang dijalankan dari website, masih hidup, tetapi heartbeat run-nya berhenti diperbarui (bukan *menunggu heartbeat pertama*); worker versi lama tanpa progres sync. Supervisor didahulukan: child yang sudah keluar (`stopped`/`crashed`) berarti scanner tidak berjalan walau heartbeat terakhirnya masih tampak segar.
+Mode lain: scanner tidak berjalan → empty state tenang *"Scanner tidak berjalan — tekan Jalankan scanner"* (tanpa angka; bila kontrol dari website nonaktif, `WORKER_CONTROL=false`, judulnya *"Scanner tidak berjalan"* dengan petunjuk `npm run worker` karena tombol itu tidak ada); worker baru dijalankan → *menunggu heartbeat pertama* (setelah 30 detik tanpa heartbeat: peringatan untuk memeriksa log); menghentikan; heartbeat basi — termasuk worker yang dijalankan dari website, masih hidup, tetapi heartbeat run-nya berhenti diperbarui (bukan *menunggu heartbeat pertama*); worker versi lama tanpa progres sync. Supervisor didahulukan: child yang sudah keluar (`stopped`/`crashed`) berarti scanner tidak berjalan walau heartbeat terakhirnya masih tampak segar.
 
-**Overview**: setelah *Jalankan scanner* di callout berhasil, callout langsung menampilkan varian ringkas (§8: langkah + bar + `x/y seri`, lalu *Live*) beserta tautan *Lihat proses sync di System Health* ke panel lengkap.
+**Overview, LONG Scanner, SHORT Scanner**: kontrol scanner persisten (`workerControlBar`) menampilkan varian ringkas (§8: langkah + bar + `x/y seri`, lalu *Live*) beserta tautan *Lihat proses sync di System Health* ke panel lengkap selama scanner tidak dapat dijalankan — berjalan, memulai, menghentikan, atau berjalan di luar website — termasuk langsung setelah *Jalankan scanner* berhasil.
 
 Aksesibilitas: wilayah `aria-live="polite"` (di luar wilayah `aria-busy`) hanya diperbarui saat langkah/mode berubah — bukan setiap polling — dan keadaan pertama setelah halaman dimuat tidak diumumkan. Langkah aktif memakai `aria-current="step"`; bar determinate memakai `role="progressbar"` + `aria-valuenow`. `prefers-reduced-motion`: cincin & bar indeterminate statis, denyut dan transisi lebar dimatikan. DOM stepper dibuat sekali dan diperbarui di tempat, sehingga animasi tidak terulang setiap polling.
 
@@ -118,7 +118,7 @@ Polling berhenti sendiri saat elemen dilepas dari halaman (`el.isConnected` dipe
 
 ## 8. Menyematkan varian ringkas di bar kontrol scanner
 
-`syncProgressInline({ initial })` merender satu baris: badge langkah + bar kecil + `x/y seri` selama backfill, atau `Live · candle terakhir … lalu` saat live. Tanpa wilayah aria-live (pengumuman milik panel lengkap). `initial` opsional: payload `GET /api/system/sync` atau `GET /api/system/status`; tanpa itu status dimuat segera.
+`syncProgressInline({ initial, onData })` merender satu baris: badge langkah + bar kecil + `x/y seri` selama backfill, atau `Live · candle terakhir … lalu` saat live. Tanpa wilayah aria-live (pengumuman milik panel lengkap). `initial` opsional: payload `GET /api/system/sync` atau `GET /api/system/status`; tanpa itu status dimuat segera. `onData(d)` opsional: dipanggil setelah setiap render dengan data ternormalisasi — `d.worker` = snapshot supervisor (bentuk `GET /api/system/worker`), `d.requestedAt` = waktu request dikirim — sehingga pemakainya dapat mengadopsi state supervisor yang lebih segar daripada polling-nya sendiri; tidak dipanggil selama data belum ada.
 
 Dari modul di `frontend/js/views/` (mis. bar kontrol scanner):
 
@@ -135,7 +135,7 @@ requestSyncRefresh();
 
 Dari `frontend/js/app.js` atau `frontend/js/lib/`: `import { requestSyncRefresh, syncProgressInline } from './views/syncProgress.js';` / `'../views/syncProgress.js'`.
 
-Elemen yang tetap terpasang (bar persisten) terus memantau: 10 detik saat diam/live, 2 detik selama sync. Melepasnya dari DOM menghentikan polling tanpa cleanup tambahan. System Health memanggil `requestSyncRefresh()` untuk setiap klik tombol di kartu Kontrol scanner (event delegation di `health.js`). Callout Overview (`workerStartCallout` di `workerControl.js`) menyematkan `syncProgressInline({ initial: null })` + tautan `#/health` setelah POST start berhasil, lalu memanggil `requestSyncRefresh()`; elemen itu dibuat sekali dan berhenti memantau saat Overview ditinggalkan.
+Elemen yang tetap terpasang (bar persisten) terus memantau: 10 detik saat diam/live, 2 detik selama sync. Melepasnya dari DOM menghentikan polling tanpa cleanup tambahan. System Health memanggil `requestSyncRefresh()` untuk setiap klik tombol di kartu Kontrol scanner (event delegation di `health.js`). Kontrol scanner persisten (`workerControlBar` di `workerControl.js` — Overview, LONG Scanner, SHORT Scanner; `workerStartCallout` = alias lama) membuat baris `syncProgressInline({ initial: null, onData })` + tautan `#/health` sekali saat kontrol dibuat. Baris itu disembunyikan selama scanner dapat dijalankan (`canStartWorker()`: berhenti/crash) dan sampai umpan sync melaporkan state supervisor yang sama dengan kontrol; selain itu tampil untuk state berjalan/memulai/menghentikan/di luar website — juga untuk worker yang dijalankan dari terminal. Lewat `onData` kontrol mengadopsi snapshot supervisor dari umpan sync bila berbeda dari yang dipegangnya (crash tampil dalam ≤10 detik walau kontrol sendiri hanya membaca ulang tiap 30 detik saat stabil); respons yang diminta sebelum status kontrol terakhir diabaikan. Setelah POST start/stop berhasil kontrol memanggil `requestSyncRefresh()`; elemen berhenti memantau saat halaman ditinggalkan.
 
 ## 9. Keterbatasan
 

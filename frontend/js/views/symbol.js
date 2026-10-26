@@ -87,8 +87,10 @@ function noSymbolState(invalid) {
       emptyState({
         iconName: 'symbol',
         title: 'Pilih koin terlebih dahulu',
-        text: 'Klik baris koin di LONG Screener untuk melihat grafiknya di sebelah tabel (tombol "Buka detail" membuka halaman ini), atau ketik simbol di kolom pencarian (mis. BTCUSDT). Grafik hanya memakai candle tertutup yang tersimpan — tidak ada data contoh.',
-        action: h('a', { class: 'btn btn--sm', href: '#/screener' }, 'Buka LONG Screener'),
+        text: 'Klik baris koin di LONG Scanner atau SHORT Scanner untuk melihat grafiknya di sebelah tabel (tombol "Buka detail" membuka halaman ini), atau ketik simbol di kolom pencarian (mis. BTCUSDT). Grafik hanya memakai candle tertutup yang tersimpan — tidak ada data contoh.',
+        action: h('div', { class: 'cluster' },
+          h('a', { class: 'btn btn--sm', href: '#/screener' }, 'Buka LONG Scanner'),
+          h('a', { class: 'btn btn--sm', href: '#/short-scanner' }, 'Buka SHORT Scanner')),
       })),
   ];
 }

@@ -89,4 +89,4 @@ Mengikuti roadmap spesifikasi. Prioritas teknis yang sudah diputuskan:
 | Peran pengguna kedua | `analyst` (baca saja untuk pengaturan) atau `admin` — dapat dipilih saat `user:create`. |
 | Bahasa UI | Bahasa Indonesia dengan istilah trading standar dalam bahasa Inggris (Screener, Breakout, dll.). |
 | Lanjut ke Milestone 4 | Prasyarat uji live sudah terpenuhi (2026-10-25); menunggu keputusan pemilik untuk mulai M4. |
-| Migrasi `006` kolom tracking sinyal | Usulan di `docs/05-database.md` §6 (di sana masih bernomor `005`; `004` dipakai kursor analisis, `005` arah sinyal Short Scanner); dibuat sebelum M6. |
+| Migrasi `006` kolom tracking sinyal | Usulan di `docs/05-database.md` §6 (`004` dipakai kursor analisis, `005` arah sinyal Short Scanner); dibuat sebelum M6. |
