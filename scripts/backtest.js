@@ -201,6 +201,9 @@ export async function main(argv = process.argv.slice(2), { loadRunner = () => im
     seed: args.seed,
     source: args.source,
     ml: args.ml,
+    entry: args.entry,
+    maxCostR: args.maxCostR,
+    calibrationMethod: args.calibrationMethod,
     onProgress: (msg) => log(typeof msg === 'string' ? msg : JSON.stringify(msg)),
   });
   if (!result || typeof result !== 'object' || !result.variants) throw new Error('runBacktest harus mengembalikan { meta, variants }');

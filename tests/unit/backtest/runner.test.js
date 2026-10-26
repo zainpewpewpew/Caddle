@@ -61,4 +61,32 @@ describe('runner backtest', () => {
       }
     }
   }, 90_000);
+
+  it('UNIT-BT-RUN-003 entri open berikutnya (bawaan) vs close; varian filter biaya ⊆ v3; perbandingan Platt vs isotonik', async () => {
+    const candles = universe(2, 900, 40, () => [
+      { type: 'RANDOM_WALK', bars: 200 }, { type: 'ACCUMULATION', bars: 80 }, { type: 'RANDOM_WALK', bars: 150 },
+      { type: 'DISTRIBUTION', bars: 80 }, { type: 'RANDOM_WALK', bars: 150 }, { type: 'ACCUMULATION', bars: 80 }, { type: 'RANDOM_WALK', bars: 100 },
+    ]);
+    const [[symbol, byTf]] = Object.entries(candles);
+    const next = await replaySeries({ symbol, timeframe: '15m', byTf });
+    const close = await replaySeries({ symbol, timeframe: '15m', byTf, options: { entry: 'close' } });
+    expect(next.trades.v2.length).toBeGreaterThan(0);
+    for (const t of next.trades.v2) {
+      expect(t.entryPrice).toBe(byTf['15m'][t.entryIndex + 1].open);
+      expect(t.estCostR).toBeCloseTo((2 * 6e-4 * t.entryPrice) / t.risk, 12);
+    }
+    for (const t of close.trades.v2) expect(t.entryPrice).toBe(byTf['15m'][t.entryIndex].close);
+    await expect(replaySeries({ symbol, timeframe: '15m', byTf, options: { entry: 'tomorrow' } })).rejects.toThrow(RangeError);
+
+    const result = await runBacktest({ candles, timeframes: ['15m'], maxCostR: 0.1 });
+    expect(result.meta).toMatchObject({ entry: 'nextOpen', maxCostR: 0.1, calibrationMethod: 'platt' });
+    expect(result.trades.v3c).toBeLessThanOrEqual(result.trades.v3);
+    expect(result.variants.v3c.label).toContain('filter biaya');
+    expect(Object.keys(result.variants.v2.calibration.methods)).toEqual(['platt', 'isotonic']);
+    const md = renderMarkdownReport(result);
+    expect(md).toContain('## Filter biaya (eksperimen)');
+    expect(md).toContain('Entri di open candle setelah candle sinyal');
+    await expect(runBacktest({ candles, timeframes: ['15m'], calibrationMethod: 'x' })).rejects.toThrow(RangeError);
+  }, 90_000);
 });
+

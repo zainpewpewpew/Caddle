@@ -227,6 +227,29 @@ function comparisonSection(result, baselineName, candidateName) {
   return lines;
 }
 
+/** Perbandingan v3 vs v3 + filter biaya (out-of-sample & in-sample). Kosong bila varian v3c tidak ada. */
+export function costFilterSection(result) {
+  const v3 = result.variants?.v3;
+  const v3c = result.variants?.v3c;
+  if (!v3 || !v3c) return [];
+  const lines = ['## Filter biaya (eksperimen)', '',
+    `Sinyal v3 yang sama, tetapi dilewati bila perkiraan biaya pulang-pergi saat entri melebihi ${isNum(result.meta?.maxCostR) ? `${fmtNumber(result.meta.maxCostR, 2)}R` : 'ambang'} `
+    + '(stop terlalu sempit dibanding fee + slippage). Filter hanya layak dipakai live bila expectancy out-of-sample naik dan sampel tetap memadai.', ''];
+  const rows = [];
+  for (const [sample, key] of [['test', 'testSummary'], ['train', 'trainSummary']]) {
+    const a = v3[key];
+    const b = v3c[key];
+    if (!a && !b) continue;
+    rows.push([SAMPLE_LABEL[sample], 'v3', ...summaryCells(a).slice(0, 5), '—']);
+    rows.push([SAMPLE_LABEL[sample], 'v3 + filter', ...summaryCells(b).slice(0, 5), [
+      `WR ${delta(a?.winRate, b?.winRate, (d) => `${fmtNumber(d * 100, 1)} pp`)}`,
+      `E ${delta(a?.expectancyR, b?.expectancyR, (d) => `${fmtNumber(d, 2)}R`)}`,
+    ].join('; ')]);
+  }
+  lines.push(...table(['Sampel', 'Varian', ...SUMMARY_HEADERS.slice(0, 5), 'Selisih (filter − v3)'], rows), '');
+  return lines;
+}
+
 function calibrationSection(name, variant) {
   const cal = variant?.calibration;
   if (!cal) return [];
@@ -235,6 +258,21 @@ function calibrationSection(name, variant) {
   const metrics = [`ECE: **${fmtPct(cal.ece)}**`, `Brier: **${fmtNumber(cal.brier, 4)}**`];
   if (isNum(cal.brierBaseline)) metrics.push(`Brier baseline (base rate): ${fmtNumber(cal.brierBaseline, 4)}`);
   lines.push(metrics.join(' · '), '');
+  if (cal.methods && typeof cal.methods === 'object') {
+    lines.push(`Perbandingan metode pada data uji yang sama (tabel config memakai **${cal.method ?? '—'}**):`, '');
+    lines.push(...table(['Metode', 'Log-loss', 'Brier', 'ECE'], [
+      ['Base rate train', fmtNumber(cal.logLossBaseline, 4), fmtNumber(cal.brierBaseline, 4), '—'],
+      ...Object.entries(cal.methods).map(([m, q]) => [m === 'platt' ? 'Platt' : m === 'isotonic' ? 'Isotonik' : m,
+        fmtNumber(q?.logLoss, 4), fmtNumber(q?.brier, 4), fmtPct(q?.ece)]),
+    ]), '');
+    const chosen = cal.methods[cal.method];
+    const better = Object.entries(cal.methods).find(([m, q]) => m !== cal.method && isNum(q?.logLoss) && isNum(chosen?.logLoss)
+      && q.logLoss < chosen.logLoss - 0.005);
+    if (better) {
+      lines.push(`> Pada data uji ini metode **${better[0]}** lebih baik (log-loss lebih kecil). Bila konsisten di beberapa `
+        + `periode, tulis kalibrasi dengan \`--calibration-method ${better[0]}\`.`, '');
+    }
+  }
   const bins = Array.isArray(cal.bins) ? cal.bins : [];
   const rows = bins.map((b) => {
     const range = isNum(b.lower) && isNum(b.upper) ? `${fmtNumber(b.lower, 0)}–${fmtNumber(b.upper, 0)}` : (isNum(b.meanScore) ? `≈${fmtNumber(b.meanScore, 0)}` : '—');
@@ -408,6 +446,7 @@ export function renderMarkdownReport(result) {
   lines.push('');
 
   lines.push(...comparisonSection(result, baselineName, candidateName));
+  lines.push(...costFilterSection(result));
 
   const names = Object.keys(result.variants);
   const ordered = [...names.filter((n) => n === baselineName), ...names.filter((n) => n === candidateName), ...names.filter((n) => n !== baselineName && n !== candidateName)];
