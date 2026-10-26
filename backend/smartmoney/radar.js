@@ -23,11 +23,15 @@
 // ─── Skor keyakinan (komponen 0..1) ────────────────────────────────────────────────────────────────
 // breadth   30  log2(1 + klaster independen) / log2(1 + breadthSaturation (5)), maks 1.
 // quality   25  rata-rata per klaster dari rata-rata skor wallet pembeli / 100 (klaster tertaut dihitung sekali).
-// flow      20  log10(1 + netFlowUsd) / log10(1 + flowSaturationUsd (1 jt)); 0 bila net ≤ 0 atau tidak diketahui.
+// flow      20  log10(1 + netFlowUsd) / log10(1 + flowSaturationUsd (1 jt)); 0 bila net ≤ 0, tidak diketahui, atau
+//               cakupan USD tidak memadai (lihat sellRatio) — jumlah sebagian nilai bukan aliran.
 // repeat    15  porsi klaster pembeli yang memiliki wallet dengan ≥ repeatMinBuys (2) SWAP_BUY.
 // recency   10  1 − (now − lastBuyAt) / windowMs.
 // exitPenalty          maks(sellRatio, exitShare); dikurangi exitPenaltyPoints (40) × nilai.
-//                      sellRatio = USD jual / (USD beli + USD jual) bila keduanya diketahui, selain itu jumlah swap.
+//                      sellRatio = USD jual / (USD beli + USD jual) HANYA bila cakupan USD memadai di KEDUA sisi:
+//                      ≥ minUsdCoverage (80 %) swap beli DAN ≥ 80 % swap jual bernilai USD (sisi tanpa swap = cakupan
+//                      penuh). Selain itu rasio jumlah swap jual / (beli + jual) — swap ber-USD tidak diketahui tidak
+//                      pernah dihitung sebagai $0. `usdCoverage` (aditif) = { buy, sell, sufficient }.
 //                      exitShare = Σ bobot wallet keluar / jumlah wallet aktif (FULL_EXIT 1, hanya CEX_DEPOSIT 0,5).
 // concentrationPenalty (porsi klaster terbesar − 0,5) / 0,5, porsi = maks(porsi wallet pembeli, porsi USD beli);
 //                      dikurangi concentrationPenaltyPoints (25) × nilai.
@@ -41,9 +45,17 @@
 //
 // ─── FULL_EXIT ─────────────────────────────────────────────────────────────────────────────────────
 // Per wallet × token: saldo awal = holdingsBefore (bila diketahui, selain itu 0), lalu aktivitas di jendela
-// diterapkan berurutan (direction IN menambah, OUT mengurangi). Bila wallet pernah memegang (saldo awal > 0
-// atau ada SWAP_BUY di jendela), ada aktivitas keluar, dan saldo akhir ≤ (1 − fullExitDropPct) × saldo puncak →
-// FULL_EXIT pada aktivitas keluar terakhir.
+// diterapkan berurutan (direction IN menambah, OUT mengurangi). FULL_EXIT bila wallet pernah memegang (saldo awal
+// > 0 atau ada SWAP_BUY di jendela), saldo akhir ≤ (1 − fullExitDropPct) × saldo puncak, DAN jumlah yang keluar
+// lewat SWAP_SELL + CEX_DEPOSIT ≥ fullExitDropPct × saldo puncak; dicatat pada SWAP_SELL/CEX_DEPOSIT terakhir.
+// Hanya penjualan swap dan deposit exchange yang dapat menghasilkan FULL_EXIT/EXITING: penurunan yang terutama
+// lewat TRANSFER_OUT, LP_ADD, BRIDGE_OUT, BURN, dll. (bisa ke wallet sendiri, pool likuiditas, atau chain lain)
+// hanya menjadi risiko informatif ("dipindah, belum tentu dijual") dan tidak memengaruhi exitShare maupun state.
+//
+// ─── Provenans ─────────────────────────────────────────────────────────────────────────────────────
+// `isSimulated` (aditif) pada RadarToken = true bila ADA aktivitas sumber token itu (setelah saring) dengan
+// isSimulated === true; juga pada setiap buyers[].txs[] dan exitSignals[] (dari aktivitasnya sendiri; FULL_EXIT =
+// salah satu aktivitas keluarnya simulasi). Data simulasi tidak boleh tampil sebagai data live.
 //
 // `holdingsBefore` (opsional): Map<walletKey, Map<tokenKey, number | { qty }>> = saldo pada awal jendela.
 // `holdingChangePct` = perubahan saldo total wallet yang lolos saring; null bila holdingsBefore tidak diberikan,
@@ -51,7 +63,8 @@
 // `prices` (opsional): Map<tokenKey, { priceUsd, at, source }> — hanya dipakai untuk risiko "harga tidak tersedia";
 // nilai USD aliran TIDAK pernah ditaksir dari harga sekarang (nilai tak diketahui tetap tidak dijumlahkan).
 //
-// Ekstensi kontrak (aditif): `excluded.other` (TRANSFER_OUT/BURN/UNKNOWN), `exitSignals[].via` & `.note`.
+// Ekstensi kontrak (aditif): `excluded.other` (TRANSFER_OUT/BURN/UNKNOWN), `exitSignals[].via` & `.note`,
+// `isSimulated` (token, buyers[].txs[], exitSignals[]), `usdCoverage`.
 
 import {
   DISCLAIMERS, EXCLUDING_FLAGS, explorerTxUrl, isQuoteAsset, tokenKey as makeTokenKey, walletKey as makeWalletKey,
@@ -72,6 +85,8 @@ export const DEFAULT_RADAR_PARAMS = Object.freeze({
   accumulatingMaxExitShare: 0.25,
   distributingMinSellRatio: 0.6,
   exitingMinExitShare: 0.5,
+  /** Porsi minimum swap ber-USD di tiap sisi agar rasio jual & komponen aliran memakai USD. */
+  minUsdCoverage: 0.8,
 });
 
 const EXCLUDED_BUCKET = Object.freeze({
@@ -92,7 +107,7 @@ const EXIT_NOTES = Object.freeze({
   SWAP: 'dijual via swap',
   CEX: 'dipindah ke exchange, belum tentu dijual',
   TRANSFER: 'dipindah ke alamat lain, belum tentu dijual',
-  MIXED: 'sebagian dijual via swap, sebagian dipindah (belum tentu dijual)',
+  MIXED: 'sebagian dijual via swap, sebagian dipindah ke exchange (belum tentu dijual)',
 });
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -173,6 +188,7 @@ function txOf(a) {
     type: a.type,
     at: a.blockTime,
     usd: isNum(a.usdValue) ? a.usdValue : null,
+    isSimulated: a.isSimulated === true,
   };
 }
 
@@ -253,31 +269,43 @@ function buildToken(tKey, { chain, token, acts }, ctx) {
   let holdingKnown = holdingsBefore instanceof Map;
   let sumBefore = 0; let sumAfter = 0;
   const fullExitWallets = new Set();
+  const movedOut = []; // turun ≥ fullExitDropPct tetapi bukan lewat swap/deposit exchange → risiko informatif
   for (const [address, w] of perWallet) {
     const wKey = makeWalletKey(chain, address);
     const before = holdingQty(holdingsBefore, wKey, tKey);
     if (before === undefined) holdingKnown = false;
     let qty = before ?? 0;
     let peak = qty;
-    let lastOut = null;
-    const outs = [];
+    let exitQty = 0; // keluar lewat SWAP_SELL / CEX_DEPOSIT
+    let movedQty = 0; // keluar lewat jenis lain (transfer, LP, bridge, burn, …)
+    let lastExit = null;
+    const exitOuts = [];
     for (const a of w.acts) {
       if (!isNum(a.amount) || a.amount <= 0) continue;
       if (a.direction === 'IN') qty += a.amount;
-      else if (a.direction === 'OUT') { qty -= a.amount; lastOut = a; outs.push(a); }
-      peak = Math.max(peak, qty);
+      else if (a.direction === 'OUT') {
+        qty -= a.amount;
+        if (a.type === 'SWAP_SELL' || a.type === 'CEX_DEPOSIT') {
+          exitQty += a.amount; lastExit = a; exitOuts.push(a);
+        } else movedQty += a.amount;
+      }
+      if (qty > peak) peak = qty;
     }
     if (before !== undefined) { sumBefore += before; sumAfter += Math.max(0, qty); }
     const held = (before ?? 0) > 0 || w.buys > 0;
-    if (held && lastOut && peak > 0 && qty <= (1 - p.fullExitDropPct) * peak) {
-      const vias = new Set(outs.map((o) => (o.type === 'SWAP_SELL' ? 'SWAP' : o.type === 'CEX_DEPOSIT' ? 'CEX' : 'TRANSFER')));
+    const dropped = held && peak > 0 && qty <= (1 - p.fullExitDropPct) * peak;
+    if (dropped && lastExit && exitQty >= p.fullExitDropPct * peak) {
+      const vias = new Set(exitOuts.map((o) => (o.type === 'SWAP_SELL' ? 'SWAP' : 'CEX')));
       const via = vias.size === 1 ? [...vias][0] : 'MIXED';
-      const outUsd = outs.every((o) => isNum(o.usdValue)) ? outs.reduce((s, o) => s + o.usdValue, 0) : null;
+      const outUsd = exitOuts.every((o) => isNum(o.usdValue)) ? exitOuts.reduce((s, o) => s + o.usdValue, 0) : null;
       fullExitWallets.add(address);
       exitSignals.push({
-        ...exitOf(lastOut, 'FULL_EXIT'), usd: outUsd, via,
+        ...exitOf(lastExit, 'FULL_EXIT'), usd: outUsd, via,
         note: `kepemilikan turun ≥ ${Math.round(p.fullExitDropPct * 100)}% — ${EXIT_NOTES[via]}`,
+        isSimulated: exitOuts.some((o) => o.isSimulated === true),
       });
+    } else if (dropped && movedQty > 0) {
+      movedOut.push({ address, exitPct: Math.round((exitQty / peak) * 100) });
     }
   }
   for (const holdings of holdingsBefore instanceof Map ? holdingsBefore : []) {
@@ -339,12 +367,20 @@ function buildToken(tKey, { chain, token, acts }, ctx) {
   const quality = independentBuyers > 0
     ? clamp01([...clusters.values()].reduce((s, c) => s + c.scores.reduce((a, v) => a + v, 0) / c.scores.length, 0) / independentBuyers / 100)
     : 0;
-  const flow = isNum(netFlowUsd) && netFlowUsd > 0 ? clamp01(Math.log10(1 + netFlowUsd) / Math.log10(1 + p.flowSaturationUsd)) : 0;
+  // Cakupan USD per sisi: USD dipakai untuk rasio jual & aliran hanya bila kedua sisi cukup lengkap.
+  const buyCoverage = buyCount > 0 ? buyKnownCount / buyCount : null;
+  const sellCoverage = sellCount > 0 ? sellKnownCount / sellCount : null;
+  const usdSufficient = (buyCoverage ?? 1) >= p.minUsdCoverage && (sellCoverage ?? 1) >= p.minUsdCoverage;
+  const flow = usdSufficient && isNum(netFlowUsd) && netFlowUsd > 0
+    ? clamp01(Math.log10(1 + netFlowUsd) / Math.log10(1 + p.flowSaturationUsd))
+    : 0;
   const repeat = independentBuyers > 0 ? [...clusters.values()].filter((c) => c.repeat).length / independentBuyers : 0;
-  const lastBuyAt = buyers.length ? Math.max(...buyers.map((b) => b.lastBuyAt)) : null;
+  // Loop, bukan Math.max(...arr): spread argumen gagal (RangeError) di atas ~125 ribu elemen.
+  let lastBuyAt = null;
+  for (const b of buyers) if (lastBuyAt === null || b.lastBuyAt > lastBuyAt) lastBuyAt = b.lastBuyAt;
   const recency = lastBuyAt === null ? 0 : clamp01(1 - (now - lastBuyAt) / windowMs);
 
-  const sellRatio = grossBuyUsd !== null && grossSellUsd !== null && grossBuyUsd + grossSellUsd > 0
+  const sellRatio = usdSufficient && grossBuyUsd !== null && grossSellUsd !== null && grossBuyUsd + grossSellUsd > 0
     ? grossSellUsd / (grossBuyUsd + grossSellUsd)
     : buyCount + sellCount > 0 ? sellCount / (buyCount + sellCount) : 0;
   let exitWeight = 0;
@@ -358,9 +394,14 @@ function buildToken(tKey, { chain, token, acts }, ctx) {
 
   let topShare = 0;
   if (independentBuyers > 0) {
-    const maxWallets = Math.max(...[...clusters.values()].map((c) => c.wallets));
+    let maxWallets = 0;
+    let maxBuyUsd = 0;
+    for (const c of clusters.values()) {
+      if (c.wallets > maxWallets) maxWallets = c.wallets;
+      if (c.buyUsd > maxBuyUsd) maxBuyUsd = c.buyUsd;
+    }
     topShare = maxWallets / buyers.length;
-    if (isNum(grossBuyUsd) && grossBuyUsd > 0) topShare = Math.max(topShare, Math.max(...[...clusters.values()].map((c) => c.buyUsd)) / grossBuyUsd);
+    if (isNum(grossBuyUsd) && grossBuyUsd > 0) topShare = Math.max(topShare, maxBuyUsd / grossBuyUsd);
   }
   const concentrationPenalty = independentBuyers > 0
     ? clamp01((topShare - p.concentrationThreshold) / (1 - p.concentrationThreshold))
@@ -390,6 +431,11 @@ function buildToken(tKey, { chain, token, acts }, ctx) {
   if (unknownUsdCount > 0) {
     reasons.push(`${unknownUsdCount} swap tanpa nilai USD tidak dijumlahkan — aliran USD hanya dari nilai yang diketahui (bukan dianggap 0)`);
   }
+  if (!usdSufficient) {
+    const pctOf = (v) => (v === null ? '–' : `${Math.round(v * 100)}%`);
+    reasons.push(`Cakupan nilai USD di bawah ${Math.round(p.minUsdCoverage * 100)}% (beli ${pctOf(buyCoverage)}, jual ${pctOf(sellCoverage)}) — `
+      + 'rasio jual memakai jumlah swap dan komponen aliran tidak dihitung');
+  }
   const repeatClusters = [...clusters.values()].filter((c) => c.repeat).length;
   if (repeatClusters > 0) reasons.push(`${repeatClusters} klaster membeli berulang (≥ ${p.repeatMinBuys} kali)`);
   reasons.push(DISCLAIMERS.conviction);
@@ -399,6 +445,10 @@ function buildToken(tKey, { chain, token, acts }, ctx) {
   if (cexCount > 0) risks.push(`${cexCount} deposit ke exchange — dipindah ke exchange, belum tentu dijual`);
   for (const address of [...fullExitWallets].sort()) {
     risks.push(`Wallet ${shortAddress(address)} mengurangi kepemilikan ≥ ${Math.round(p.fullExitDropPct * 100)}% (keluar penuh)`);
+  }
+  for (const m of movedOut.sort((x, y) => cmp(x.address, y.address))) {
+    risks.push(`Wallet ${shortAddress(m.address)} mengurangi kepemilikan ≥ ${Math.round(p.fullExitDropPct * 100)}%, tetapi hanya ${m.exitPct}% `
+      + 'lewat swap/deposit exchange — sisanya dipindah (transfer/LP/bridge), belum tentu dijual; tidak dihitung keluar');
   }
   if (independentBuyers === 1) risks.push('Hanya satu pembeli independen — bukti akumulasi sempit');
   if (concentrationPenalty > 0 && independentBuyers > 0) {
@@ -413,7 +463,12 @@ function buildToken(tKey, { chain, token, acts }, ctx) {
   }
   if (prices instanceof Map && !isNum(prices.get(tKey)?.priceUsd)) risks.push('Harga token saat ini tidak tersedia');
 
-  const times = acts.map((a) => a.blockTime);
+  let firstActivityAt = null;
+  let lastActivityAt = null;
+  for (const a of acts) {
+    if (firstActivityAt === null || a.blockTime < firstActivityAt) firstActivityAt = a.blockTime;
+    if (lastActivityAt === null || a.blockTime > lastActivityAt) lastActivityAt = a.blockTime;
+  }
   return {
     tokenKey: tKey,
     chain,
@@ -429,13 +484,15 @@ function buildToken(tKey, { chain, token, acts }, ctx) {
     holdingChangePct,
     exitSignals,
     excluded,
-    firstActivityAt: Math.min(...times),
-    lastActivityAt: Math.max(...times),
+    firstActivityAt,
+    lastActivityAt,
     state,
     conviction,
     convictionComponents: { breadth, quality, flow, repeat, recency, exitPenalty, concentrationPenalty },
     reasons,
     risks,
+    usdCoverage: { buy: buyCoverage, sell: sellCoverage, sufficient: usdSufficient },
+    isSimulated: acts.some((a) => a.isSimulated === true),
   };
 }
 
@@ -447,5 +504,6 @@ function exitOf(a, type) {
     usd: isNum(a.usdValue) ? a.usdValue : null,
     txHash: a.txHash,
     explorerUrl: a.explorerUrl ?? explorerTxUrl(a.chain, a.txHash),
+    isSimulated: a.isSimulated === true,
   };
 }

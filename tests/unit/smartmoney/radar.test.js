@@ -199,3 +199,100 @@ describe('buildAccumulationRadar', () => {
     expect(r.reasons.some((t) => t.includes('membeli berulang'))).toBe(true);
   });
 });
+
+describe('buildAccumulationRadar — cakupan USD, keluar hanya lewat swap/exchange, provenans', () => {
+  const W6 = [...W, addr(6)];
+  const scores6 = () => scores(W6.map((w) => [w, 80]));
+
+  it('UNIT-SM-RAD-014 rasio jual & aliran memakai USD hanya bila cakupan USD ≥ 80% di kedua sisi; selain itu jumlah swap', () => {
+    // 5 wallet membeli lewat swap token-ke-token (USD tidak diketahui), 1 membeli $50 (diketahui), W0 menjual $2.000.
+    const acts = [
+      ...W.map((w, i) => act({ wallet: w, at: NOW - (10 - i) * HOUR, amount: 20_000, usd: null })),
+      act({ wallet: W6[5], at: NOW - 4 * HOUR, amount: 50, usd: 50 }),
+      act({ wallet: W[0], type: 'SWAP_SELL', at: NOW - 2 * HOUR, amount: 2000, usd: 2000 }),
+    ];
+    const r = only(radar(acts, { walletScores: scores6() }));
+    expect(DEFAULT_RADAR_PARAMS.minUsdCoverage).toBe(0.8);
+    expect(r.usdCoverage).toEqual({ buy: 1 / 6, sell: 1, sufficient: false });
+    expect(r.convictionComponents.exitPenalty).toBeCloseTo(1 / 7, 10); // 1 jual dari 7 swap, bukan $2.000/$2.050
+    expect(r.state).toBe('ACCUMULATING');
+    expect(r.convictionComponents.flow).toBe(0);
+    expect(r.reasons.some((t) => t.startsWith('Cakupan nilai USD di bawah 80% (beli 17%, jual 100%)'))).toBe(true);
+    // perilaku lama (USD sebagian dianggap lengkap) hanya bila diminta lewat parameter
+    expect(only(radar(acts, { walletScores: scores6() }, { minUsdCoverage: 0 })).state).toBe('DISTRIBUTING');
+
+    // cakupan penuh → rasio USD
+    const known = [
+      ...W.slice(0, 3).map((w, i) => act({ wallet: w, at: NOW - (10 - i) * HOUR, amount: 1000, usd: 10_000 })),
+      act({ wallet: W[0], type: 'SWAP_SELL', at: NOW - 2 * HOUR, amount: 100, usd: 20_000 }),
+    ];
+    const k = only(radar(known));
+    expect(k.usdCoverage).toEqual({ buy: 1, sell: 1, sufficient: true });
+    expect(k.convictionComponents.exitPenalty).toBeCloseTo(0.4, 10);
+    expect(k.convictionComponents.flow).toBeGreaterThan(0);
+    expect(k.state).toBe('MIXED');
+  });
+
+  it('UNIT-SM-RAD-015 FULL_EXIT/EXITING hanya dari SWAP_SELL & CEX_DEPOSIT; LP/transfer/bridge = risiko informatif', () => {
+    const buys = W.map((w, i) => act({ wallet: w, at: NOW - (10 - i) * HOUR, amount: 1000, usd: 5000 }));
+    for (const type of ['LP_ADD', 'TRANSFER_OUT', 'BRIDGE_OUT']) {
+      const r = only(radar([...buys, act({ wallet: W[0], type, at: NOW - 2 * HOUR, amount: 1000, usd: null })]));
+      expect(r.state, type).toBe('ACCUMULATING');
+      expect(r.exitSignals, type).toEqual([]);
+      expect(r.convictionComponents.exitPenalty, type).toBe(0);
+      expect(r.risks.some((t) => t.includes('hanya 0% lewat swap/deposit exchange') && t.includes('belum tentu dijual')), type).toBe(true);
+      expect(r.risks.some((t) => t.includes('keluar penuh')), type).toBe(false);
+    }
+    // jual 50 % + pindah 45 % → bukan FULL_EXIT (penjualan swap tetap dihitung di rasio jual)
+    const partial = only(radar([
+      ...buys,
+      act({ wallet: W[0], type: 'SWAP_SELL', at: NOW - 3 * HOUR, amount: 500, usd: 2500 }),
+      act({ wallet: W[0], type: 'TRANSFER_OUT', at: NOW - 2 * HOUR, amount: 450, usd: null }),
+    ]));
+    expect(partial.exitSignals.map((e) => e.type)).toEqual(['SWAP_SELL']);
+    expect(partial.state).not.toBe('EXITING');
+    expect(partial.risks.some((t) => t.includes('hanya 50% lewat swap/deposit exchange'))).toBe(true);
+    // swap 60 % + deposit exchange 35 % → FULL_EXIT via MIXED (teks: dipindah ke exchange, belum tentu dijual)
+    const mixed = only(radar([
+      ...buys,
+      act({ wallet: W[0], type: 'SWAP_SELL', at: NOW - 3 * HOUR, amount: 600, usd: 3000 }),
+      act({ wallet: W[0], type: 'CEX_DEPOSIT', at: NOW - 2 * HOUR, amount: 350, usd: 1750 }),
+      act({ wallet: W[0], type: 'TRANSFER_OUT', at: NOW - HOUR, amount: 10, usd: 50 }),
+    ]));
+    const full = mixed.exitSignals.find((e) => e.type === 'FULL_EXIT');
+    expect(full).toMatchObject({ wallet: W[0], via: 'MIXED', usd: 4750, at: NOW - 2 * HOUR });
+    expect(full.note).toContain('sebagian dijual via swap, sebagian dipindah ke exchange (belum tentu dijual)');
+    expect(mixed.state).toBe('EXITING');
+  });
+
+  it('UNIT-SM-RAD-016 provenans: isSimulated pada RadarToken, buyers[].txs[], dan exitSignals[]', () => {
+    const acts = [
+      act({ wallet: W[0], at: NOW - 5 * HOUR, amount: 1000, usd: 5000 }),
+      act({ wallet: W[1], at: NOW - 4 * HOUR, amount: 1000, usd: 5000 }),
+      act({ wallet: W[0], type: 'SWAP_SELL', at: NOW - 2 * HOUR, amount: 1000, usd: 6000 }),
+    ];
+    const sim = only(radar(acts));
+    expect(sim.isSimulated).toBe(true);
+    expect(sim.buyers.flatMap((b) => b.txs).every((t) => t.isSimulated === true)).toBe(true);
+    expect(sim.exitSignals.map((e) => [e.type, e.isSimulated])).toEqual([['FULL_EXIT', true], ['SWAP_SELL', true]]);
+
+    const live = only(radar(acts.map((a) => ({ ...a, isSimulated: false, provider: 'etherscan' }))));
+    expect(live.isSimulated).toBe(false);
+    expect(live.buyers.flatMap((b) => b.txs).some((t) => t.isSimulated)).toBe(false);
+    expect(live.exitSignals.some((e) => e.isSimulated)).toBe(false);
+
+    // satu aktivitas simulasi di antara data live → token ditandai simulasi; tx lain tetap live
+    const mixed = only(radar([{ ...acts[0], isSimulated: false }, acts[1]]));
+    expect(mixed.isSimulated).toBe(true);
+    expect(mixed.buyers.map((b) => [b.wallet, b.txs[0].isSimulated]).sort()).toEqual([[W[0], false], [W[1], true]]);
+  });
+
+  it('UNIT-SM-RAD-017 > 125 ribu aktivitas pada satu token tidak melempar RangeError', () => {
+    const N = 150_000;
+    const acts = Array.from({ length: N }, (_, i) => act({ wallet: W[i % 5], at: NOW - WINDOW + 1 + i * 500, amount: 1, usd: 1, tx: 10_000_000 + i }));
+    const r = only(radar(acts));
+    expect(r.buyerCount).toBe(5);
+    expect(r.firstActivityAt).toBe(NOW - WINDOW + 1);
+    expect(r.lastActivityAt).toBe(NOW - WINDOW + 1 + (N - 1) * 500);
+  });
+});
