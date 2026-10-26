@@ -5,12 +5,17 @@
 // berjalan (AbortSignal → status ABORTED) dan menunggu sampai selesai sebelum database ditutup.
 // Tanpa adapter provider aktif (SMART_MONEY_PROVIDERS kosong / kunci belum diisi) loop tidak dijadwalkan sama sekali:
 // tidak ada data simulasi sebagai pengganti.
+// Putaran memakai lease lintas proses (backend/smartmoney/syncRunner.js): bila tombol "Sync sekarang" di website
+// sedang menjalankan sinkronisasi di proses server, putaran terjadwal dilewati dan dicoba lagi setelah BUSY_RETRY_MS.
 
 import { createSmartMoneyRepository } from '../backend/smartmoney/repository.js';
 import { runSmartMoneySync, sanitizeProviderMessage } from '../backend/smartmoney/sync.js';
+import { createSyncRunner } from '../backend/smartmoney/syncRunner.js';
 
 /** Jeda default sebelum putaran pertama di worker (memberi waktu bootstrap scanner lebih dulu). */
 export const DEFAULT_INITIAL_DELAY_MS = 60_000;
+/** Jeda sebelum mencoba lagi bila putaran terjadwal dilewati karena sinkronisasi lain sedang berjalan. */
+export const BUSY_RETRY_MS = 60_000;
 
 const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {} });
 
@@ -63,7 +68,6 @@ export function startSmartMoneyLoop({
   let timer = null;
   let nextRunAt = null;
   let running = null;
-  let controller = null;
   let runs = 0;
   let lastStatus = null;
   let lastFinishedAt = null;
@@ -78,6 +82,9 @@ export function startSmartMoneyLoop({
   }
 
   const repo = createSmartMoneyRepository(db, { clock });
+  const runner = createSyncRunner({
+    repo, registry, config: config.smartMoney, owner: `worker:${process.pid}`, clock, logger, syncDeps, runSync,
+  });
 
   function schedule(delay) {
     if (stopped) return;
@@ -92,13 +99,20 @@ export function startSmartMoneyLoop({
     if (running) return running;
     if (stopped) return Promise.resolve(null);
     nextRunAt = null;
-    controller = new AbortController();
-    const signal = controller.signal;
+    let busy = false;
     running = (async () => {
       try {
-        const summary = await runSync({ repo, registry, clock, logger, config: config.smartMoney, signal, ...syncDeps });
-        lastStatus = summary?.status ?? null;
-        if (typeof onRun === 'function') {
+        const result = await runner.runNow({ trigger: 'schedule' });
+        if (result.skipped) {
+          busy = true;
+          logger.info({ holder: result.run?.owner ?? null, trigger: result.run?.trigger ?? null },
+            'putaran terjadwal smart money dilewati: sinkronisasi lain sedang berjalan');
+          return null;
+        }
+        const summary = result.summary;
+        // runner menangkap error putaran (dicatat di log) dan mengembalikan null.
+        lastStatus = summary === null ? 'FAILED' : (summary?.status ?? null);
+        if (summary !== null && typeof onRun === 'function') {
           try {
             onRun(summary);
           } catch (err) {
@@ -111,11 +125,12 @@ export function startSmartMoneyLoop({
         logger.error({ err: sanitizeProviderMessage(err?.message ?? err) }, 'putaran sinkronisasi smart money gagal');
         return null;
       } finally {
-        runs += 1;
-        lastFinishedAt = Math.floor(clock());
+        if (!busy) {
+          runs += 1;
+          lastFinishedAt = Math.floor(clock());
+        }
         running = null;
-        controller = null;
-        schedule(every);
+        schedule(busy ? Math.min(BUSY_RETRY_MS, every) : every);
       }
     })();
     return running;
@@ -144,7 +159,7 @@ export function startSmartMoneyLoop({
         timer = null;
       }
       nextRunAt = null;
-      controller?.abort();
+      await runner.stop();
       if (running) await running;
       logger.info({ runs }, 'loop sinkronisasi smart money berhenti');
     },

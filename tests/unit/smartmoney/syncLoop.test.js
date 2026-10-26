@@ -4,7 +4,7 @@ import { migrate } from '../../../backend/database/migrate.js';
 import { createFixtureProvider } from '../../../backend/smartmoney/providers/fixtureProvider.js';
 import { createProviderRegistry } from '../../../backend/smartmoney/providers/registry.js';
 import { createSmartMoneyRepository } from '../../../backend/smartmoney/repository.js';
-import { DEFAULT_INITIAL_DELAY_MS, scopedLogger, startSmartMoneyLoop } from '../../../worker/smartMoney.js';
+import { BUSY_RETRY_MS, DEFAULT_INITIAL_DELAY_MS, scopedLogger, startSmartMoneyLoop } from '../../../worker/smartMoney.js';
 import { buildScenario } from '../../fixtures/smartmoney/scenario.js';
 
 const MIN = 60_000;
@@ -30,6 +30,9 @@ function fakeTimers() {
     },
   };
 }
+
+/** Biarkan microtask selesai (lease diambil secara async sebelum runSync dipanggil). */
+const settle = () => new Promise((resolve) => { setImmediate(resolve); });
 
 function deferred() {
   let resolve;
@@ -115,6 +118,7 @@ describe('loop sinkronisasi smart money (worker/smartMoney.js)', () => {
     expect(timers.delays()).toEqual([]);
     const second = loop.runNow();
     expect(second).toBe(first);
+    await settle();
     expect(calls).toHaveLength(1);
     gate.resolve({ status: 'DEGRADED' });
     expect(await first).toEqual({ status: 'DEGRADED' });
@@ -157,6 +161,7 @@ describe('loop sinkronisasi smart money (worker/smartMoney.js)', () => {
       },
     });
     const running = loop.runNow();
+    await settle();
     expect(signal.aborted).toBe(false);
     await loop.stop();
     expect(signal.aborted).toBe(true);
@@ -216,6 +221,25 @@ describe('loop sinkronisasi smart money (worker/smartMoney.js)', () => {
     expect(await repo.hasSimulatedData()).toBe(true);
     await loop.stop();
     db.close();
+  });
+
+  it('UNIT-SM-LOOP-010 lease dipegang proses lain (sync manual di server): putaran terjadwal dilewati, dicoba lagi 1 menit', async () => {
+    const { db, loop, timers, calls, logger, now } = setup({ initialDelayMs: 0 });
+    const other = createSmartMoneyRepository(db, { clock: now });
+    expect((await other.acquireSyncLease({ owner: 'server:999', trigger: 'manual', ttlMs: 10 * MIN })).acquired).toBe(true);
+    expect(await loop.runNow()).toBeNull();
+    expect(calls).toHaveLength(0);
+    expect(loop.status()).toMatchObject({ runs: 0, lastStatus: null });
+    expect(timers.delays()).toEqual([BUSY_RETRY_MS]);
+    expect(logger.entries.some((e) => e.level === 'info' && /dilewati/.test(e.msg) && e.fields.holder === 'server')).toBe(true);
+    // Setelah lease dilepas, putaran berikutnya berjalan dan lease worker dilepas lagi di akhir.
+    expect(await other.releaseSyncLease({ owner: 'server:999' })).toBe(true);
+    expect(await loop.runNow()).toEqual({ status: 'OK' });
+    expect(calls).toHaveLength(1);
+    expect(typeof calls[0].onProgress).toBe('function');
+    expect(await other.getSyncLease()).toBeNull();
+    expect(timers.delays()).toEqual([15 * MIN]);
+    await loop.stop();
   });
 
   it('UNIT-SM-LOOP-009 scopedLogger menambah field tetap (child() bila ada; gaya fields,msg & msg,fields)', () => {

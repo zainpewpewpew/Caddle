@@ -25,6 +25,10 @@
 // - Cooldown per pengguna (prefs.cooldownMs): kunci dedupe tersimpan memakai cooldown TETAP server (stabil antar
 //   pengguna); cooldown pengguna diterapkan saat dibaca — alert pertama dalam jeda dipertahankan, sisanya
 //   disembunyikan. Akibatnya cooldown pengguna < cooldown server tidak membuat alert lebih sering dari ember server.
+// - Tombol "Sync sekarang": GET /sync (semua pengguna) = status & progres putaran lintas proses + ringkasan putaran
+//   terakhir; POST /sync (admin, CSRF, rate limit sendiri, audit `smartmoney.sync`) memulai putaran di latar proses
+//   server lewat syncRunner — satu-satunya jalur route yang memicu panggilan provider. Respons POST tidak menunggu
+//   putaran selesai (202) dan tidak pernah memuat error provider mentah (hasil dibaca lewat GET /sync → lastRun).
 
 import { DEFAULT_ALERT_PREFS, filterAlerts, validateAlertPrefs } from '../smartmoney/alerts.js';
 import { matchToken } from '../smartmoney/binanceMatch.js';
@@ -37,6 +41,8 @@ import { redactSecrets } from '../smartmoney/providers/errors.js';
 import { buildAccumulationRadar } from '../smartmoney/radar.js';
 import { linkToScreener } from '../smartmoney/screenerLink.js';
 import { DEFAULT_SYNC_TUNING, SYNC_STATE_KEYS, sanitizeProviderMessage } from '../smartmoney/sync.js';
+import { SyncRunnerError } from '../smartmoney/syncRunner.js';
+import { gateReason } from './workerRoutes.js';
 
 const PREFIX = '/api/smart-money';
 
@@ -63,6 +69,8 @@ const CLUSTER_MEMBERS_MAX = 200;
 const CLUSTER_REASONS_MAX = 200;
 const DETAIL_MESSAGE_MAX = 200;
 const LAST_RUN_LIST_MAX = 20;
+/** Batas per route (per IP) untuk POST /sync, menggantikan batas global; jeda antar-putaran dijaga syncRunner. */
+export const SYNC_ACTION_RATE_LIMIT = Object.freeze({ max: 10, timeWindow: 60_000 });
 const PREF_KEYS = Object.keys(DEFAULT_ALERT_PREFS);
 
 const radarQuerySchema = {
@@ -309,9 +317,10 @@ function createMatcher(mappingRows) {
  *   config: { staleAfterMinutes: number },
  *   clock: () => number,
  *   audit: { record: (entry: object) => Promise<void> },
+ *   syncRunner: ReturnType<typeof import('../smartmoney/syncRunner.js').createSyncRunner>,
  * }} deps config = config.smartMoney (parseSmartMoneyConfig)
  */
-export async function smartMoneyRoutes(app, { repo, signals, registry, config, clock, audit }) {
+export async function smartMoneyRoutes(app, { repo, signals, registry, config, clock, audit, syncRunner }) {
   const staleMs = (config?.staleAfterMinutes ?? 60) * 60_000;
   const nowMs = () => Math.floor(clock());
 
@@ -824,6 +833,68 @@ export async function smartMoneyRoutes(app, { repo, signals, registry, config, c
     }
     const meta = await buildMeta({ now, simulated: Object.values(items).some((i) => i.isSimulated), truncated });
     return { meta, items };
+  });
+
+  // ------------------------------------------------------------------ sinkronisasi ("Sync sekarang")
+
+  const recordSync = (request, outcome, detail) => audit.record({
+    occurredAt: nowMs(), userId: request.auth.user.id, action: 'smartmoney.sync', outcome, ip: request.ip, detail,
+  });
+
+  // Penolakan gerbang authPlugin (analyst → FORBIDDEN, token CSRF hilang/salah → CSRF_INVALID) terjadi sebelum handler;
+  // hook onSend tingkat route tetap berjalan untuk balasan itu. Hanya bila sesi dikenali (pola workerRoutes).
+  const auditSyncGateRejection = async (request, reply, payload) => {
+    if (reply.statusCode !== 403 || !request.auth) return payload;
+    try {
+      await recordSync(request, 'failure', { reason: gateReason(payload) });
+    } catch (err) {
+      request.log.error({ err }, 'gagal mencatat audit penolakan sync smart money');
+    }
+    return payload;
+  };
+
+  // Status dibaca dari database (lease + lastRun), jadi putaran terjadwal milik worker scanner juga terlihat.
+  // reason: NO_PROVIDERS (belum ada sumber data — berlaku untuk semua peran) lebih dulu, lalu NOT_ADMIN.
+  app.get(`${PREFIX}/sync`, NO_QUERY, async (request) => {
+    const [state, lastRunEntry] = await Promise.all([syncRunner.status(), repo.getSyncState(SYNC_STATE_KEYS.lastRun)]);
+    const providersConfigured = registry.list().length;
+    const reason = providersConfigured === 0 ? 'NO_PROVIDERS' : request.auth.user.role !== 'admin' ? 'NOT_ADMIN' : null;
+    return {
+      running: state.running,
+      run: state.run,
+      lastRun: publicLastRun(lastRunEntry),
+      canTrigger: reason === null,
+      reason,
+      cooldownUntil: state.cooldownUntil,
+      providersConfigured,
+      intervalMinutes: config?.syncIntervalMinutes ?? null,
+    };
+  });
+
+  // Body diabaikan: request tidak pernah memengaruhi provider, parameter, maupun cakupan putaran.
+  app.post(`${PREFIX}/sync`, {
+    ...NO_QUERY,
+    config: { roles: ['admin'], rateLimit: SYNC_ACTION_RATE_LIMIT },
+    onSend: auditSyncGateRejection,
+  }, async (request, reply) => {
+    let started;
+    try {
+      started = await syncRunner.start({ trigger: 'manual' });
+    } catch (err) {
+      if (!(err instanceof SyncRunnerError)) {
+        await recordSync(request, 'failure', { reason: 'INTERNAL_ERROR' })
+          .catch((auditErr) => request.log.error({ err: auditErr }, 'gagal mencatat audit sync smart money'));
+        throw err;
+      }
+      await recordSync(request, 'failure', { reason: err.code });
+      if (err.code === 'SYNC_COOLDOWN') {
+        reply.header('Retry-After', String(Math.max(1, Math.ceil(err.retryAfterMs / 1000))));
+        return reply.code(429).send({ error: err.code, message: err.message, retryAfterMs: err.retryAfterMs });
+      }
+      return reply.code(409).send({ error: err.code, message: err.message, ...(err.code === 'SYNC_RUNNING' ? { run: err.run } : {}) });
+    }
+    await recordSync(request, 'success', { trigger: 'manual', providers: registry.list().map((a) => a.id) });
+    return reply.code(202).send({ started: true, run: started.run });
   });
 
   app.get(`${PREFIX}/evaluation`, NO_QUERY, async () => {

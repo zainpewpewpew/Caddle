@@ -486,4 +486,40 @@ describe('repositori smart money', () => {
     await repo.upsertTokens([{ chain: 'ethereum', address: TOKEN, symbol: null, name: null, decimals: null }]);
     expect(await repo.getToken('ethereum', TOKEN)).toMatchObject({ symbol: 'TKA', name: 'Token A', decimals: 18 });
   });
+
+  it('UNIT-SM-REPO-023 lease sinkronisasi lintas proses: eksklusif, kedaluwarsa, perpanjang & lepas hanya oleh pemegang', async () => {
+    const { db } = setup();
+    let t = NOW;
+    const repo = createSmartMoneyRepository(db, { clock: () => t });
+    const TTL = 600_000;
+    const first = await repo.acquireSyncLease({ owner: 'server:1', trigger: 'manual', ttlMs: TTL });
+    expect(first).toMatchObject({ acquired: true, lease: { owner: 'server:1', trigger: 'manual', acquiredAt: NOW, expiresAt: NOW + TTL } });
+    expect(first.lease.progress).toMatchObject({ phase: 'start', done: null, total: null });
+    // Proses lain ditolak selama lease berlaku; pemegang dikembalikan untuk ditampilkan.
+    const other = await repo.acquireSyncLease({ owner: 'worker:2', trigger: 'schedule', ttlMs: TTL });
+    expect(other).toMatchObject({ acquired: false, lease: { owner: 'server:1' } });
+    // Tidak re-entrant: pemilik yang sama (dua permintaan serentak di satu proses) juga ditolak.
+    expect(await repo.acquireSyncLease({ owner: 'server:1', trigger: 'manual', ttlMs: TTL })).toMatchObject({ acquired: false, lease: { owner: 'server:1' } });
+    expect(await repo.renewSyncLease({ owner: 'worker:2', ttlMs: TTL, progress: { phase: 'transfers', done: 1, total: 2 } })).toBe(false);
+    expect(await repo.releaseSyncLease({ owner: 'worker:2' })).toBe(false);
+    // Progres pemegang tersimpan dan memperpanjang masa berlaku; nilai tidak sah dinormalkan.
+    t += 60_000;
+    expect(await repo.renewSyncLease({ owner: 'server:1', ttlMs: TTL, progress: { phase: 'transfers', done: 3, total: 50 } })).toBe(true);
+    expect(await repo.getSyncLease()).toMatchObject({ expiresAt: t + TTL, progress: { phase: 'transfers', done: 3, total: 50, updatedAt: t } });
+    await repo.renewSyncLease({ owner: 'server:1', ttlMs: TTL, progress: { phase: 'analysis', done: -1, total: 1.5 } });
+    expect((await repo.getSyncLease()).progress).toMatchObject({ phase: 'analysis', done: null, total: null });
+    // Pemegang mati tanpa melepas → setelah kedaluwarsa proses lain boleh mengambil alih.
+    t += TTL + 1;
+    expect(await repo.getSyncLease()).toBeNull();
+    const takeover = await repo.acquireSyncLease({ owner: 'worker:2', trigger: 'schedule', ttlMs: TTL });
+    expect(takeover).toMatchObject({ acquired: true, lease: { owner: 'worker:2', trigger: 'schedule', acquiredAt: t } });
+    expect(await repo.releaseSyncLease({ owner: 'server:1' })).toBe(false);
+    expect(await repo.releaseSyncLease({ owner: 'worker:2' })).toBe(true);
+    expect(await repo.getSyncLease()).toBeNull();
+    // Validasi masukan.
+    await expect(repo.acquireSyncLease({ owner: '', trigger: 'manual', ttlMs: TTL })).rejects.toThrow(RangeError);
+    await expect(repo.acquireSyncLease({ owner: 'x', trigger: 'otomatis', ttlMs: TTL })).rejects.toThrow(RangeError);
+    await expect(repo.acquireSyncLease({ owner: 'x', trigger: 'manual', ttlMs: 0 })).rejects.toThrow(RangeError);
+    db.close();
+  });
 });

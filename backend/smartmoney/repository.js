@@ -320,6 +320,14 @@ function mergeKnown(stored, incoming) {
  * @param {import('better-sqlite3').Database} db
  * @param {{ clock?: () => number }} [deps] jam bila `now` tidak diberikan per panggilan (default Date.now)
  */
+/** Kunci sm_sync_state untuk lease putaran sinkronisasi (lihat acquireSyncLease). */
+export const SYNC_LEASE_KEY = 'runLease';
+const LEASE_TRIGGERS = Object.freeze(['manual', 'schedule']);
+
+function assertLeaseOwner(owner) {
+  if (typeof owner !== 'string' || owner.length < 1 || owner.length > 64) throw new RangeError('owner lease tidak valid');
+}
+
 export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}) {
   // WHERE statis dari kode ini sendiri (bukan masukan pengguna); semua nilai tetap parameter terikat.
   const activityQueries = (where) => ({
@@ -517,6 +525,7 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     getSyncState: db.prepare('SELECT value_json, updated_at FROM sm_sync_state WHERE key = ?'),
     setSyncState: db.prepare(`INSERT INTO sm_sync_state (key, value_json, updated_at) VALUES (@key, @value, @now)
       ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`),
+    deleteSyncState: db.prepare('DELETE FROM sm_sync_state WHERE key = ?'),
 
     // --- evaluasi & ringkasan ---
     insertEvaluation: db.prepare(`INSERT INTO sm_evaluations (computed_at, params_json, report_json, is_simulated)
@@ -534,7 +543,41 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     coverageChains: db.prepare(`SELECT chain FROM sm_wallets UNION SELECT DISTINCT chain FROM sm_activities ORDER BY chain`),
   };
 
+  /** Pemegang lease saat ini (null bila tidak ada / rusak). Kedaluwarsa tetap dikembalikan; pemanggil yang menilai. */
+  const readLease = () => {
+    const row = stmt.getSyncState.get(SYNC_LEASE_KEY);
+    if (!row) return null;
+    try {
+      const v = JSON.parse(row.value_json);
+      return v && typeof v.owner === 'string' && Number.isSafeInteger(v.expiresAt) ? v : null;
+    } catch {
+      return null;
+    }
+  };
+  const writeLease = (lease, now) => stmt.setSyncState.run({ key: SYNC_LEASE_KEY, value: json(lease), now });
+
   const tx = {
+    acquireLease: db.transaction((owner, trigger, ttlMs, now) => {
+      const current = readLease();
+      if (current && current.expiresAt > now) return { acquired: false, lease: current };
+      const lease = {
+        owner, trigger, acquiredAt: now, expiresAt: now + ttlMs, progress: { phase: 'start', done: null, total: null, updatedAt: now },
+      };
+      writeLease(lease, now);
+      return { acquired: true, lease };
+    }),
+    renewLease: db.transaction((owner, ttlMs, progress, now) => {
+      const current = readLease();
+      if (!current || current.owner !== owner) return false;
+      writeLease({ ...current, expiresAt: now + ttlMs, progress: progress ? { ...progress, updatedAt: now } : current.progress }, now);
+      return true;
+    }),
+    releaseLease: db.transaction((owner) => {
+      const current = readLease();
+      if (!current || current.owner !== owner) return false;
+      stmt.deleteSyncState.run(SYNC_LEASE_KEY);
+      return true;
+    }),
     upsertWallets: db.transaction((rows) => { for (const r of rows) stmt.upsertWallet.run(r); }),
     upsertLabels: db.transaction((rows) => { for (const r of rows) stmt.upsertLabel.run(r); }),
     upsertTokens: db.transaction((rows) => { for (const r of rows) stmt.upsertToken.run(r); }),
@@ -1180,6 +1223,48 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
       if (typeof key !== 'string' || key.length < 1 || key.length > 64) throw new RangeError('key status sinkronisasi tidak valid');
       if (value === undefined) throw new TypeError('value wajib diisi');
       stmt.setSyncState.run({ key, value: json(value), now });
+    },
+
+    /**
+     * Lease putaran sinkronisasi lintas proses (server dan worker scanner memakai database yang sama): diambil hanya bila
+     * belum ada atau sudah kedaluwarsa (pemegangnya mati tanpa melepas). Tidak re-entrant — pemilik yang sama pun
+     * ditolak selama lease berlaku, jadi dua permintaan serentak di satu proses juga tidak menjalankan dua putaran.
+     * Atomik (BEGIN IMMEDIATE), jadi dua proses tidak pernah sama-sama mendapatkannya.
+     * @param {{ owner: string, trigger: 'manual'|'schedule', ttlMs: number, now?: number }} options
+     * @returns {Promise<{ acquired: boolean, lease: { owner: string, trigger: string, acquiredAt: number, expiresAt: number,
+     *   progress: { phase: string, done: number|null, total: number|null, updatedAt: number } } }>} lease = pemegang saat ini
+     */
+    async acquireSyncLease({ owner, trigger, ttlMs, now = clock() }) {
+      assertLeaseOwner(owner);
+      if (!LEASE_TRIGGERS.includes(trigger)) throw new RangeError('trigger lease tidak valid');
+      if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) throw new RangeError('ttlMs lease harus bilangan bulat > 0');
+      assertTime(now, 'now');
+      return tx.acquireLease.immediate(owner, trigger, ttlMs, now);
+    },
+
+    /** Perpanjang lease milik `owner` (opsional dengan progres terbaru). @returns {Promise<boolean>} false bila bukan pemegang */
+    async renewSyncLease({ owner, ttlMs, progress = null, now = clock() }) {
+      assertLeaseOwner(owner);
+      if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) throw new RangeError('ttlMs lease harus bilangan bulat > 0');
+      assertTime(now, 'now');
+      const p = progress ? {
+        phase: typeof progress.phase === 'string' ? progress.phase.slice(0, 32) : 'start',
+        done: Number.isSafeInteger(progress.done) && progress.done >= 0 ? progress.done : null,
+        total: Number.isSafeInteger(progress.total) && progress.total >= 0 ? progress.total : null,
+      } : null;
+      return tx.renewLease.immediate(owner, ttlMs, p, now);
+    },
+
+    /** Lepas lease milik `owner`. @returns {Promise<boolean>} false bila lease sudah dipegang proses lain / tidak ada */
+    async releaseSyncLease({ owner }) {
+      assertLeaseOwner(owner);
+      return tx.releaseLease.immediate(owner);
+    },
+
+    /** @returns {Promise<object|null>} lease aktif (belum kedaluwarsa pada `now`), atau null */
+    async getSyncLease({ now = clock() } = {}) {
+      const lease = readLease();
+      return lease && lease.expiresAt > now ? lease : null;
     },
 
     /** @returns {Promise<number>} id evaluasi */

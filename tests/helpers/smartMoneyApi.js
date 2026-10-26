@@ -18,12 +18,14 @@ export const SEED_SYNC_TUNING = Object.freeze({ alertMaxEventAgeMs: 24 * 3_600_0
 /**
  * Aplikasi uji smart money.
  * @param {{ providers?: string, seed?: boolean, scenario?: object, fixtureOptions?: object, env?: object,
- *   users?: object[], registry?: (ctx: { config: object, clock: Function, fixture: object }) => object }} [options]
+ *   users?: object[], registry?: (ctx: { config: object, clock: Function, fixture: object }) => object,
+ *   appOptions?: object }} [options]
  *   providers: nilai SMART_MONEY_PROVIDERS ('' = tanpa provider). seed: jalankan satu sinkronisasi di awal.
  *   registry: pembuat registri kustom (default registri live + fixture lewat extraAdapters).
+ *   appOptions: opsi buildApp tambahan (mis. `smartMoneySync` untuk tombol "Sync sekarang").
  */
 export async function createSmartMoneyApp({
-  providers = 'fixture', seed = true, scenario = buildScenario(), fixtureOptions = {}, env = {}, users, registry,
+  providers = 'fixture', seed = true, scenario = buildScenario(), fixtureOptions = {}, env = {}, users, registry, appOptions = {},
 } = {}) {
   const clock = createClock(scenario.now);
   const fixture = createFixtureProvider(scenario, fixtureOptions);
@@ -35,6 +37,7 @@ export async function createSmartMoneyApp({
       smartMoneyRegistry: registry
         ? registry({ config, clock, fixture })
         : createLiveProviderRegistry(config, { clock, extraAdapters: providers ? [fixture] : [] }),
+      ...appOptions,
     }),
   });
   const repo = ctx.app.services.repos.smartMoney;

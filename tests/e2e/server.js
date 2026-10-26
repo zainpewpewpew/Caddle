@@ -41,7 +41,11 @@ const smartMoneyRegistry = seeded
   : undefined;
 // Jeda start ulang 0 khusus E2E: tes desktop & mobile berbagi satu server dan menjalankan/menghentikan scanner
 // berturut-turut. Jeda 10 detik produksi diuji di tests/unit (UNIT-SUP-027) dan tests/negative (NEG-SUP-010).
-const app = await buildApp({ config, db, workerScriptPath, workerRestartCooldownMs: 0, smartMoneyRegistry });
+// Begitu pula jeda antar-"Sync sekarang" (30 detik di produksi; diuji di tests/unit & tests/negative): penyemaian di
+// bawah baru saja menulis putaran terakhir, dan tes desktop & mobile menekan tombol yang sama berturut-turut.
+const app = await buildApp({
+  config, db, workerScriptPath, workerRestartCooldownMs: 0, smartMoneyRegistry, smartMoneySync: { cooldownMs: 0 },
+});
 const { repos, hasher } = app.services;
 for (const user of Object.values(E2E_USERS)) {
   await createUser({ users: repos.users, audit: repos.audit, hasher, maxUsers: config.maxUsers, clock: Date.now }, user);

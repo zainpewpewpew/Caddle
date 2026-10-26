@@ -14,12 +14,14 @@ import { parseArgs } from 'node:util';
 import { ConfigError, loadConfig } from '../backend/app/config.js';
 import { openDatabase } from '../backend/database/connection.js';
 import { migrate } from '../backend/database/migrate.js';
-import { createBinanceRestClient } from '../backend/ingestion/binance/restClient.js';
-import { createNativePriceResolver, enrichNativeUsd } from '../backend/smartmoney/nativePrices.js';
 import { createLiveProviderRegistry } from '../backend/smartmoney/providers/live.js';
 import { createSmartMoneyRepository } from '../backend/smartmoney/repository.js';
 import { runSmartMoneySync, sanitizeProviderMessage } from '../backend/smartmoney/sync.js';
+import { createSyncDeps } from '../backend/smartmoney/syncDeps.js';
 import { startSmartMoneyLoop } from '../worker/smartMoney.js';
+
+// Dipindah ke backend (dipakai juga tombol "Sync sekarang" di server); diekspor ulang untuk pemanggil lama.
+export { createSyncDeps };
 
 /** Teks bantuan `--help`. */
 export const SYNC_USAGE = `Pemakaian: npm run smart-money:sync -- [opsi]
@@ -164,20 +166,6 @@ export function createCliLogger({ verbose = false, write = (line) => process.std
     write(`[${LEVEL_TEXT[name]}] ${typeof msg === 'string' ? msg : ''}${extra ? ` · ${extra}` : ''}`);
   };
   return { trace: at('trace'), debug: at('debug'), info: at('info'), warn: at('warn'), error: at('error'), fatal: at('fatal') };
-}
-
-/**
- * Dependensi tambahan sinkronisasi: penilaian USD kaki koin native per jam (Binance klines, publik) — HANYA bila ada
- * adapter live (data simulasi tidak pernah dinilai dengan harga live).
- * @param {{ list: () => Array<{ isSimulated?: boolean }> }} registry
- * @param {{ createRest?: () => { getKlines: Function } }} [options]
- * @returns {{ nativePrices: object|null, enrichNativeUsd: Function|null }}
- */
-export function createSyncDeps(registry, { createRest = () => createBinanceRestClient() } = {}) {
-  const live = registry.list().some((a) => a.isSimulated !== true);
-  if (!live) return { nativePrices: null, enrichNativeUsd: null };
-  const rest = createRest();
-  return { nativePrices: createNativePriceResolver({ getKlines: (query) => rest.getKlines(query) }), enrichNativeUsd };
 }
 
 /** Promise yang selesai saat SIGINT/SIGTERM pertama diterima (handler dilepas lewat `dispose`). */
