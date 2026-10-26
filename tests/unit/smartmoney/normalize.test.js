@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ZERO_ADDRESS } from '../../../backend/smartmoney/contracts.js';
-import { groupByTransaction, normalizeTransfers } from '../../../backend/smartmoney/normalize.js';
+import { COLLISION_LOG_INDEX_BASE, groupByTransaction, normalizeTransfers } from '../../../backend/smartmoney/normalize.js';
 
 const hex = (c, n) => c.repeat(n);
 const TX1 = `0x${hex('a', 64)}`;
@@ -141,8 +141,8 @@ describe('normalize.normalizeTransfers', () => {
   });
 
   it('UNIT-SM-NRM-009 kegagalan sumber data (masukan bukan array) → hasil kosong, tanpa exception', () => {
-    expect(normalizeTransfers(undefined)).toEqual({ transfers: [], rejected: [], duplicates: 0 });
-    expect(normalizeTransfers(null)).toEqual({ transfers: [], rejected: [], duplicates: 0 });
+    expect(normalizeTransfers(undefined)).toEqual({ transfers: [], rejected: [], duplicates: 0, collisions: 0 });
+    expect(normalizeTransfers(null)).toEqual({ transfers: [], rejected: [], duplicates: 0, collisions: 0 });
   });
 
   it('UNIT-SM-NRM-010 providerCategory tak dikenal → null; isSimulated hanya true bila eksplisit', () => {
@@ -153,6 +153,67 @@ describe('normalize.normalizeTransfers', () => {
     expect(transfers[0].txMeta.providerCategory).toBeNull();
     expect(transfers[0].isSimulated).toBe(false);
     expect(transfers[1].isSimulated).toBe(true);
+  });
+
+  it('UNIT-SM-NRM-013 kunci sama tetapi isi berbeda (logIndex sintetis bentrok) → keduanya dipertahankan, logIndex baru', () => {
+    const ETH = { address: 'native', symbol: 'ETH', name: 'Ether', decimals: 18 };
+    const erc20 = raw({ provider: 'prov-a', usdValue: null, priceSource: null }); // log ERC-20 #0: PEPE masuk
+    const nativeLeg = raw({ provider: 'prov-b', from: WALLET, to: POOL, token: ETH, amount: 1, usdValue: 3000 }); // kaki ETH, logIndex sintetis 0
+    const { transfers, duplicates, collisions } = normalizeTransfers([erc20, nativeLeg]);
+    expect(duplicates).toBe(0);
+    expect(collisions).toBe(1);
+    expect(transfers).toHaveLength(2);
+    expect(transfers[0]).toMatchObject({ logIndex: 0, provider: 'prov-a', usdValue: null, token: { address: PEPE } });
+    expect(transfers[1]).toMatchObject({ logIndex: COLLISION_LOG_INDEX_BASE, provider: 'prov-b', usdValue: 3000, token: { address: 'native' } });
+    // USD kaki ETH tidak dicangkokkan ke transfer PEPE
+    expect(transfers[0].usdValue).toBeNull();
+    // tabrakan kedua pada kunci yang sama → indeks berikutnya, tetap unik & aman sebagai bilangan bulat
+    const third = raw({ provider: 'prov-c', from: WALLET, to: POOL, token: ETH, amount: 2 });
+    const again = normalizeTransfers([erc20, nativeLeg, third]);
+    expect(again.collisions).toBe(2);
+    expect(again.transfers.map((t) => t.logIndex)).toEqual([0, COLLISION_LOG_INDEX_BASE, COLLISION_LOG_INDEX_BASE + 1]);
+    expect(again.transfers.every((t) => Number.isSafeInteger(t.logIndex))).toBe(true);
+    // pengiriman ulang baris yang sama dari provider B tetap duplikat biasa
+    expect(normalizeTransfers([erc20, nativeLeg, { ...nativeLeg }])).toMatchObject({ duplicates: 1, collisions: 1 });
+  });
+
+  it('UNIT-SM-NRM-014 isi sama dengan logIndex berbeda dari provider berbeda (penomoran Solana) → duplikat, tidak digandakan', () => {
+    const SOL_POOL = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
+    const USDC = { address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', symbol: 'USDC', name: null, decimals: 6 };
+    const BONK = { address: SOL_TOKEN, symbol: 'BONK', name: null, decimals: 5 };
+    const sol = (over) => raw({ chain: 'solana', txHash: SOL_TX, txMeta: null, ...over });
+    const fromA = [
+      sol({ provider: 'prov-a', logIndex: 0, from: SOL_WALLET, to: SOL_POOL, token: USDC, amount: 1000, usdValue: 1000 }),
+      sol({ provider: 'prov-a', logIndex: 1, from: SOL_POOL, to: SOL_WALLET, token: BONK, amount: 5e7, usdValue: null }),
+    ];
+    const fromB = [
+      sol({ provider: 'prov-b', logIndex: 2, from: SOL_WALLET, to: SOL_POOL, token: USDC, amount: 1000, usdValue: 1000 }),
+      sol({ provider: 'prov-b', logIndex: 3, from: SOL_POOL, to: SOL_WALLET, token: BONK, amount: 5e7 * (1 + 1e-12), usdValue: 990 }),
+    ];
+    const { transfers, duplicates, collisions } = normalizeTransfers([...fromA, ...fromB]);
+    expect(duplicates).toBe(2);
+    expect(collisions).toBe(0);
+    expect(transfers.map((t) => [t.provider, t.logIndex])).toEqual([['prov-a', 0], ['prov-a', 1]]);
+    expect(transfers[1].usdValue).toBe(990); // dilengkapi dari duplikat
+    // penomoran bergeser (B: 1 = USDC, 2 = BONK) → tabrakan kunci yang sebenarnya duplikat isi
+    const shifted = normalizeTransfers([...fromA, { ...fromB[0], logIndex: 1 }, { ...fromB[1], logIndex: 2 }]);
+    expect(shifted).toMatchObject({ duplicates: 2, collisions: 0 });
+    expect(shifted.transfers).toHaveLength(2);
+  });
+
+  it('UNIT-SM-NRM-015 transfer kembar sah dari provider yang sama tetap dua; provider lain dicocokkan satu-lawan-satu', () => {
+    const twinA = [raw({ provider: 'prov-a', logIndex: 4 }), raw({ provider: 'prov-a', logIndex: 5 })];
+    expect(normalizeTransfers(twinA)).toMatchObject({ duplicates: 0, collisions: 0 });
+    expect(normalizeTransfers(twinA).transfers).toHaveLength(2);
+    // provider B melaporkan kedua kembar dengan penomoran lain → keduanya duplikat (bukan hanya yang pertama)
+    const twinB = [raw({ provider: 'prov-b', logIndex: 8 }), raw({ provider: 'prov-b', logIndex: 9 })];
+    const both = normalizeTransfers([...twinA, ...twinB]);
+    expect(both).toMatchObject({ duplicates: 2, collisions: 0 });
+    expect(both.transfers.map((t) => t.logIndex)).toEqual([4, 5]);
+    // provider C hanya melihat satu → tetap dua transfer, tidak tiga
+    expect(normalizeTransfers([...twinA, raw({ provider: 'prov-c', logIndex: 0 })]).transfers).toHaveLength(2);
+    // jumlah berbeda (bukan pembulatan) → bukan duplikat isi
+    expect(normalizeTransfers([twinA[0], raw({ provider: 'prov-b', logIndex: 7, amount: 1001 })]).transfers).toHaveLength(2);
   });
 
   it('UNIT-SM-NRM-011 masukan tidak dimutasi', () => {

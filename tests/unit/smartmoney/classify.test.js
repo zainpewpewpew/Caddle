@@ -227,12 +227,17 @@ describe('classify — bukan beli/jual', () => {
     expect(acts).toHaveLength(2);
     expect(acts.every((a) => a.type === 'LP_REMOVE' && a.direction === 'IN')).toBe(true);
     expect(acts[0].reason).toMatch(/Tarik likuiditas/);
-    // burn ke ZERO_ADDRESS tanpa label → tetap LP_REMOVE (MEDIUM)
+    // burn ke ZERO_ADDRESS tanpa label + DUA token diterima (pola tarik likuiditas) → tetap LP_REMOVE (MEDIUM).
+    // Burn + satu token diterima tanpa label bukan lagi LP (bisa jual bonding curve) — lihat UNIT-SM-CLS-029.
     const unlabelled = classifyTransaction([
       tr({ tx: txh('e'), from: W, to: ZERO_ADDRESS, token: FOO, amount: 3 }),
       tr({ tx: txh('e'), from: POOL, to: W, token: PEPE, amount: 10 }),
+      tr({ tx: txh('e'), from: POOL, to: W, token: WETH, amount: 0.2 }),
     ], W);
-    expect(unlabelled).toEqual([expect.objectContaining({ type: 'LP_REMOVE', confidence: 'MEDIUM' })]);
+    expect(unlabelled.map((a) => [a.token.address, a.type, a.confidence])).toEqual([
+      [PEPE, 'LP_REMOVE', 'MEDIUM'],
+      [WETH, 'LP_REMOVE', 'MEDIUM'],
+    ]);
   });
 
   it('UNIT-SM-CLS-017 transfer masuk dari EOA tak berlabel → TRANSFER_IN (bukan pembelian)', () => {
@@ -372,5 +377,142 @@ describe('classify — masukan kontradiktif & kasus tepi', () => {
     const b = classifyTransaction([...t].reverse(), W, { labels: LABELS });
     expect(b).toEqual(a);
     expect(t).toEqual(snapshot);
+  });
+});
+
+describe('classify — mint/burn, klaim berbayar, aset quote tambahan', () => {
+  const ETH = 'native';
+  const PTS = addr('d');
+  const ARB_USDCE = '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8';
+  const ARB_TOKEN = '0x912ce59144191c1204e64559fe8253a0e49e6548';
+  const ethLeg = (o) => tr({ token: ETH, symbol: 'ETH', decimals: 18, ...o });
+
+  it('UNIT-SM-CLS-028 swap yang disertai mint token poin: token yang dibeli tetap SWAP_BUY, token poin → MINT (bukan LP)', () => {
+    const acts = classifyTransaction([
+      tr({ from: W, to: ROUTER, token: USDC, amount: 1000 }),
+      tr({ from: POOL, to: W, token: PEPE, amount: 5000 }),
+      tr({ from: ZERO_ADDRESS, to: W, token: PTS, symbol: 'PTS', amount: 10 }),
+    ], W);
+    expect(acts.map((a) => [a.token.address, a.type, a.usdValue])).toEqual([
+      [PEPE, 'SWAP_BUY', 1000],
+      [PTS, 'MINT', null],
+    ]);
+    expect(acts.some((a) => a.type === 'LP_ADD')).toBe(false);
+    expect(acts[1].reason).toMatch(/Mint tambahan/);
+    // kategori provider "lp" + mint non-quote tetap LP (LP satu aset), tanpa label
+    const lpCat = classifyTransaction([
+      tr({ tx: txh('e'), from: W, to: POOL, token: USDC, amount: 1000, meta: { providerCategory: 'lp' } }),
+      tr({ tx: txh('e'), from: ZERO_ADDRESS, to: W, token: PTS, symbol: 'LP', amount: 10, meta: { providerCategory: 'lp' } }),
+    ], W);
+    expect(lpCat).toEqual([expect.objectContaining({ type: 'LP_ADD', confidence: 'HIGH', token: expect.objectContaining({ address: USDC }) })]);
+  });
+
+  it('UNIT-SM-CLS-029 bonding curve: mint saat beli → SWAP_BUY, burn saat jual → SWAP_SELL (bukan LP)', () => {
+    const buy = classifyTransaction([
+      ethLeg({ from: W, to: ROUTER, amount: 1, usd: 3000 }),
+      tr({ from: ZERO_ADDRESS, to: W, token: FOO, amount: 1_000_000 }),
+    ], W);
+    expect(buy).toEqual([expect.objectContaining({ type: 'SWAP_BUY', usdValue: 3000, token: expect.objectContaining({ address: FOO }) })]);
+    const sell = classifyTransaction([
+      tr({ tx: txh('e'), from: W, to: ZERO_ADDRESS, token: FOO, amount: 1_000_000 }),
+      ethLeg({ tx: txh('e'), from: ROUTER, to: W, amount: 0.9, usd: 2700 }),
+    ], W);
+    expect(sell).toEqual([expect.objectContaining({ type: 'SWAP_SELL', usdValue: 2700, token: expect.objectContaining({ address: FOO }) })]);
+    // burn tanpa label + satu token diterima → swap token-ke-token, bukan LP_REMOVE
+    const tokenToToken = classifyTransaction([
+      tr({ tx: txh('f'), from: W, to: ZERO_ADDRESS, token: FOO, amount: 3 }),
+      tr({ tx: txh('f'), from: POOL, to: W, token: PEPE, amount: 10 }),
+    ], W);
+    expect(tokenToToken.map((a) => a.type).sort()).toEqual(['SWAP_BUY', 'SWAP_SELL']);
+    // burn tambahan (gas token) bersama swap → BURN, swap tetap SWAP_SELL
+    const gasToken = classifyTransaction([
+      tr({ tx: txh('9'), from: W, to: POOL, token: PEPE, amount: 100 }),
+      tr({ tx: txh('9'), from: W, to: ZERO_ADDRESS, token: PTS, symbol: 'CHI', amount: 5 }),
+      tr({ tx: txh('9'), from: POOL, to: W, token: USDC, amount: 250 }),
+    ], W);
+    expect(gasToken.map((a) => [a.token.address, a.type, a.usdValue])).toEqual([[PEPE, 'SWAP_SELL', 250], [PTS, 'BURN', null]]);
+  });
+
+  it('UNIT-SM-CLS-030 mint/burn wrapped native (Deposit/Withdrawal WETH) bukan LP; bungkus + swap → SWAP_BUY bernilai sisa quote', () => {
+    const acts = classifyTransaction([
+      ethLeg({ from: W, to: WETH, amount: 1, usd: 3000 }),
+      tr({ from: ZERO_ADDRESS, to: W, token: WETH, amount: 1, usd: 3000 }),
+      tr({ from: W, to: POOL, token: WETH, amount: 0.8, usd: 2400 }),
+      tr({ from: POOL, to: W, token: PEPE, amount: 10_000 }),
+    ], W);
+    expect(acts).toEqual([expect.objectContaining({ type: 'SWAP_BUY', amount: 10_000, usdValue: 2400, token: expect.objectContaining({ address: PEPE }) })]);
+    // bungkus murni ETH → WETH (mint) dan buka WETH (burn) → ETH: swap antar aset quote, bukan LP_ADD/LP_REMOVE
+    const wrap = classifyTransaction([
+      ethLeg({ tx: txh('e'), from: W, to: WETH, amount: 1, usd: 3000 }),
+      tr({ tx: txh('e'), from: ZERO_ADDRESS, to: W, token: WETH, amount: 1 }),
+    ], W);
+    expect(wrap.map((a) => a.type).sort()).toEqual(['SWAP_BUY', 'SWAP_SELL']);
+    expect(wrap[0].reason).toMatch(/aset quote/);
+    const unwrap = classifyTransaction([
+      tr({ tx: txh('f'), from: W, to: ZERO_ADDRESS, token: WETH, amount: 1 }),
+      ethLeg({ tx: txh('f'), from: WETH, to: W, amount: 1, usd: 3000 }),
+    ], W);
+    expect(unwrap.every((a) => a.type === 'SWAP_BUY' || a.type === 'SWAP_SELL')).toBe(true);
+    // kategori provider "lp" tidak menjadikan mint WETH sebagai LP token
+    const lpWeth = classifyTransaction([
+      ethLeg({ tx: txh('9'), from: W, to: WETH, amount: 1, meta: { providerCategory: 'lp' } }),
+      tr({ tx: txh('9'), from: ZERO_ADDRESS, to: W, token: WETH, amount: 1, meta: { providerCategory: 'lp' } }),
+    ], W);
+    expect(lpWeth.every((a) => a.type === 'UNKNOWN')).toBe(true);
+  });
+
+  it('UNIT-SM-CLS-031 klaim berbayar (metode donateAndClaim) → AIRDROP + biaya TRANSFER_OUT, tidak pernah SWAP_BUY', () => {
+    const claim = { method: 'donateAndClaim', initiator: W, toContract: DIST };
+    const acts = classifyTransaction([
+      ethLeg({ from: W, to: DIST, amount: 0.01, usd: 30, meta: claim }),
+      tr({ from: DIST, to: W, token: FOO, amount: 300, meta: claim }),
+    ], W);
+    expect(acts.map((a) => [a.token.address, a.type])).toEqual([[FOO, 'AIRDROP'], [ETH, 'TRANSFER_OUT']]);
+    expect(acts.some(isBuyOrSell)).toBe(false);
+    expect(acts[0]).toMatchObject({ confidence: 'MEDIUM' });
+    expect(acts[0].reason).toMatch(/Klaim\/airdrop berbayar: metode "donateAndClaim"/);
+    // pemrakarsa lain → UNKNOWN (tetap bukan beli)
+    const other = classifyTransaction([
+      ethLeg({ tx: txh('e'), from: W, to: DIST, amount: 0.01, meta: { ...claim, initiator: FRIEND } }),
+      tr({ tx: txh('e'), from: DIST, to: W, token: FOO, amount: 300, meta: { ...claim, initiator: FRIEND } }),
+    ], W);
+    expect(other.every((a) => a.type === 'UNKNOWN')).toBe(true);
+    // kategori provider "swap" tetap dihormati
+    const swapCat = classifyTransaction([
+      ethLeg({ tx: txh('f'), from: W, to: DIST, amount: 0.01, usd: 30, meta: { ...claim, providerCategory: 'swap' } }),
+      tr({ tx: txh('f'), from: DIST, to: W, token: FOO, amount: 300, meta: { ...claim, providerCategory: 'swap' } }),
+    ], W);
+    expect(swapCat[0].type).toBe('SWAP_BUY');
+  });
+
+  it('UNIT-SM-CLS-032 aset quote tambahan (USDC.e Arbitrum, USDT Optimism, BUSD/FDUSD BSC) dinilai 1 USD, tanpa baris jual quote', () => {
+    const arb = classifyTransaction([
+      tr({ chain: 'arbitrum', from: W, to: ROUTER, token: ARB_USDCE, symbol: 'USDC.e', decimals: 6, amount: 25_000 }),
+      tr({ chain: 'arbitrum', from: POOL, to: W, token: ARB_TOKEN, symbol: 'ARB', amount: 50_000 }),
+    ], W);
+    expect(arb).toEqual([expect.objectContaining({ type: 'SWAP_BUY', usdValue: 25_000, token: expect.objectContaining({ address: ARB_TOKEN }) })]);
+    const opUsdt = '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58';
+    const op = classifyTransaction([
+      tr({ chain: 'optimism', from: W, to: ROUTER, token: opUsdt, symbol: 'USDT', decimals: 6, amount: 50_000 }),
+      tr({ chain: 'optimism', from: POOL, to: W, token: '0x4200000000000000000000000000000000000042', symbol: 'OP', amount: 30_000 }),
+    ], W);
+    expect(op.map((a) => [a.type, a.usdValue])).toEqual([['SWAP_BUY', 50_000]]);
+    expect(isStablecoin('bsc', '0xe9e7cea3dedca5984780bafc599bd69add087d56')).toBe(true); // BUSD
+    expect(isStablecoin('bsc', '0xc5f0f7b66764f6ec8c8dff7ba683102295e16409')).toBe(true); // FDUSD
+    expect(isStablecoin('bsc', '0x2170ed0880ac9a755fd29b2688956bd959f933f8')).toBe(false); // Binance-Peg ETH: quote, bukan stablecoin
+    expect(isStablecoin('base', '0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca')).toBe(true); // USDbC
+  });
+
+  it('UNIT-SM-CLS-033 Activity membawa blockNumber & logIndex on-chain terkecil kakinya (null untuk indeks sintetis)', () => {
+    const acts = classifyTransaction([
+      tr({ from: W, to: POOL, token: WETH, amount: 0.5, usd: 1500, logIndex: 41 }),
+      tr({ from: POOL, to: W, token: PEPE, amount: 600, logIndex: 44 }),
+      tr({ from: POOL, to: W, token: PEPE, amount: 400, logIndex: 42 }),
+    ], W);
+    expect(acts[0]).toMatchObject({ blockNumber: 1, logIndex: 42, amount: 1000 });
+    const synthetic = classifyTransaction([
+      tr({ tx: txh('e'), from: FRIEND, to: W, token: PEPE, amount: 5, logIndex: 1e15 + 77 }),
+    ], W);
+    expect(synthetic[0]).toMatchObject({ blockNumber: 1, logIndex: null });
   });
 });
