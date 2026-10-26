@@ -1192,16 +1192,27 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       klineParams(SA, '5m', at5m(65), 4), klineParams(DOWN, '5m', at5m(65), 4),
       klineParams(SA, '15m', T0 + 21 * M15, 2), klineParams(DOWN, '15m', T0 + 21 * M15, 2),
     ]));
-    expect(b.analysed).toEqual([]);
+    await flush();
+    // Bootstrap menyimpan 65..68 sebagai histori; setelah semua bootstrap selesai tiap seri yang sudah punya data
+    // dievaluasi lanjut sekali (reason 'resume') dari kursor analisis — sinyal terbuka langsung mutakhir, tanpa
+    // menunggu candle live berikutnya.
+    const resumed = b.analysed.filter((a) => a.reason === 'resume');
+    expect(resumed.map((a) => `${a.symbol}:${a.timeframe}`).sort()).toEqual(
+      [SA, DOWN].flatMap((s) => ['15m', '1h', '5m'].map((tf) => `${s}:${tf}`)).sort());
+    expect(b.analysed.every((a) => a.reason === 'resume' && a.candles.length === 0)).toBe(true);
+    const resumedSa = resumed.find((a) => a.symbol === SA && a.timeframe === '5m');
+    expect(resumedSa.result.evaluated).toBe(68 - 64);
+    expect((await b.repos.signals.listActive()).find((s) => s.symbol === SA && s.timeframe === '5m')?.updatedAt)
+      .toBe(at5m(69) - 1);
     // Run ke-3: start + rediscovery worker pertama, lalu start worker kedua.
     expect((await b.repos.ingestion.getStatus()).lastRun).toMatchObject({ id: 3, startedAt: restartAt, symbols: 2, candles: 12, errors: 0 });
 
     await driverB.runUntil(END);
-    // Candle live pertama setelah restart me-replay dari kursor analisis (candle terakhir yang dievaluasi, 64):
-    // hanya 65..68 (tersimpan bootstrap saat restart) + 69 — candle 63/64 tidak dievaluasi ulang.
-    const first = b.analysed.find((a) => a.symbol === SA && a.timeframe === '5m');
+    // Candle live pertama setelah restart hanya mengevaluasi 69: 65..68 sudah dievaluasi 'resume' — tidak ada candle
+    // yang dievaluasi dua kali.
+    const first = b.analysed.find((a) => a.symbol === SA && a.timeframe === '5m' && a.reason !== 'resume');
     expect(first).toMatchObject({ reason: 'live', candles: [expect.objectContaining({ openTime: at5m(69) })] });
-    expect(first.result.evaluated).toBe(69 - 64);
+    expect(first.result.evaluated).toBe(1);
 
     expect(await storedSeries(b.repos, SA, '5m')).toEqual(expectedSeries(SA, '5m', [
       [0, BOOT - 1, 'rest'], [BOOT, 64, 'ws'], [65, 68, 'rest'], [69, LAST, 'ws'],

@@ -1,10 +1,10 @@
 import { api } from '../lib/api.js';
 import { badge, callout, dataTable, emptyState, page, panel, score, selectField } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { formatPrice, formatRelative, formatUtc } from '../lib/format.js';
+import { formatPrice, formatUtc } from '../lib/format.js';
 import {
   alignmentBadge, confluenceFieldsOf, confluenceValue, directionOf, formatWinProbability, meetsMinTier, patternBadge,
-  riskBadges, signalStage, tierBadge, tierRank,
+  refreshUpdatedCells, riskBadges, signalStage, tierBadge, tierRank, updatedCell,
 } from './signalFormat.js';
 import { screenerChipInfo } from './smartMoneyFormat.js';
 import { attachChartSidePanel } from './symbolChart.js';
@@ -68,7 +68,8 @@ export function scannerColumns(direction = 'LONG', fields = {}) {
     { key: 'state', label: 'Tahap', render: (r) => signalStage(r.state, dir) },
     { key: 'riskFlags', label: 'Risiko', sortable: false, render: (r) => riskBadges(r.riskFlags) },
     { key: 'firstDetectedAt', label: 'Deteksi pertama', render: (r) => formatUtc(r.firstDetectedAt) },
-    { key: 'updatedAt', label: 'Update', render: (r) => formatRelative(r.updatedAt) },
+    // Waktu tutup candle terakhir yang dievaluasi worker; penanda "Basi" bila > 2 candle tanpa evaluasi baru.
+    { key: 'updatedAt', label: 'Update', render: (r) => updatedCell(r) },
   ];
 }
 
@@ -130,6 +131,8 @@ const SCREENER_LIMIT = 500;
  * Hasilnya dibandingkan dengan muatan sebelumnya pada filter yang sama: baris baru / skor berubah disorot sesaat.
  */
 const REFRESH_MS = 30_000;
+/** Teks relatif kolom "Update" dihitung ulang tiap interval ini, juga saat penyegaran data tidak berjalan. */
+const CLOCK_TICK_MS = 15_000;
 /** Durasi sorotan baris (harus ≥ durasi animasi flash 1.2s di scanner.css). */
 const FLASH_MS = 1_300;
 /** Satu baris tidak disorot ulang lebih dari sekali per detik. */
@@ -195,10 +198,7 @@ function decorateRows(table, rows, flashes, animate, lastFlashAt) {
       tr.style.setProperty('--i', String(Math.min(i, STAGGER_MAX)));
     }
     if (flashes.size === 0) return;
-    const cells = tr.children;
-    // Sel Symbol dapat memuat chip "SM ×N" setelah simbol: baca teks simbolnya saja.
-    const symbolText = cells[0]?.querySelector('.mono')?.textContent ?? cells[0]?.textContent;
-    const row = byText.get(`${symbolText}|${cells[2]?.textContent}`);
+    const row = byText.get(rowTextKey(tr));
     const key = row ? rowKey(row) : null;
     const flash = key ? flashes.get(key) : undefined;
     if (!flash || now - (lastFlashAt.get(key) ?? 0) < FLASH_MIN_GAP_MS) return;
@@ -210,6 +210,32 @@ function decorateRows(table, rows, flashes, animate, lastFlashAt) {
       for (const tr of table.querySelectorAll('tbody tr[data-flash]')) delete tr.dataset.flash;
     }, FLASH_MS);
   }
+}
+
+/** Kunci baris tabel kandidat dari teks sel Symbol + TF (tbody dibuat ulang saat header diurutkan). */
+function rowTextKey(tr) {
+  const cells = tr.children;
+  // Sel Symbol dapat memuat chip "SM ×N" setelah simbol: baca teks simbolnya saja.
+  const symbolText = cells[0]?.querySelector('.mono')?.textContent ?? cells[0]?.textContent;
+  return `${symbolText}|${cells[2]?.textContent}`;
+}
+
+/** Baris yang sedang memegang fokus keyboard di dalam `host` (atau berisi elemen yang fokus); null bila tidak ada. */
+function focusedRowKey(host) {
+  const active = document.activeElement;
+  if (!active || active === document.body || !host.contains(active)) return null;
+  const tr = active.closest('tbody tr');
+  return tr && host.contains(tr) ? rowTextKey(tr) : null;
+}
+
+/** Mengembalikan fokus ke baris yang sama setelah tabel dibuat ulang (penyegaran latar tidak boleh menghilangkan fokus). */
+function restoreRowFocus(host, key) {
+  if (key === null) return;
+  const rows = [...host.querySelectorAll('tbody tr')];
+  const target = rows.find((tr) => rowTextKey(tr) === key);
+  if (!target) return;
+  for (const tr of rows) tr.tabIndex = tr === target ? 0 : -1;
+  target.focus({ preventScroll: true });
 }
 
 /** Radar header dekoratif: berputar hanya saat scanner benar-benar berjalan (state supervisor dari API). */
@@ -325,6 +351,7 @@ async function scannerPage(ctx, direction) {
   let lastSnapshot = null;
   let workerActive = false;
   let refreshTimer = null;
+  let clockTimer = null;
   const lastFlashAt = new Map();
 
   /**
@@ -380,9 +407,11 @@ async function scannerPage(ctx, direction) {
     if (fresh > 0) {
       window.dispatchEvent(new CustomEvent('lr:activity', { detail: { kind: dir === 'SHORT' ? 'bear' : 'bull', count: Math.min(12, 3 + fresh * 2) } }));
     }
+    const keepFocus = background ? focusedRowKey(host) : null;
     host.replaceChildren(...(limitReached
       ? [callout(`Batas ${SCREENER_LIMIT} kandidat tercapai (urut Pattern Score); hasil mungkin terpotong. Persempit filter agar tidak ada kandidat yang terlewat.`, 'warn'), table]
       : [table]));
+    restoreRowFocus(host, keepFocus);
   }
 
   filters.addEventListener('change', () => { load(); });
@@ -391,8 +420,9 @@ async function scannerPage(ctx, direction) {
 
   let el = null;
   /**
-   * Penyegaran latar tiap REFRESH_MS hanya selama scanner berjalan (data dapat berubah), halaman terlihat, dan
-   * fokus keyboard tidak berada di dalam tabel (tabel dibuat ulang → fokus tidak boleh hilang). Berhenti sendiri saat
+   * Penyegaran latar tiap REFRESH_MS selama scanner berjalan (data dapat berubah) dan halaman terlihat. Baris yang
+   * sedang fokus (mis. setelah diklik untuk membuka grafik) mendapat fokusnya kembali setelah tabel dibuat ulang —
+   * dulu penyegaran dilewati selama fokus di tabel, sehingga kolom "Update" membeku berjam-jam. Berhenti sendiri saat
    * halaman dilepas.
    */
   function scheduleRefresh() {
@@ -400,10 +430,21 @@ async function scannerPage(ctx, direction) {
     refreshTimer = setTimeout(async () => {
       refreshTimer = null;
       if (el && !el.isConnected) return;
-      const focusInside = host.contains(document.activeElement) && document.activeElement !== document.body;
-      if (workerActive && !document.hidden && !focusInside) await load({ background: true });
+      if (workerActive && !document.hidden) await load({ background: true });
       if (!el || el.isConnected) scheduleRefresh();
     }, REFRESH_MS);
+  }
+
+  /** "x menit lalu" + penanda Basi dihitung ulang terhadap jam sekarang, juga saat scanner berhenti. */
+  function startClock() {
+    clockTimer = setInterval(() => {
+      if (el && !el.isConnected) {
+        clearInterval(clockTimer);
+        clockTimer = null;
+        return;
+      }
+      if (!document.hidden) refreshUpdatedCells(host);
+    }, CLOCK_TICK_MS);
   }
 
   const status = await workerStatus;
@@ -425,11 +466,14 @@ async function scannerPage(ctx, direction) {
   el.classList.add('page--scanner');
   el.dataset.direction = dir;
   scheduleRefresh();
+  startClock();
   return {
     el,
     cleanup: () => {
       clearTimeout(refreshTimer);
       refreshTimer = null;
+      clearInterval(clockTimer);
+      clockTimer = null;
       chartSide.cleanup();
     },
   };
