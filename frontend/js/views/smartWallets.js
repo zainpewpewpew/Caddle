@@ -11,7 +11,7 @@ import {
 } from './smartMoneyCommon.js';
 import {
   CHAINS, CHAIN_LABELS, EMPTY, SCORE_COMPONENT_LABELS, TRADING_STYLES, buildWalletsQuery, clampScore, clusterEvidenceText,
-  clusterReasonLabel, clusterText, completenessLabel, disclaimersOf, entityPath, evidenceLines, explorerAddressUrl,
+  clusterReasonLabel, clusterText, completenessBasisText, completenessLabel, disclaimersOf, entityPath, evidenceLines, explorerAddressUrl,
   explorerTxUrl, flagInfo, formatDrawdownPct, formatQty, formatRatioPct, isNoSourceState, labelText, parseEntityQuery,
   shortAddress, styleLabel,
 } from './smartMoneyFormat.js';
@@ -48,7 +48,7 @@ export function walletColumns() {
     },
     { key: 'eligible', label: 'Eligible', render: (w) => (w.eligible ? badge('Ya', 'bull') : badge('Tidak')) },
     { key: 'style', label: 'Gaya', render: (w) => styleLabel(w.style) },
-    { key: 'closedTrades', label: 'Trade tertutup', numeric: true, sortValue: (w) => w.metrics?.closedTrades ?? null, render: (w) => formatInteger(w.metrics?.closedTrades) },
+    { key: 'closedTrades', label: 'Posisi tertutup', numeric: true, sortValue: (w) => w.metrics?.closedTrades ?? null, render: (w) => formatInteger(w.metrics?.closedTrades) },
     { key: 'distinctTokens', label: 'Token', numeric: true, sortValue: (w) => w.metrics?.distinctTokens ?? null, render: (w) => formatInteger(w.metrics?.distinctTokens) },
     { key: 'historyDays', label: 'Riwayat (hari)', numeric: true, sortValue: (w) => w.metrics?.historyDays ?? null, render: (w) => formatInteger(w.metrics?.historyDays) },
     { key: 'completeness', label: 'Kelengkapan PnL', sortValue: (w) => w.metrics?.completenessRatio ?? null, render: (w) => completenessCell(w.metrics?.completenessRatio) },
@@ -123,7 +123,7 @@ function scoreCard(s) {
         h('span', { class: 'badge' }, `Gaya: ${styleLabel(s.style)}`)),
       componentBars(s.components, SCORE_COMPONENT_LABELS),
       h('dl', { class: 'kv' },
-        h('dt', null, 'Trade tertutup'), h('dd', { class: 'num' }, formatInteger(m.closedTrades)),
+        h('dt', { title: 'Dihitung per round trip (posisi dibuka sampai datar lagi), bukan per potongan lot' }, 'Posisi tertutup'), h('dd', { class: 'num' }, formatInteger(m.closedTrades)),
         h('dt', null, 'Token berbeda'), h('dd', { class: 'num' }, formatInteger(m.distinctTokens)),
         h('dt', null, 'Lama riwayat'), h('dd', { class: 'num' }, m.historyDays === undefined ? EMPTY : `${formatInteger(m.historyDays)} hari`),
         h('dt', null, 'Median return / trade'), h('dd', { class: 'num' }, pct(m.medianReturnPct)),
@@ -153,7 +153,7 @@ function limitationsBox(data) {
   return h('section', { class: 'sm-limits', 'aria-label': 'Keterbatasan data' },
     h('h2', { class: 'sm-limits__title' }, icon('lock', 'sm-limits__icon'), 'Keterbatasan data'),
     h('p', null, 'Kelengkapan PnL: ', badge(completeness.label, completeness.tone), ' ', formatRatioPct(summary.completenessRatio),
-      ' dari jumlah jual punya biaya beli yang diketahui. Bagian tanpa biaya tidak dihitung sebagai profit.'),
+      ' ', completenessBasisText(summary.completenessBasis), ' Bagian tanpa biaya tidak dihitung sebagai profit.'),
     textList(notes, { empty: h('p', { class: 'muted' }, 'Tidak ada keterbatasan tambahan tercatat.') }));
 }
 
@@ -192,7 +192,11 @@ function pnlPanel(pnl) {
       stat({ label: 'PnL belum realisasi', value: usdText(s.unrealizedPnlUsd, { signed: true, tone: true }), hint: s.unrealizedPnlUsd === null ? 'Harga tidak tersedia' : 'Harga terakhir × lot berbiaya diketahui' }),
       stat({ label: 'Realisasi dari airdrop', value: usdText(s.airdropRealizedUsd, { signed: true }), hint: 'Terpisah — bukan keahlian trading' }),
       stat({ label: 'Total biaya', value: usdText(s.totalCostUsd) }),
-      stat({ label: 'Trade / tertutup', value: `${formatInteger(s.tradesCount)} / ${formatInteger(s.closedTradesCount)}`, hint: `${formatInteger(s.tokensTraded)} token` })));
+      stat({
+        label: 'Transaksi / posisi tertutup',
+        value: `${formatInteger(s.tradesCount)} / ${formatInteger(s.roundTripsCount)}`,
+        hint: `Posisi tertutup dihitung per round trip, bukan per potongan lot · ${formatInteger(s.tokensTraded)} token`,
+      })));
 }
 
 function positionsTable(chain, positions) {

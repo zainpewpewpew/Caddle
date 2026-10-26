@@ -406,6 +406,16 @@ export function completenessLabel(value) {
   return { label: c[0], tone: c[1] };
 }
 
+const COMPLETENESS_BASIS = Object.freeze({
+  USD: 'dari nilai jual (USD) punya biaya beli yang diketahui.',
+  TOKEN_AVERAGE: 'rata-rata per token dari kuantitas jual yang punya biaya beli diketahui (sebagian nilai jual USD tidak diketahui, jadi tidak ditimbang USD).',
+  NONE: 'belum ada penjualan, jadi belum ada PnL realisasi yang bisa tidak lengkap.',
+});
+/** Penjelasan dasar perhitungan `pnl.summary.completenessRatio` (`completenessBasis`: USD | TOKEN_AVERAGE | NONE). */
+export function completenessBasisText(basis) {
+  return COMPLETENESS_BASIS[basis] ?? 'dasar perhitungan tidak diketahui (data lama — sinkronkan ulang).';
+}
+
 const ALERT_LABELS = Object.freeze({
   NEW_BUY: 'Beli baru',
   REPEAT_ACCUMULATION: 'Akumulasi berulang',
