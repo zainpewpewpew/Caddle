@@ -198,6 +198,26 @@
   border-color: var(--lr-bear);
 }
 
+/* aria-disabled: tombol tetap dapat difokus (fokus tidak hilang saat state berubah) tetapi tidak bereaksi. */
+.btn[aria-disabled="true"]:hover {
+  background: var(--lr-surface-2);
+  border-color: var(--lr-border);
+}
+
+.btn--primary[aria-disabled="true"]:hover {
+  background: var(--lr-bull);
+  border-color: var(--lr-bull);
+}
+
+.btn--danger[aria-disabled="true"]:hover {
+  background: transparent;
+  border-color: var(--lr-bear-line);
+}
+
+.btn[aria-disabled="true"]:active {
+  transform: none;
+}
+
 .btn--sm {
   height: 26px;
   padding: 0 var(--lr-space-2);
@@ -265,6 +285,10 @@
 .stage[data-stage="BREAKOUT"] { --lr-stage-color: var(--lr-stage-breakout); }
 .stage[data-stage="INVALIDATED"] { --lr-stage-color: var(--lr-stage-invalid); }
 .stage[data-stage="EXPIRED"] { --lr-stage-color: var(--lr-stage-expired); }
+/* Tahap SHORT. MOMENTUM_BUILDING dipakai kedua arah: sinyal SHORT ditandai data-direction (signalStage()). */
+.stage[data-stage="EARLY_BEARISH"] { --lr-stage-color: var(--lr-stage-early-bear); }
+.stage[data-stage="BREAKDOWN"] { --lr-stage-color: var(--lr-stage-breakdown); }
+.stage[data-direction="SHORT"][data-stage="MOMENTUM_BUILDING"] { --lr-stage-color: var(--lr-stage-momentum-bear); }
 
 .status {
   display: inline-flex;
@@ -334,6 +358,7 @@
 
 .score[data-tone="bull"] .score__fill { background: var(--lr-bull); }
 .score[data-tone="warn"] .score__fill { background: var(--lr-warn); }
+.score[data-tone="bear"] .score__fill { background: var(--lr-bear); }
 
 /* ---- Form ---- */
 .field {
@@ -1011,3 +1036,13 @@ th[aria-sort="descending"] .sort-btn::after {
   min-width: 0;
 }
 
+/* Kontrol scanner persisten (Overview, LONG/SHORT Scanner): callout yang tidak pernah dilepas dari halaman. */
+.worker-bar__state .status {
+  color: var(--lr-text);
+  font-weight: var(--lr-weight-medium);
+  white-space: normal;
+}
+
+.worker-bar__confirm {
+  flex: 1 1 100%;
+}

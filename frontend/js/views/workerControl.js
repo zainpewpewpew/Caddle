@@ -1,4 +1,5 @@
-// Kontrol scanner dari website: kartu "Kontrol scanner" (System Health) dan callout ringkas (Overview).
+// Kontrol scanner dari website: kartu "Kontrol scanner" (System Health) dan kontrol persisten ringkas
+// (Overview, LONG Scanner, SHORT Scanner).
 // Server menjalankan worker sebagai child process terpisah (backend/system/workerSupervisor.js); hanya admin
 // yang dapat menjalankan/menghentikan, analyst hanya melihat state.
 import { ApiError, api } from '../lib/api.js';
@@ -204,8 +205,8 @@ export function workerControlCard({ user, status: initial }) {
   };
 }
 
-/** Isi pesan callout Overview untuk state supervisor. */
-function calloutMessage(status, isAdmin) {
+/** Isi pesan kontrol persisten (Overview, LONG/SHORT Scanner) untuk state supervisor. */
+function barMessage(status, isAdmin) {
   if (canStartWorker(status)) {
     const crashed = status.state === 'crashed';
     const parts = [
@@ -218,110 +219,199 @@ function calloutMessage(status, isAdmin) {
   }
   switch (status?.state) {
     case 'running':
-      return [h('strong', null, 'Scanner berjalan.'), ' Data mulai diperbarui setelah discovery & backfill selesai.'];
+      return [h('strong', null, 'Scanner berjalan.'), ' Satu worker memindai LONG dan SHORT dari candle yang sama. Data mulai diperbarui setelah discovery & backfill selesai.'];
     case 'starting':
       return [h('strong', null, 'Scanner sedang dimulai…')];
     case 'stopping':
-      return [h('strong', null, 'Scanner sedang dihentikan…'), ' Pantau di System Health.'];
+      return [h('strong', null, 'Scanner sedang dihentikan…'), ' Menunggu tugas aktif selesai (maks. 15 detik).'];
     case 'external':
-      return [h('strong', null, 'Scanner berjalan di luar website.')];
+      return [h('strong', null, 'Scanner berjalan di luar website.'), ' Hentikan dari terminal tempat npm run worker dijalankan.'];
     default:
       return [h('strong', null, 'Status scanner tidak diketahui.'), ' Periksa System Health.'];
   }
 }
 
 /**
- * Callout ringkas Overview: tampil bila kontrol aktif dan scanner tidak berjalan; tombol hanya untuk admin.
- * Setelah start berhasil, callout memantau GET /api/system/worker (latar) selama SETTLE_MS: bila worker crash
- * sesaat setelah dijalankan, pesan crash dan tombol "Jalankan scanner" ditampilkan lagi.
+ * Saat state stabil, kontrol tetap menyegarkan state (latar) dengan jeda panjang: Overview dan halaman Scanner tidak
+ * punya auto-refresh, dan pill yang dibiarkan terbuka lama tidak boleh terus menyatakan "Berjalan" bila worker crash.
+ */
+const STEADY_POLL_MS = 30_000;
+/** State berlabel "Hentikan scanner" (aktif hanya saat 'running'); state lain berlabel "Jalankan scanner". */
+const STOP_LABEL_STATES = new Set(['running', 'starting', 'external']);
+
+/**
+ * Kontrol scanner persisten untuk Overview, LONG Scanner, dan SHORT Scanner: pill state + satu tombol toggle.
+ * Elemen TIDAK PERNAH dilepas dari halaman selama WORKER_CONTROL aktif — tombol hanya berganti label dan status:
+ * - "Jalankan scanner" bila scanner dapat dijalankan (berhenti/crash);
+ * - "Hentikan scanner" saat berjalan, dengan konfirmasi inline seperti kartu System Health (role=group, fokus ke
+ *   Batal, Esc menutup);
+ * - tetap tampil tetapi nonaktif (dengan bar progres) selama request, state memulai/menghentikan, dan SETTLE_MS
+ *   pemantauan setelah start; state 'external' menampilkan penjelasan dengan tombol nonaktif.
+ * Tombol nonaktif memakai aria-disabled (bukan atribut disabled) sehingga tetap dapat difokus: fokus keyboard tidak
+ * jatuh ke <body> saat label/state berubah. Analyst hanya melihat pill dan pesan, tanpa tombol.
+ * Satu worker memindai LONG dan SHORT dari candle yang sama, sehingga satu kontrol mencakup kedua arah.
+ * Selama transisi/pemantauan GET /api/system/worker dipantau tiap POLL_MS (latar), selain itu tiap STEADY_POLL_MS.
+ * Halaman pemakainya tidak punya cleanup: polling berhenti sendiri bila elemen sudah tidak ada di halaman. Karena itu
+ * elemen dibuat setelah seluruh await view selesai, tepat sebelum halaman dipasang.
+ * @param {{ user: { role: string }, status: object|null }} options
+ * @returns {HTMLElement|null} null hanya bila kontrol dari website nonaktif (WORKER_CONTROL=false) atau status gagal dibaca.
+ */
+export function workerControlBar({ user, status: initial }) {
+  if (!initial?.enabled) return null;
+  const isAdmin = user?.role === 'admin';
+  let status = initial;
+  let pending = false;
+  let confirming = false;
+  let settleUntil = 0;
+  let pollTimer = null;
+  // Naik setiap kali perintah dikirim: respons polling yang dimulai sebelum perintah itu dianggap basi.
+  let epoch = 0;
+  let shownKey = '';
+  const settling = () => status?.state === 'running' && Date.now() < settleUntil;
+  const busy = () => pending || isWorkerTransitional(status) || settling();
+  const toggleAction = () => {
+    if (canStartWorker(status)) return 'start';
+    return status?.state === 'running' ? 'stop' : null;
+  };
+
+  const stateEl = h('div', { class: 'worker-bar__state', 'data-testid': 'worker-callout-state' });
+  const message = h('p', { id: 'worker-bar-message', 'aria-live': 'polite', 'data-testid': 'worker-callout-message' });
+  const progressEl = progressBar('worker-callout-progress');
+  const errorEl = h('p', { class: 'field__error', role: 'alert', hidden: true });
+  const content = h('div', { class: 'callout__content' }, stateEl, message, progressEl, errorEl);
+  const el = callout([content]);
+  el.classList.add('callout--action', 'worker-bar');
+  el.dataset.testid = 'worker-callout';
+
+  const toggle = isAdmin
+    ? h('button', { class: 'btn btn--sm btn--primary', type: 'button', 'aria-describedby': 'worker-bar-message', on: { click: () => onToggle() } }, 'Jalankan scanner')
+    : null;
+  const confirmBtn = h('button', { class: 'btn btn--sm btn--danger', type: 'button', on: { click: () => confirmStop() } }, 'Ya, hentikan');
+  const cancelBtn = h('button', { class: 'btn btn--sm', type: 'button', on: { click: () => closeConfirm() } }, 'Batal');
+  const confirmEl = h('div', {
+    class: 'worker-control__confirm worker-bar__confirm', role: 'group', 'aria-labelledby': 'worker-bar-confirm-text', hidden: true,
+    on: { keydown: (e) => { if (e.key === 'Escape') closeConfirm(); } },
+  },
+  h('p', { id: 'worker-bar-confirm-text' }, 'Hentikan scanner? Ingesti candle dan analisis pola LONG & SHORT berhenti sampai dijalankan lagi.'),
+  h('div', { class: 'cluster' }, confirmBtn, cancelBtn));
+  if (isAdmin) el.append(toggle, confirmEl);
+
+  function showError(text) {
+    errorEl.textContent = text ?? '';
+    errorEl.hidden = !text;
+  }
+
+  function render() {
+    // Wilayah aria-live hanya diganti saat state berubah, agar refresh berkala tidak diumumkan ulang.
+    const key = `${status?.state}|${workerControlLabel(status).text}`;
+    if (key !== shownKey) {
+      shownKey = key;
+      stateEl.replaceChildren(workerControlPill(status));
+      message.replaceChildren(...barMessage(status, isAdmin));
+    }
+    const crashed = status?.state === 'crashed';
+    el.classList.toggle('callout--bear', crashed);
+    el.classList.toggle('callout--warn', !crashed && canStartWorker(status));
+    el.setAttribute('aria-busy', String(busy()));
+    progressEl.hidden = !busy();
+    if (!toggle) return;
+    const stopLabel = STOP_LABEL_STATES.has(status?.state);
+    const label = stopLabel ? 'Hentikan scanner' : 'Jalankan scanner';
+    if (toggle.textContent !== label) toggle.textContent = label;
+    toggle.classList.toggle('btn--danger', stopLabel);
+    toggle.classList.toggle('btn--primary', !stopLabel);
+    toggle.setAttribute('aria-disabled', String(busy() || confirming || toggleAction() === null));
+    confirmBtn.disabled = pending;
+    cancelBtn.disabled = pending;
+    if (confirming && status?.state !== 'running') closeConfirm({ restoreFocus: false });
+  }
+
+  function onToggle() {
+    if (toggle.getAttribute('aria-disabled') === 'true') return;
+    const action = toggleAction();
+    if (action === 'start') run('start');
+    else if (action === 'stop') openConfirm();
+  }
+
+  function openConfirm() {
+    confirming = true;
+    confirmEl.hidden = false;
+    render();
+    cancelBtn.focus();
+  }
+
+  function closeConfirm({ restoreFocus = true } = {}) {
+    // Fokus di dalam konfirmasi yang disembunyikan dikembalikan ke tombol toggle (tidak hilang ke <body>).
+    const hadFocus = confirmEl.contains(document.activeElement);
+    confirming = false;
+    confirmEl.hidden = true;
+    render();
+    if (restoreFocus || hadFocus) toggle.focus({ preventScroll: true });
+  }
+
+  function confirmStop() {
+    if (pending) return;
+    // Konfirmasi ditutup lebih dulu; tombol toggle (nonaktif selama request, tetap dapat difokus) menerima fokus.
+    closeConfirm();
+    run('stop');
+  }
+
+  async function run(action) {
+    if (pending) return;
+    pending = true;
+    epoch += 1;
+    showError(null);
+    render();
+    try {
+      status = await api(`/api/system/worker/${action}`, { method: 'POST' });
+      settleUntil = action === 'start' ? Date.now() + SETTLE_MS : 0;
+      toast(action === 'start' ? 'Scanner dijalankan' : 'Scanner sedang dihentikan', 'bull');
+    } catch (err) {
+      // Termasuk 429 WORKER_COOLDOWN (jeda start ulang) dan 409 WORKER_EXTERNAL: pesan server ditampilkan apa adanya.
+      showError(workerErrorMessage(err));
+      try {
+        status = await api('/api/system/worker');
+      } catch {
+        // State terakhir yang diketahui tetap ditampilkan.
+      }
+    } finally {
+      pending = false;
+      render();
+      schedulePoll();
+    }
+  }
+
+  function schedulePoll() {
+    clearTimeout(pollTimer);
+    const delay = isWorkerTransitional(status) || settling() ? POLL_MS : STEADY_POLL_MS;
+    pollTimer = setTimeout(async () => {
+      pollTimer = null;
+      // Overview/Scanner tidak punya cleanup: berhenti sendiri bila kontrol sudah tidak ada di halaman.
+      // Selama perintah berjalan, run() menjadwalkan ulang setelah selesai.
+      if (!el.isConnected || pending) return;
+      const started = epoch;
+      try {
+        // Polling otomatis bukan aktivitas pengguna: tidak memperpanjang idle timeout sesi.
+        const next = await api('/api/system/worker', { background: true });
+        if (started !== epoch) return; // perintah baru dikirim selama polling: respons ini basi
+        status = next;
+        render();
+      } catch {
+        if (started !== epoch) return;
+        // Coba lagi pada putaran berikutnya.
+      }
+      if (el.isConnected) schedulePoll();
+    }, delay);
+  }
+
+  render();
+  schedulePoll();
+  return el;
+}
+
+/**
+ * @deprecated Nama lama callout Overview; kini kontrol persisten yang sama (lihat workerControlBar).
  * @param {{ user: { role: string }, status: object|null }} options
  * @returns {HTMLElement|null}
  */
-export function workerStartCallout({ user, status: initial }) {
-  if (!canStartWorker(initial)) return null;
-  const isAdmin = user?.role === 'admin';
-  // tabindex -1: fokus keyboard dipindah ke pesan saat tombol yang ditekan hilang (tidak jatuh ke <body>).
-  const message = h('p', { 'aria-live': 'polite', tabindex: '-1', 'data-testid': 'worker-callout-message' });
-  const errorEl = h('p', { class: 'field__error', role: 'alert', hidden: true });
-  const progressEl = progressBar('worker-callout-progress');
-  const content = h('div', { class: 'callout__content' }, message, progressEl, errorEl);
-  const el = callout([content], 'warn');
-  el.classList.add('callout--action');
-  el.dataset.testid = 'worker-callout';
-  let pollTimer = null;
-  let settleUntil = 0;
-  let pending = false;
-
-  const button = isAdmin ? h('button', {
-    class: 'btn btn--primary btn--sm',
-    type: 'button',
-    on: { click: () => start() },
-  }, 'Jalankan scanner') : null;
-
-  /** Fokus berada di callout (tombol) atau sudah hilang ke <body>. */
-  const focusInCallout = () => {
-    const active = document.activeElement;
-    return !active || active === document.body || el.contains(active);
-  };
-
-  function show(status) {
-    message.replaceChildren(...calloutMessage(status, isAdmin));
-    progressEl.hidden = !(pending || isWorkerTransitional(status) || (status?.state === 'running' && Date.now() < settleUntil));
-    if (!button) return;
-    if (canStartWorker(status)) {
-      button.disabled = false;
-      if (!button.isConnected) el.append(button);
-    } else if (button.isConnected) {
-      const hadFocus = focusInCallout();
-      button.remove();
-      if (hadFocus) message.focus({ preventScroll: true });
-    }
-  }
-
-  function schedulePoll(status) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-    if (!status || Date.now() >= settleUntil || !(status.state === 'running' || isWorkerTransitional(status))) return;
-    pollTimer = setTimeout(async () => {
-      pollTimer = null;
-      // Overview tidak punya cleanup: berhenti sendiri bila callout sudah tidak ada di halaman.
-      if (!el.isConnected) return;
-      let next = status;
-      try {
-        // Polling otomatis bukan aktivitas pengguna: tidak memperpanjang idle timeout sesi.
-        next = await api('/api/system/worker', { background: true });
-        if (!el.isConnected) return;
-        show(next);
-      } catch {
-        // Coba lagi pada putaran berikutnya selama jendela pemantauan.
-      }
-      schedulePoll(next);
-    }, POLL_MS);
-  }
-
-  async function start() {
-    const hadFocus = focusInCallout();
-    button.disabled = true;
-    errorEl.hidden = true;
-    pending = true;
-    progressEl.hidden = false;
-    try {
-      const status = await api('/api/system/worker/start', { method: 'POST' });
-      pending = false;
-      toast('Scanner dijalankan', 'bull');
-      settleUntil = Date.now() + SETTLE_MS;
-      show(status);
-      schedulePoll(status);
-    } catch (err) {
-      pending = false;
-      progressEl.hidden = true;
-      errorEl.textContent = workerErrorMessage(err);
-      errorEl.hidden = false;
-      button.disabled = false;
-      if (hadFocus && !el.contains(document.activeElement)) button.focus({ preventScroll: true });
-    }
-  }
-
-  show(initial);
-  return el;
-}
+export const workerStartCallout = (options) => workerControlBar(options);

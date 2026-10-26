@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { E2E_PORT, E2E_USERS } from './fixtures.js';
 
-const ROUTES = ['overview', 'screener', 'symbol', 'signals', 'lab', 'backtest', 'settings', 'health', 'design-system'];
+const ROUTES = ['overview', 'screener', 'short-scanner', 'symbol', 'signals', 'lab', 'backtest', 'settings', 'health', 'design-system'];
 
 /** Kumpulkan error konsol, error JS, dan pelanggaran CSP selama test. */
 function watchErrors(page) {
@@ -240,16 +240,16 @@ test.describe('sesi bersama', () => {
   test('E2E-NAV-004 skip link memindahkan fokus ke konten tanpa berpindah route', async ({ page }) => {
     await openApp(page);
     await setHash(page, '#/screener');
-    await expect(page.locator('#heading')).toHaveText('LONG Screener');
+    await expect(page.locator('#heading')).toHaveText('LONG Scanner');
     await page.locator('.skip-link').focus();
     await page.keyboard.press('Enter');
     await expect(page.locator('#main')).toBeFocused();
     await expect(page).toHaveURL(/#\/screener$/);
-    await expect(page.locator('#heading')).toHaveText('LONG Screener');
+    await expect(page.locator('#heading')).toHaveText('LONG Scanner');
 
     // Fragmen non-route yang dibuka langsung juga tidak dianggap route Overview.
     await setHash(page, '#main');
-    await expect(page.locator('#heading')).toHaveText('LONG Screener');
+    await expect(page.locator('#heading')).toHaveText('LONG Scanner');
     await expect(page.locator('.nav__link[data-path="/screener"]')).toHaveAttribute('aria-current', 'page');
   });
 

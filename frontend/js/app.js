@@ -8,7 +8,7 @@ import { designSystemView } from './views/designSystem.js';
 import { healthView } from './views/health.js';
 import { labView } from './views/lab.js';
 import { overviewView } from './views/overview.js';
-import { screenerView } from './views/screener.js';
+import { screenerView, shortScannerView } from './views/screener.js';
 import { settingsView } from './views/settings.js';
 import { signalsView } from './views/signals.js';
 import { symbolView } from './views/symbol.js';
@@ -18,7 +18,8 @@ const NAV_KEY = 'lr.nav';
 const ROUTES = [
   { section: 'Pasar' },
   { path: '/overview', label: 'Overview', icon: 'overview', view: overviewView },
-  { path: '/screener', label: 'LONG Screener', icon: 'screener', view: screenerView },
+  { path: '/screener', label: 'LONG Scanner', icon: 'screener', view: screenerView },
+  { path: '/short-scanner', label: 'SHORT Scanner', icon: 'screener-short', view: shortScannerView },
   { path: '/symbol', label: 'Symbol Intelligence', icon: 'symbol', view: symbolView },
   { path: '/signals', label: 'Signal History', icon: 'signals', view: signalsView },
   { section: 'Riset' },
