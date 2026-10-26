@@ -1335,6 +1335,7 @@ th[aria-sort="descending"] .sort-btn::after {
   .sync-bar__fill {
     transition: none;
   }
+}
 
 /* ---- Grafik simbol (Lightweight Charts) & side panel tabel ---- */
 /* Baris tabel yang dapat dipilih (dataTable dengan onRowSelect). */
@@ -1356,6 +1357,23 @@ th[aria-sort="descending"] .sort-btn::after {
 
 .table tbody tr[data-selected] > td:first-child {
   box-shadow: inset 2px 0 0 var(--lr-accent);
+}
+
+/* Mode warna paksa membuang latar & box-shadow: baris terpilih tetap ditandai garis kiri warna sistem
+   (fokus tetap berupa outline baris, sehingga terpilih dan terfokus dapat dibedakan). Garis berupa pseudo-elemen
+   di dalam sel agar tidak terpotong tepi .table-wrap seperti border pada tabel border-collapse. */
+@media (forced-colors: active) {
+  .table tbody tr[data-selected] > td:first-child {
+    position: relative;
+  }
+
+  .table tbody tr[data-selected] > td:first-child::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 4px;
+    background: Highlight;
+  }
 }
 
 /* Tata letak dua kolom: tabel kiri, panel grafik kanan (±40%, min 360px). */
@@ -1501,9 +1519,8 @@ a#tv-attr-logo[data-dark] {
   --stroke: #131722;
 }
 
-/* Arah & tahap SHORT, skor bernada bear. Kode baru tanpa aturan tetap tampil dengan warna netral. */
-.stage[data-stage="EARLY_BEARISH"] { --lr-stage-color: var(--lr-stage-early); }
-.stage[data-stage="BREAKDOWN"] { --lr-stage-color: var(--lr-bear); }
+/* Skor bernada bear (Early Score sinyal SHORT). Warna tahap SHORT sengaja tidak diatur di sini — aturan di akhir
+   berkas akan menimpa token tahap SHORT di samping aturan .stage lain; sampai token itu ada, tahap SHORT netral. */
 .score[data-tone="bear"] .score__fill { background: var(--lr-bear); }
 
 /* Halaman Symbol Intelligence: cari simbol & penjelasan kondisi. */
@@ -1552,12 +1569,23 @@ a#tv-attr-logo[data-dark] {
   color: var(--lr-text-2);
 }
 
-.factor__points {
+.factor__points,
+.factor__score {
   grid-column: 2;
   grid-row: 1 / span 2;
   align-self: center;
   color: var(--lr-bull);
   font-weight: var(--lr-weight-medium);
+}
+
+/* Poin negatif = penalti/selisih detektor (tanda − tetap tertulis). Early Score = skor terpisah, bukan poin. */
+.factor__points[data-sign="negative"] {
+  color: var(--lr-bear);
+}
+
+.factor__score {
+  color: var(--lr-text-2);
+  white-space: nowrap;
 }
 
 @media (max-width: 1100px) {

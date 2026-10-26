@@ -27,6 +27,16 @@ export function directionBadge(direction) {
 }
 
 /**
+ * Tahap sinyal menurut arah. MOMENTUM_BUILDING dipakai kedua arah, jadi sinyal SHORT diberi
+ * `data-direction="SHORT"` agar warnanya dapat dibedakan di CSS. LONG identik dengan stage().
+ */
+export function signalStage(state, direction) {
+  const el = stage(state);
+  if (normalizeDirection(direction) === 'SHORT') el.dataset.direction = 'SHORT';
+  return el;
+}
+
+/**
  * Tautan halaman detail: #/symbol?s=BTCUSDT&tf=15m&dir=LONG&signal=12 (parameter selain s opsional).
  * @param {{ symbol: string, timeframe?: string, direction?: string|null, signalId?: number|null }} target
  */
@@ -68,8 +78,9 @@ export function signalSummary(signal) {
   return h('div', { class: 'stack', 'data-testid': 'chart-signal-info' },
     h('dl', { class: 'kv' },
       row('Arah', directionBadge(dir)),
-      row('Pola', patternBadge(signal.classification)),
-      row('Tahap', typeof signal.state === 'string' ? stage(signal.state) : '—'),
+      // Arah ikut dikirim: BOTH pada SHORT = SD + PVD (patternBadge yang belum mengenal arah mengabaikannya).
+      row('Pola', patternBadge(signal.classification, dir)),
+      row('Tahap', typeof signal.state === 'string' ? signalStage(signal.state, dir) : '—'),
       row('TF sinyal', signal.timeframe ?? '—', { class: 'mono' }),
       row('Pattern Score', isNum(signal.patternScore) ? score(signal.patternScore) : '—'),
       row('Early Score', isNum(signal.earlyScore) ? score(signal.earlyScore, dir === 'SHORT' ? 'bear' : 'bull') : '—'),
@@ -274,7 +285,8 @@ const defaultTarget = (row, direction) => ({
 /**
  * Tata letak dua kolom untuk halaman tabel: tabel (kiri) + panel grafik koin terpilih (kanan, ±40% / min 360px).
  * Layar ≤ 1100px: panel ditumpuk di bawah tabel, digulir ke tampilan, dan menerima fokus. Baris terpilih ditandai
- * aria-selected/data-selected; Esc atau tombol tutup menutup panel dan mengembalikan fokus ke baris.
+ * aria-current/data-selected. Esc (di panel maupun pada baris tabel) atau tombol tutup menutup panel; fokus yang
+ * berada di panel kembali ke baris. Tabel hanya satu tab stop, jadi Tab dari baris langsung masuk ke panel.
  *
  * Hook untuk halaman scanner (satu panggilan + sebar opsi tabel):
  *   const chartSide = attachChartSidePanel({ layoutHost: host, direction: 'LONG' });
@@ -323,17 +335,27 @@ export function attachChartSidePanel({ layoutHost, direction = 'LONG', onSelect,
 
   function close() {
     if (!current) return;
-    const selectedRow = main.querySelector('tbody[data-selectable] tr[aria-selected="true"]');
+    // Baris terpilih; bila sudah tersaring dari tabel, tab stop tabel (agar fokus tidak jatuh ke <body>).
+    const returnRow = main.querySelector('tbody[data-selectable] > tr[data-selected]')
+      ?? main.querySelector('tbody[data-selectable] > tr[tabindex="0"]');
     const focusInside = aside.contains(document.activeElement);
     current.handle.destroy();
     current = null;
+    // Fokus dipindah SEBELUM panel dikosongkan & tanda baris diperbarui, sehingga baris itu tetap memegang tab stop.
+    if (focusInside) returnRow?.focus();
     aside.replaceChildren();
     aside.hidden = true;
     el.dataset.open = 'false';
     refreshRowSelection(main);
-    if (focusInside && selectedRow?.isConnected) selectedRow.focus();
     onClose?.();
   }
+
+  // Esc pada baris tabel juga menutup grafik; fokus tetap di baris (Esc di dalam panel ditangani panel itu sendiri).
+  main.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !current) return;
+    if (!(e.target instanceof Element) || !e.target.matches('tbody[data-selectable] > tr')) return;
+    close();
+  });
 
   function select(row) {
     const target = targetOf(row);

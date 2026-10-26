@@ -61,12 +61,21 @@ export function score(value, tone = 'accent') {
 const ROW_DATA = new WeakMap();
 const SELECTION_PAINTERS = new WeakMap();
 const INNER_CONTROL = 'a, button, input, select, textarea, label, summary, [role="button"]';
+// Tombol navigasi antarbaris tabel yang dapat dipilih → baris tujuan dari baris yang sedang difokus.
+const ROW_NAV_KEYS = {
+  ArrowDown: (tr) => tr.nextElementSibling,
+  ArrowUp: (tr) => tr.previousElementSibling,
+  Home: (tr) => tr.parentNode.firstElementChild,
+  End: (tr) => tr.parentNode.lastElementChild,
+};
 
 /**
  * Tabel data dengan header yang dapat diurutkan (klik / Enter).
- * Opsional `onRowSelect(row)`: baris dapat dipilih (klik, Enter/Spasi saat baris terfokus) dan diberi
- * tabindex=0, kursor pointer, `aria-selected` + `data-selected`. Tanpa opsi ini tabel berperilaku persis seperti
- * sebelumnya. `isRowSelected(row)` (opsional) membuat status terpilih ditentukan pemanggil — dipakai agar seleksi
+ * Opsional `onRowSelect(row)`: baris dapat dipilih (klik, Enter/Spasi saat baris terfokus), kursor pointer,
+ * `aria-current="true"` + `data-selected` pada baris terpilih. Satu tab stop per tabel (roving tabindex: baris
+ * terfokus → terpilih → pertama); panah atas/bawah, Home/End memindahkan fokus antarbaris tanpa memilih, sehingga
+ * Tab langsung keluar dari tabel. Tanpa opsi ini tabel berperilaku persis seperti sebelumnya.
+ * `isRowSelected(row)` (opsional) membuat status terpilih ditentukan pemanggil — dipakai agar seleksi
  * bertahan saat tabel dibuat ulang (filter/refresh); tanpa itu seleksi disimpan per tabel (referensi baris).
  * @param {{ columns: Array<{ key: string, label: string, numeric?: boolean, sortable?: boolean,
  *   render?: (row: any) => any, sortValue?: (row: any) => any }>, rows: any[], empty?: Node,
@@ -98,13 +107,26 @@ export function dataTable({ columns, rows, empty, initialSort, compact = false, 
     });
   };
 
+  const setTabStop = (target) => {
+    for (const tr of tbody.children) tr.tabIndex = tr === target ? 0 : -1;
+  };
+
+  // aria-current, bukan aria-selected: tabel biasa (bukan grid) tidak mengumumkan aria-selected secara andal.
   const paintSelection = () => {
+    let selectedEl = null;
     for (const tr of tbody.children) {
       const on = ROW_DATA.has(tr) && isSelected(ROW_DATA.get(tr));
-      tr.setAttribute('aria-selected', String(on));
-      if (on) tr.dataset.selected = 'true';
-      else delete tr.dataset.selected;
+      if (on) {
+        tr.setAttribute('aria-current', 'true');
+        tr.dataset.selected = 'true';
+        selectedEl ??= tr;
+      } else {
+        tr.removeAttribute('aria-current');
+        delete tr.dataset.selected;
+      }
     }
+    const active = document.activeElement;
+    setTabStop(active?.parentNode === tbody ? active : selectedEl ?? tbody.firstElementChild);
   };
 
   const selectRow = (row) => {
@@ -119,7 +141,7 @@ export function dataTable({ columns, rows, empty, initialSort, compact = false, 
     if (!selectable) return h('tr', null, cellsOf(row));
     const tr = h('tr', {
       class: 'table__row--selectable',
-      tabindex: 0,
+      tabindex: -1, // satu-satunya tab stop (0) ditetapkan paintSelection()
       on: {
         click: (e) => {
           // Kontrol di dalam sel (tautan, tombol) tetap menjalankan aksinya sendiri tanpa memilih baris.
@@ -128,9 +150,18 @@ export function dataTable({ columns, rows, empty, initialSort, compact = false, 
           selectRow(row);
         },
         keydown: (e) => {
-          if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
-          e.preventDefault(); // Spasi tidak menggulir halaman
-          selectRow(row);
+          if (e.target !== e.currentTarget) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault(); // Spasi tidak menggulir halaman
+            selectRow(row);
+            return;
+          }
+          const move = Object.hasOwn(ROW_NAV_KEYS, e.key) && !e.altKey && !e.ctrlKey && !e.metaKey ? ROW_NAV_KEYS[e.key] : null;
+          const next = move?.(e.currentTarget);
+          if (!next) return;
+          e.preventDefault(); // panah/Home/End tidak menggulir halaman
+          setTabStop(next);
+          next.focus();
         },
       },
     }, cellsOf(row));

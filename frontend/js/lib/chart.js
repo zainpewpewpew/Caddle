@@ -219,7 +219,9 @@ export async function createCandleChart(container, { candles = [], timeframe, sy
   let priceLines = [];
   let destroyed = false;
 
-  const canvasHost = h('div', { class: 'chart__canvas', role: 'img', 'data-testid': 'candle-chart' });
+  // role="figure", bukan "img": library memasang tautan logo atribusi (dapat difokus) di dalam elemen ini, dan anak
+  // role="img" bersifat presentasional — tautan yang dapat difokus di dalamnya menjadi kontrol interaktif bersarang.
+  const canvasHost = h('div', { class: 'chart__canvas', role: 'figure', 'data-testid': 'candle-chart' });
   const swatch = (label, key) => h('span', { class: 'chart__legend-item' },
     h('span', { class: 'chart__swatch', 'data-series': key }), label);
   const legend = h('div', { class: 'chart__legend', 'aria-hidden': 'true' },

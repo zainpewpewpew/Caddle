@@ -11,6 +11,7 @@ aturan pola, **bukan probabilitas profit**. AlphaLens tetap alat riset — tidak
 | File vendor library | `GET /vendor/lightweight-charts.js` (`backend/app/buildApp.js`) |
 | Pembungkus grafik | `frontend/js/lib/chart.js` |
 | Panel grafik + helper side panel | `frontend/js/views/symbolChart.js` |
+| Side panel terpasang di tabel kandidat | `frontend/js/views/screener.js` (LONG Screener, route `/screener`) |
 | Halaman detail | `frontend/js/views/symbol.js` (route `/symbol`, label "Symbol Intelligence") |
 | Seleksi baris tabel | `frontend/js/lib/components.js` (`dataTable` opsi `onRowSelect`, `refreshRowSelection`) |
 | Query hash | `frontend/js/lib/router.js` (`splitHash`, `hashQuery`) |
@@ -105,9 +106,11 @@ chart.setMarkers(markers);
 chart.destroy(); // juga otomatis saat container dilepas dari DOM
 ```
 
-- Isi `container` diganti: kanvas (`.chart__canvas`, `role="img"`, `aria-label` = simbol, timeframe, jumlah candle,
+- Isi `container` diganti: kanvas (`.chart__canvas`, `role="figure"`, `aria-label` = simbol, timeframe, jumlah candle,
   close terakhir + waktunya), legenda (EMA7, EMA25, Volume, "Waktu UTC"), dan ringkasan teks tersembunyi visual
-  (`.sr-only`) berisi OHLCV candle terakhir, nilai EMA terakhir, dan daftar level.
+  (`.sr-only`) berisi OHLCV candle terakhir, nilai EMA terakhir, dan daftar level. Bukan `role="img"`: library memasang
+  tautan logo atribusi yang dapat difokus di dalam kanvas, sedangkan anak `role="img"` presentasional (kontrol
+  interaktif bersarang); `figure` boleh memuat tautan itu.
 - Seri: candlestick (warna `--lr-bull` / `--lr-bear`), histogram volume di skala harga sendiri (`priceScaleId: 'volume'`,
   20% bawah), garis EMA7 (`--lr-accent`) dan EMA25 (`--lr-warn`). Harga diformat `formatPrice` (presisi adaptif, id-ID).
 - EMA dihitung di browser oleh `ema(values, period)` — port setia `backend/indicators/ema.js` (alpha `2/(p+1)`, seed
@@ -159,24 +162,30 @@ const chartSide = attachChartSidePanel({ layoutHost, direction: 'LONG', onSelect
   `div.chart-split` (`el`); bila `layoutHost` sudah terpasang, posisinya diambil alih `el`.
 - Layar lebar: tabel kiri, panel kanan (`minmax(360px, 40%)`, sticky di bawah topbar). Layar ≤ 1100px: panel ditumpuk di
   bawah tabel, digulir ke tampilan (`behavior: auto` bila reduced motion) dan menerima fokus.
-- Baris terpilih: `aria-selected="true"` + `data-selected` (dihitung dari `symbol|timeframe|direction`, sehingga tetap
-  tertandai setelah tabel dibuat ulang oleh filter/refresh). Tutup (tombol / Esc) → panel dihapus, grafik dihancurkan,
-  tanda baris dibersihkan, fokus kembali ke baris.
+- Baris terpilih: `aria-current="true"` + `data-selected` (dihitung dari `symbol|timeframe|direction`, sehingga tetap
+  tertandai setelah tabel dibuat ulang oleh filter/refresh). Mode warna paksa (High Contrast) menandainya dengan garis
+  kiri `Highlight` karena latar & box-shadow dibuang. Tutup (tombol, Esc di panel, atau Esc pada baris tabel) → panel
+  dihapus, grafik dihancurkan, tanda baris dibersihkan; fokus yang berada di panel kembali ke baris.
+- Tabel hanya satu tab stop (lihat di bawah), jadi di layar lebar Tab dari baris langsung masuk ke kontrol panel.
 - `toTarget(row, direction)` opsional untuk baris berbentuk lain (default: `row.symbol`, `row.timeframe`,
   `row.direction ?? direction`, `signal: row`).
 
 ### `dataTable` — opsi tambahan (opsional, aditif)
 
-- `onRowSelect(row)`: baris `tabindex=0`, kursor pointer, klik / Enter / Spasi memilih, `aria-selected` + `data-selected`.
-  Klik pada tautan/tombol di dalam sel tidak memilih baris.
+- `onRowSelect(row)`: kursor pointer, klik / Enter / Spasi memilih, `aria-current="true"` + `data-selected` pada baris
+  terpilih (`aria-selected` tidak dipakai: tabel biasa, bukan grid, tidak mengumumkannya secara andal). Roving tabindex:
+  satu baris `tabindex=0` (baris terfokus → terpilih → pertama), sisanya `-1`; panah atas/bawah, Home/End memindahkan
+  fokus antarbaris tanpa memilih. Klik pada tautan/tombol di dalam sel tidak memilih baris.
 - `isRowSelected(row)`: status terpilih ditentukan pemanggil (dipakai side panel). Tanpa itu seleksi per tabel.
 - `refreshRowSelection(scope)`: menggambar ulang tanda seleksi semua tabel ber-`onRowSelect` di dalam `scope`.
 - Tanpa `onRowSelect`, keluaran tabel identik dengan sebelumnya (tidak ada atribut baru).
 
 ### Cara screener memasangnya (satu hook)
 
-`screener.js` (LONG Scanner `/screener`) dan halaman SHORT Scanner (`/short-scanner`) cukup memanggil
-`attachChartSidePanel` sekali per halaman, lalu menyebarkan `tableOptions` ke setiap `dataTable` yang dibuat:
+`screener.js` (LONG Screener `/screener`) sudah memasangnya: klik / Enter pada baris kandidat membuka grafik koin di
+sebelah tabel, dengan tombol "Buka detail" ke `#/symbol`. Halaman scanner lain (mis. SHORT Scanner bila route-nya
+ditambahkan) cukup memanggil `attachChartSidePanel` sekali per halaman dengan arahnya, lalu menyebarkan `tableOptions`
+ke setiap `dataTable` yang dibuat:
 
 ```js
 import { attachChartSidePanel } from './symbolChart.js';
@@ -206,14 +215,22 @@ URL: `#/symbol?s=BTCUSDT&tf=15m&dir=LONG&signal=12` (`tf`, `dir`, `signal` opsio
 query (`splitHash`); view membaca query lewat `hashQuery()`. Semua nilai divalidasi: simbol dinormalisasi ke kapital lalu
 dicek `^[A-Z0-9]{2,30}$`, `tf` ∈ {5m, 15m, 1h}, `dir` ∈ {LONG, SHORT}, `signal` angka.
 
-- **Tanpa simbol:** empty state "Pilih koin terlebih dahulu" dengan tautan ke LONG Scanner (`#/screener`) dan SHORT Scanner
-  (`#/short-scanner`); simbol tidak valid di URL → callout peringatan. Library grafik tidak dimuat.
+- **Tanpa simbol:** empty state "Pilih koin terlebih dahulu" dengan tautan ke LONG Screener (`#/screener`); simbol tidak
+  valid di URL → callout peringatan. Library grafik tidak dimuat. (Tautan SHORT Scanner baru relevan setelah route
+  `/short-scanner` ada.)
 - **Form cari:** input simbol (`role="search"`, saran dari simbol yang pernah punya sinyal), validasi klien yang sama.
+  Pencarian baru selalu ke `#/symbol?s=<SIMBOL>` saja — `dir`/`tf`/`signal` halaman sebelumnya tidak ikut terbawa.
 - **Grafik besar** (480px) memakai panel di atas, dengan level dari sinyal fokus dan penanda transisi sinyal searah pada
   timeframe yang tampil. Ganti timeframe memperbarui URL (`history.replaceState`) tanpa render ulang.
 - **Sinyal fokus:** `signal` dari URL → sinyal terbaru arah & timeframe yang diminta → sinyal terbaru arah yang diminta.
-  Panel "Sinyal terakhir/dipilih", "Penjelasan kondisi" (faktor `explanation` dari API beserta poinnya), dan
-  "Transisi tahap" (timeline event).
+  Panel "Sinyal dipilih" (hanya bila `signal` dari URL ditemukan) atau "Sinyal terakhir", "Penjelasan kondisi", dan
+  "Transisi tahap" (timeline event). `signal` yang tidak ada di riwayat termuat → callout peringatan, fokus jatuh ke
+  sinyal terakhir. `dir` hanya menyaring sinyal fokus (tabel riwayat tetap memuat semua arah); bila arah itu tidak punya
+  sinyal, pesan kosong menyebut arahnya ("Belum ada sinyal SHORT untuk simbol ini; …").
+- **Penjelasan kondisi:** faktor `explanation` dari API. Poin (`+`/`−`) hanya untuk `PATTERN:<pola>:<kondisi>` — jumlahnya
+  membentuk Pattern Score, termasuk `RESIDUAL` (selisih/penalti detektor, bisa negatif). `EARLY:*` membawa Early Score
+  utuh (skor terpisah), jadi tampil sebagai "Early Score N", bukan poin. `PATTERN:SELECTION`, `CONTEXT:*`, `RISK:*`
+  informatif tanpa angka.
 - **Riwayat sinyal** (`GET /api/signals/history?symbol=…&limit=100`, tanpa parameter `direction` sehingga kompatibel
   sebelum/sesudah backend arah): badge arah, TF, pola, harga deteksi, invalidasi, tahap, jalur transisi. Klik baris →
   sinyal itu menjadi fokus (URL `signal=`). Gagal memuat riwayat tidak menggagalkan grafik.
@@ -224,5 +241,7 @@ Sesuai arahan pemilik, pengujian dilakukan sendiri oleh pemilik; perubahan ini h
 Tidak ada tes baru yang ditambahkan dan tidak ada tes yang dijalankan. Area yang disarankan untuk diuji: validasi
 `/api/market/candles` (tanpa sesi 401, parameter salah 400, simbol tak dikenal `items: []`, urutan naik, `limit`),
 `GET /vendor/lightweight-charts.js` (200, tipe JavaScript, path lain di `/vendor/` 404), kesetaraan `ema()` klien dengan
-backend, `dataTable` tanpa `onRowSelect` tetap identik, router `splitHash`, serta E2E side panel (klik/Enter baris,
-tutup/Esc, fokus kembali) dan halaman detail di viewport desktop & mobile.
+backend, `dataTable` tanpa `onRowSelect` tetap identik, router `splitHash`, serta E2E side panel di `#/screener`
+(klik/Enter baris, panah/Home/End antarbaris, Tab dari baris ke panel, tutup/Esc di panel maupun di baris, fokus
+kembali, mode warna paksa) dan halaman detail (`signal` tidak ditemukan, `dir` tanpa sinyal, poin penjelasan negatif /
+Early Score) di viewport desktop & mobile.

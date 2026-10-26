@@ -3,6 +3,7 @@ import { badge, callout, dataTable, emptyState, page, panel, score, selectField 
 import { h } from '../lib/dom.js';
 import { formatPrice, formatRelative, formatUtc } from '../lib/format.js';
 import { alignmentBadge, directionOf, patternBadge, riskBadges, signalStage } from './signalFormat.js';
+import { attachChartSidePanel } from './symbolChart.js';
 import { workerControlBar } from './workerControl.js';
 
 /**
@@ -50,7 +51,7 @@ const SCANNERS = {
     iconName: 'screener',
     emptyTitle: 'Belum ada kandidat LONG',
     emptyText: 'Kandidat muncul setelah worker mengingesti candle tertutup Binance dan detektor SA/PVA menemukan pola. Tidak ada data contoh yang ditampilkan.',
-    footer: 'Hanya sinyal dari candle tertutup. Alignment = konteks timeframe lebih tinggi, tidak membuang pola.',
+    footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup. Alignment = konteks timeframe lebih tinggi, tidak membuang pola.',
   },
   SHORT: {
     title: 'SHORT Scanner',
@@ -65,7 +66,7 @@ const SCANNERS = {
     iconName: 'screener-short',
     emptyTitle: 'Belum ada kandidat SHORT',
     emptyText: 'Kandidat muncul setelah worker mengingesti candle tertutup Binance dan detektor SD/PVD menemukan pola distribusi. Tidak ada data contoh yang ditampilkan.',
-    footer: 'Hanya sinyal dari candle tertutup. Alignment relatif terhadap arah SHORT (Aligned = timeframe lebih tinggi sedang turun), tidak membuang pola. Riset saja — tidak ada eksekusi order.',
+    footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup. Alignment relatif terhadap arah SHORT (Aligned = timeframe lebih tinggi sedang turun), tidak membuang pola. Riset saja — tidak ada eksekusi order.',
   },
 };
 
@@ -97,7 +98,8 @@ function emptyResult(filtered, cfg) {
 }
 
 /**
- * Halaman scanner satu arah (LONG atau SHORT): filter server, tabel kandidat, dan kontrol scanner persisten.
+ * Halaman scanner satu arah (LONG atau SHORT): filter server, tabel kandidat dengan side panel grafik koin, dan
+ * kontrol scanner persisten. Mengembalikan { el, cleanup } agar grafik dihancurkan saat pindah halaman.
  * @param {{ user?: { role: string } }|undefined} ctx
  * @param {'LONG'|'SHORT'} direction
  */
@@ -118,6 +120,9 @@ async function scannerPage(ctx, direction) {
 
   const count = badge('0 hasil');
   const host = h('div', { 'data-testid': cfg.testId });
+  // Klik / Enter pada baris kandidat → grafik koin di sebelah tabel (layar sempit: di bawahnya) untuk arah halaman ini,
+  // dengan tombol "Buka detail" ke Symbol Intelligence. Pilihan bertahan saat tabel dibuat ulang oleh filter.
+  const chartSide = attachChartSidePanel({ layoutHost: host, direction: dir });
   let request = 0;
 
   async function load() {
@@ -143,6 +148,7 @@ async function scannerPage(ctx, direction) {
       caption: cfg.caption,
       initialSort: { key: 'earlyScore', dir: 'desc' },
       empty: emptyResult(filtered, cfg),
+      ...chartSide.tableOptions,
     });
     host.replaceChildren(...(limitReached
       ? [callout(`Batas ${SCREENER_LIMIT} kandidat tercapai (urut Pattern Score); hasil mungkin terpotong. Persempit filter agar tidak ada kandidat yang terlewat.`, 'warn'), table]
@@ -155,9 +161,10 @@ async function scannerPage(ctx, direction) {
   // Dibuat setelah semua await: kontrol menghentikan polling-nya sendiri bila tidak terpasang di halaman.
   const control = workerControlBar({ user: ctx?.user, status: await workerStatus });
 
-  return page({ title: cfg.title, subtitle: cfg.subtitle },
+  const el = page({ title: cfg.title, subtitle: cfg.subtitle },
     control,
-    panel({ title: cfg.panelTitle, actions: count, flush: true, footer: cfg.footer }, filters, host));
+    panel({ title: cfg.panelTitle, actions: count, flush: true, footer: cfg.footer }, filters, chartSide.el));
+  return { el, cleanup: () => chartSide.cleanup() };
 }
 
 /** LONG Scanner (route /screener). Tetap dapat dipanggil tanpa argumen seperti sebelumnya. */
