@@ -12,8 +12,10 @@
 // - Identitas wallet = walletKey(chain, wallet) apa adanya: alamat diharapkan sudah kanonik (keluaran classify.js) dan
 //   TIDAK dinormalisasi ulang, agar kuncinya sama dengan yang dipakai radar.js & alerts.js.
 // - Klaster dihitung PER CHAIN (linkWallets menerima satu chain) hanya atas wallet di universe; wallet di chain berbeda
-//   tidak pernah ditautkan. Penanda LINKED (LOW, clusters.linkedFlag) disisipkan sebelum skor dihitung: tidak
-//   mengecualikan, hanya tampil sebagai keterbatasan; radar menghitung satu klaster sebagai satu pembeli independen.
+//   tidak pernah ditautkan. Penanda wallet (langkah 1) ikut dikirim ke linkWallets: wallet yang dikecualikan
+//   (isExcluded) atau ditandai BOT/MEV tidak ikut penautan — bukan anggota maupun jembatan (lihat clusters.js).
+//   Penanda LINKED (LOW, clusters.linkedFlag) disisipkan sebelum skor dihitung: tidak mengecualikan, hanya tampil
+//   sebagai keterbatasan; radar menghitung satu klaster sebagai satu pembeli independen.
 // - Penanda dihitung dengan `pnl` & `now` (ekstensi walletFlags.js) tanpa `txTimes` (Activity tidak membawa
 //   blockNumber). Skor & kelayakan hanya membaca PnL realisasi — `prices` hanya memengaruhi unrealized PnL.
 //
@@ -140,14 +142,14 @@ export function analyzeUniverse({ activities, labels, prices, now } = {}, params
     g.flags = detectWalletFlags({ chain: g.chain, address: g.address, activities: g.acts, labels, pnl: g.pnl, now }, p.flags);
   }
 
-  // 2. Klaster per chain, hanya atas wallet di universe.
+  // 2. Klaster per chain, hanya atas wallet di universe; penanda ikut agar wallet BOT/MEV/dikecualikan tidak menautkan.
   const chains = [...new Set(keys.map((k) => groups.get(k).chain))].sort(cmp);
   const linkResults = new Map();
   const clusters = [];
   const links = [];
   for (const chain of chains) {
     const members = keys.filter((k) => groups.get(k).chain === chain)
-      .map((k) => ({ address: groups.get(k).address, activities: groups.get(k).acts }));
+      .map((k) => ({ address: groups.get(k).address, activities: groups.get(k).acts, flags: groups.get(k).flags }));
     const r = linkWallets({ chain, wallets: members, labels }, p.clusters);
     const sizeOf = new Map(r.clusters.map((c) => [c.id, c.members.length]));
     linkResults.set(chain, { result: r, sizeOf });

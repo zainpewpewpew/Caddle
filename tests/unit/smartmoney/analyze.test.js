@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { WALLET_FLAGS, tokenKey, walletKey } from '../../../backend/smartmoney/contracts.js';
 import { DEFAULT_ANALYZE_PARAMS, analyzeUniverse, isAnalyzableActivity } from '../../../backend/smartmoney/analyze.js';
 import { buildAccumulationRadar } from '../../../backend/smartmoney/radar.js';
-import { labelMap, makeLabel } from '../../helpers/smartMoneyBuilders.js';
+import { labelMap, makeActivity, makeLabel, txh } from '../../helpers/smartMoneyBuilders.js';
 import { CHAIN, DAY, HOUR, T0, addr, shuffled, swap, tokenAddr, tradeHistory } from './evaluationFixtures.js';
 
 const NOW = T0 + 40 * DAY;
@@ -181,5 +181,42 @@ describe('analyzeUniverse — kelayakan & pengecualian', () => {
     expect(analyzeUniverse({ activities: history(0), now: NOW }, DEFAULT_ANALYZE_PARAMS).walletScores).toEqual(defaults.walletScores);
     const strict = analyzeUniverse({ activities: history(0), now: NOW }, { score: { minClosedTrades: 20 } });
     expect(strict.walletScores.get(key(W[0])).eligible).toBe(false);
+  });
+});
+
+describe('analyzeUniverse — klaster tanpa penggabungan berlebih', () => {
+  it('UNIT-SM-ANL-010 penanda wallet diteruskan ke penautan: wallet BOT tidak menautkan wallet lain', () => {
+    const bot = addr(0xb07);
+    // 220 swap berjeda 20 dtk → BOT HIGH (walletFlags), lalu mengirim token ke W0.
+    const botActs = Array.from({ length: 220 }, (_, i) => swap({
+      wallet: bot, token: tokenAddr(400 + (i % 5)), at: NOW - 10 * DAY + i * 20_000, n: 1000 + i, type: i % 2 ? 'SWAP_SELL' : 'SWAP_BUY',
+    }));
+    const gift = [
+      makeActivity({ wallet: bot, type: 'TRANSFER_OUT', token: tokenAddr(400), counterparty: W[0], blockTime: NOW - 3 * DAY, txHash: txh(1, 0xd1) }),
+      makeActivity({ wallet: W[0], type: 'TRANSFER_IN', token: tokenAddr(400), counterparty: bot, blockTime: NOW - 3 * DAY, txHash: txh(1, 0xd1) }),
+    ];
+    const r = analyzeUniverse({ activities: [...history(0), ...botActs, ...gift], now: NOW });
+    expect(r.wallets.get(key(bot)).flags.find((f) => f.code === 'BOT')).toMatchObject({ severity: 'HIGH' });
+    expect(r.links).toEqual([]);
+    expect(r.clusterOf.get(key(W[0]))).toBe(key(W[0]));
+    expect(r.clusterOf.get(key(bot))).toBe(key(bot));
+    expect(codes(r.wallets.get(key(W[0])).flags)).not.toContain('LINKED');
+  });
+
+  it('UNIT-SM-ANL-011 front-runner (belum ditandai) tidak menggabungkan dua pembeli independen; radar tetap menghitung 2', () => {
+    const FR = addr(0xf1);
+    const own = [...history(0), ...history(1)];
+    // FR membeli 12 dtk sebelum setiap pembelian W0 & W1 dan menjual 12 dtk sesudahnya (W0/W1 terpaut 10 menit).
+    const frActs = own.filter((a) => a.type === 'SWAP_BUY').flatMap((a, i) => [
+      swap({ wallet: FR, token: a.token.address, at: a.blockTime - 12_000, n: 2000 + 2 * i, usd: 10 }),
+      swap({ wallet: FR, token: a.token.address, at: a.blockTime + 12_000, n: 2001 + 2 * i, usd: 11, type: 'SWAP_SELL' }),
+    ]);
+    const buysX = [swap({ wallet: W[0], token: X, at: NOW - 5 * HOUR, n: 30 }), swap({ wallet: W[1], token: X, at: NOW - 3 * HOUR, n: 31 })];
+    const r = analyzeUniverse({ activities: [...own, ...frActs, ...buysX], now: NOW });
+    expect(codes(r.wallets.get(key(FR)).flags)).not.toContain('BOT');
+    expect(r.links).toEqual([]);
+    expect(new Set([W[0], W[1], FR].map((w) => r.clusterOf.get(key(w)))).size).toBe(3);
+    const radar = buildAccumulationRadar({ activities: buysX, walletScores: r.walletScores, clusterOf: r.clusterOf, now: NOW, windowMs: 24 * HOUR });
+    expect(radar[0]).toMatchObject({ buyerCount: 2, independentBuyers: 2 });
   });
 });
