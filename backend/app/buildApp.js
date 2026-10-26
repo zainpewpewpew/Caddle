@@ -9,6 +9,7 @@ import Fastify from 'fastify';
 import { authRoutes } from '../api/authRoutes.js';
 import { healthRoutes } from '../api/healthRoutes.js';
 import { marketRoutes } from '../api/marketRoutes.js';
+import { reversalRoutes } from '../api/reversalRoutes.js';
 import { settingsRoutes } from '../api/settingsRoutes.js';
 import { signalRoutes } from '../api/signalRoutes.js';
 import { DIRECTION_TIMEFRAMES } from '../market/contracts.js';
@@ -189,6 +190,8 @@ export async function buildApp({
   await app.register(workerRoutes, { supervisor, enabled: config.workerControl, audit: repos.audit, clock });
   await app.register(signalRoutes, { signals: repos.signals, candles: repos.candles, directionTimeframes });
   await app.register(marketRoutes, { candles: repos.candles });
+  // Reversal Radar (docs/19 §7): baca saja, gerbang auth sama dengan /api/signals/* (default registerAuth).
+  await app.register(reversalRoutes, { reversal: repos.reversal, candles: repos.candles });
   await app.register(smartMoneyRoutes, {
     repo: repos.smartMoney, signals: repos.signals, registry: smRegistry, config: config.smartMoney, clock, audit: repos.audit,
     syncRunner: smSync,

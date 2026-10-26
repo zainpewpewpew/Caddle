@@ -1,8 +1,9 @@
 // Entry point proses worker scanner (Milestone 2–3): `npm run worker`, atau dijalankan server sebagai child
 // process lewat tombol "Jalankan scanner" (backend/system/workerSupervisor.js).
 // Membuka SQLite + migrasi, merakit dependensi nyata lewat worker/assemble.js (REST/WS Binance, jam
-// server, repositori, pipeline analisis LONG SA/PVA + SHORT SD/PVD), menjalankan scanner, dan menangani
-// graceful shutdown (SIGTERM/SIGINT/SIGHUP — SIGHUP dikirim saat jendela terminal ditutup).
+// server, repositori, pipeline analisis LONG SA/PVA + SHORT SD/PVD, pipeline Reversal Radar 5m/15m/1h),
+// menjalankan scanner, dan menangani graceful shutdown (SIGTERM/SIGINT/SIGHUP — SIGHUP dikirim saat jendela
+// terminal ditutup).
 // Bila SMART_MONEY_PROVIDERS terisi dan adapternya aktif, worker juga menjalankan loop sinkronisasi Insider / Smart
 // Money Radar (worker/smartMoney.js) yang berhenti bersama shutdown. Tanpa provider: tidak ada loop, tidak ada data.
 // Riset saja: worker tidak pernah mengirim order (LONG maupun SHORT).
@@ -122,8 +123,13 @@ async function main() {
     onAlert: (alert) => logger.info({
       symbol: alert.symbol, timeframe: alert.timeframe, direction: alert.direction, state: alert.state, reason: alert.event?.reason,
     }, 'sinyal baru / naik tahap'),
-    onAnalysed: ({ symbol, timeframe, reason, candles, result }) => {
-      logger.debug({ symbol, timeframe, reason, count: candles.length, ...result }, 'candle tertutup dianalisis');
+    // Kandidat reversal dibuka / naik tahap / batal (docs/19 §4): hanya informasi riset, bukan perintah transaksi.
+    onReversalAlert: (alert) => logger.info({
+      symbol: alert.symbol, timeframe: alert.timeframe, stage: alert.stage, status: alert.status,
+      events: alert.events.map((e) => e.type), score: alert.snapshot?.score,
+    }, 'kandidat reversal: dibuka / naik tahap / batal'),
+    onAnalysed: ({ symbol, timeframe, reason, candles, result, reversal }) => {
+      logger.debug({ symbol, timeframe, reason, count: candles.length, ...result, reversal }, 'candle tertutup dianalisis');
     },
   });
   await pipeline.ensureDefinitions();

@@ -246,6 +246,7 @@ function setup({
   start = START,
   closureClock,
   heartbeatOwner,
+  onProvisionalCandle,
 } = {}) {
   const log = [];
   const timers = createFakeTimers(start);
@@ -280,6 +281,7 @@ function setup({
     ...(listOpenSeries ? { listOpenSeries } : {}),
     ...(closureClock ? { closureClock } : {}),
     ...(heartbeatOwner !== undefined ? { heartbeatOwner } : {}),
+    ...(onProvisionalCandle !== undefined ? { onProvisionalCandle } : {}),
   });
   return { scanner, rest, repos, streams, timers, analysed, log, settings };
 }
@@ -532,6 +534,61 @@ describe('event WebSocket', () => {
     expect(repos.candles.upsertProvisional).toHaveBeenCalledTimes(2);
     expect(analysed).toHaveLength(0);
     await scanner.stop();
+  });
+
+  it('UNIT-SCN-030 onProvisionalCandle (Reversal Radar): kline berjalan seri yang dianalisis diteruskan setelah throttle 1 d (candle yang sama dengan upsertProvisional) tanpa ditunggu; seri konteks HTF & candle yang sudah tutup tidak diteruskan; error → recordError sumber "provisional"; stop() menunggu evaluasi yang masih berjalan', async () => {
+    const forwarded = [];
+    const pending = [];
+    const onProvisionalCandle = vi.fn((c) => {
+      forwarded.push(c);
+      if (c.close === 999) throw new Error('evaluasi provisional rusak');
+      return new Promise((resolve) => pending.push(resolve));
+    });
+    const { scanner, streams, repos, timers, analysed } = await running({ onProvisionalCandle });
+    const open = LAST_CLOSED + M5;
+    const first = candle('BTCUSDT', '5m', open, { source: 'ws', isClosed: false, close: 101 });
+    streams.current().push(first);
+    await timers.advance(200);
+    streams.current().push(candle('BTCUSDT', '5m', open, { source: 'ws', isClosed: false, close: 102 })); // < 1 detik → dilewati
+    await timers.advance(1_000);
+    streams.current().push(candle('BTCUSDT', '5m', open, { source: 'ws', isClosed: false, close: 103 }));
+    await flush();
+    expect(forwarded.map((c) => c.close)).toEqual([101, 103]);
+    expect(forwarded[0]).toBe(first);
+    expect(repos.candles.upsertProvisional.mock.calls.map(([c]) => c.close)).toEqual([101, 103]);
+    expect(pending).toHaveLength(2); // evaluasi belum selesai, ingesti tidak menunggunya
+
+    // Seri 1h hanya konteks HTF (tidak dianalisis): tetap upsertProvisional, tidak dievaluasi provisional.
+    const h1Open = Math.floor(timers.clock() / H1) * H1;
+    streams.current().push(candle('BTCUSDT', '1h', h1Open, { source: 'ws', isClosed: false, close: 50 }));
+    await flush();
+    expect(repos.candles.upsertProvisional.mock.calls.map(([c]) => c.close)).toEqual([101, 103, 50]);
+    expect(forwarded).toHaveLength(2);
+
+    // Kline berjalan untuk candle yang sudah tertutup diabaikan (sama seperti upsertProvisional).
+    streams.current().push(candle('BTCUSDT', '5m', LAST_CLOSED, { source: 'ws', isClosed: false }));
+    await flush();
+    expect(forwarded).toHaveLength(2);
+
+    // Error evaluasi → error ingesti sumber 'provisional' (pesan memuat simbol & timeframe); ingesti berlanjut.
+    await timers.advance(1_000);
+    streams.current().push(candle('BTCUSDT', '5m', open, { source: 'ws', isClosed: false, close: 999 }));
+    await flush();
+    expect(forwarded).toHaveLength(3);
+    expect(recordedErrors(repos)).toEqual([{ at: timers.clock(), source: 'provisional', message: 'BTCUSDT 5m: evaluasi provisional rusak' }]);
+    expect(scanner.status().errors).toBe(1);
+    expect(repos.candles.upsertProvisional).toHaveBeenCalledTimes(4);
+    expect(repos.candles.upsertClosed).not.toHaveBeenCalled();
+    expect(analysed).toHaveLength(0);
+
+    // stop() menunggu evaluasi provisional yang masih berjalan (inflight), lalu selesai.
+    let stopped = false;
+    const stopping = scanner.stop().then(() => { stopped = true; });
+    await flush();
+    expect(stopped).toBe(false);
+    for (const resolve of pending) resolve();
+    await stopping;
+    expect(stopped).toBe(true);
   });
 
   it('UNIT-SCN-005 duplikat WS tidak memicu analisis ganda', async () => {
@@ -1426,6 +1483,8 @@ describe('heartbeat, status, stop', () => {
     expect(() => createScanner({ ...base, repos: { candles: repos.candles } })).toThrow(TypeError);
     expect(() => createScanner({ ...base, discoverSymbols: undefined })).toThrow(TypeError);
     expect(() => createScanner({ ...base, streamFactory: null })).toThrow(TypeError);
+    expect(() => createScanner({ ...base, onProvisionalCandle: 'x' })).toThrow(TypeError);
+    expect(() => createScanner({ ...base, onProvisionalCandle: null })).not.toThrow();
   });
 });
 

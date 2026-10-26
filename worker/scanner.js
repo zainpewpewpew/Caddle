@@ -6,6 +6,9 @@
 // - timeframe yang dipilih di pengaturan dianalisis; HTF yang dibutuhkan konteksnya (HIGHER_TIMEFRAMES) selalu
 //   ikut diingesti sebagai seri konteks saja (disimpan, tidak pernah memicu analisis) walau tidak dipilih;
 // - duplikat/out-of-order tetap disimpan (idempoten) tetapi tidak memicu analisis ulang;
+// - kline berjalan (x:false) disimpan sebagai provisional (throttle 1 d per stream) dan, bila dependensi opsional
+//   `onProvisionalCandle` diberikan, diteruskan ke sana TANPA ditunggu untuk evaluasi provisional Reversal Radar
+//   (hanya seri yang dianalisis; error dicatat sumber 'provisional');
 // - sweep berkala menambal stream yang tertinggal (fallback bila WS diam);
 // - discovery yang memilih 0 simbol padahal set pantauan tidak kosong dianggap anomali (seperti discovery gagal)
 //   KECUALI data discovery menjelaskannya (simbol lama delisted / ditolak filter pengaturan dengan alasan sah);
@@ -146,7 +149,7 @@ function createLimiter(max) {
   };
 }
 
-function assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, serverClock }) {
+function assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, onProvisionalCandle, serverClock }) {
   for (const m of ['getExchangeInfo', 'get24hTickers', 'getBookTickers', 'getKlines']) {
     if (typeof rest?.[m] !== 'function') throw new TypeError(`rest.${m} wajib ada`);
   }
@@ -165,6 +168,7 @@ function assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, 
   if (typeof discoverSymbols !== 'function') throw new TypeError('discoverSymbols wajib berupa fungsi');
   if (typeof onClosedCandles !== 'function') throw new TypeError('onClosedCandles wajib berupa fungsi');
   if (typeof onMonitoringStopped !== 'function') throw new TypeError('onMonitoringStopped wajib berupa fungsi');
+  if (onProvisionalCandle !== null && typeof onProvisionalCandle !== 'function') throw new TypeError('onProvisionalCandle harus fungsi atau null');
   if (serverClock !== undefined && serverClock !== null
     && (typeof serverClock.sync !== 'function' || typeof serverClock.offsetMs !== 'function')) {
     throw new TypeError('serverClock harus { sync(), offsetMs() }');
@@ -212,6 +216,7 @@ function liquidityThresholds(raw) {
  *   onMonitoringStopped?: (e: { symbol: string, timeframes: string[]|null, reason: 'SYMBOL_DELISTED'|'MONITORING_STOPPED',
  *     at: number }) => Promise<void>|void,
  *   listOpenSeries?: () => Promise<Array<{ symbol: string, timeframe: string }>>,
+ *   onProvisionalCandle?: ((candle: object) => Promise<unknown>|unknown) | null,
  *   discoverSymbols: (args: { symbols: object[], tickers: object[], bookTickers: object[], settings: object })
  *     => { selected: Array<{ symbol: string }>, rejected: object[] } | Promise<object>,
  *   clock?: () => number, localClock?: () => number, closureClock?: () => number, logger?: object, setTimer?: Function,
@@ -240,6 +245,9 @@ function liquidityThresholds(raw) {
  *   MONITORING_STOPPED; simbol terpilih dengan timeframe di luar pengaturan → MONITORING_STOPPED + timeframe itu)
  *   juga dilaporkan, kecuali yang sudah dilaporkan di siklus yang sama. Penutupan yang gagal atau terlewat
  *   (stop() di tengah siklus, timeframe dilepas saat worker mati, sinyal yatim dari DB lama) dicoba lagi tiap siklus.
+ *   onProvisionalCandle: kline BERJALAN (isClosed false) seri yang dianalisis, dipanggil dari handleProvisional setelah
+ *   throttle 1 d yang ada, TANPA ditunggu (promise dilacak agar stop() menunggunya); error dicatat sumber 'provisional'.
+ *   Worker meneruskannya ke pipeline Reversal Radar (evaluasi provisional); null = tidak ada.
  * @returns {{ start(): Promise<void>, stop(): Promise<void>, status(): object, liquidityOf(symbol: string): object|null }}
  */
 export function createScanner({
@@ -250,6 +258,7 @@ export function createScanner({
   onClosedCandles = async () => {},
   onMonitoringStopped = async () => {},
   listOpenSeries = null,
+  onProvisionalCandle = null,
   discoverSymbols,
   clock = Date.now,
   localClock = clock,
@@ -261,7 +270,7 @@ export function createScanner({
   serverClock = null,
   heartbeatOwner = null,
 }) {
-  assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, serverClock });
+  assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, onProvisionalCandle, serverClock });
   if (typeof clock !== 'function' || typeof localClock !== 'function' || typeof closureClock !== 'function') {
     throw new TypeError('clock, localClock, dan closureClock wajib berupa fungsi');
   }
@@ -630,6 +639,10 @@ export function createScanner({
     track(Promise.resolve()
       .then(() => repos.candles.upsertProvisional(candle))
       .then(() => { lastIngestionAt = localClock(); }, (err) => report('provisional', err, st)));
+    // Evaluasi provisional (Reversal Radar) hanya untuk seri yang dianalisis; tidak ditunggu, tidak mengubah alur ingesti.
+    if (onProvisionalCandle !== null && st.analyze) {
+      track(Promise.resolve().then(() => onProvisionalCandle(candle)).then(() => {}, (err) => report('provisional', err, st)));
+    }
   }
 
   function handleWsCandle(handle, candle) {
