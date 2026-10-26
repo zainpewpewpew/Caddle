@@ -86,7 +86,18 @@ file itu peluang historis tidak ditampilkan.
 
 ## 6. Angka backtest sintetis (seed 7)
 
-Diisi dari laporan `reports/backtest-*.md` terakhir sebelum merge; lihat ringkasan di PR.
+Perintah: `npm run backtest -- --synthetic --seed 7 --timeframes 15m,1h` (6 simbol × 3.000 candle 15m + 1h hasil
+agregasi; target 2R, batas 48 candle, biaya 4 bps + slippage 2 bps per sisi; holdout waktu 60/40 + embargo).
+
+| Out-of-sample (test) | n | Win rate (CI 95%) | Expectancy | Profit factor |
+| --- | --- | --- | --- | --- |
+| Sebelum (v2) | 199 | 32,2% (26,1–38,9%) | +0,18R | 1,32 |
+| Sesudah (v3, tier ≥ B) | 112 | 38,4% (29,9–47,6%) | +0,48R | 2,29 |
+
+Per tier (sinyal v2 dikelompokkan menurut tier saat entri, out-of-sample): B 39,2% / +0,52R (n 79), C 40,7% / +0,32R
+(n 54), D 14,3% / −0,40R (n 63); tier A baru 3 sampel. Interval kepercayaan sebelum/sesudah masih beririsan, jadi
+perbedaannya belum signifikan secara statistik walau searah. Sekali lagi: polanya DITANAM oleh generator, jadi ini
+hanya bukti bahwa mesin backtest, gerbang tier, dan pelaporan bekerja — angka pasar nyata wajib dari Mac (bagian 4).
 
 ## 7. Batasan yang diketahui
 
