@@ -18,6 +18,7 @@ import { createLiveProviderRegistry } from '../../backend/smartmoney/providers/l
 import { runSmartMoneySync } from '../../backend/smartmoney/sync.js';
 import { createUser } from '../../backend/users/userAdmin.js';
 import { buildScenario } from '../fixtures/smartmoney/scenario.js';
+import { seedReversalCandidates } from '../helpers/reversalSeed.js';
 import { seedSignals, seedWorkerHistory } from '../helpers/signalSeed.js';
 import { SEED_SYNC_TUNING } from '../helpers/smartMoneyApi.js';
 import { E2E_PORT, E2E_USERS } from './fixtures.js';
@@ -54,6 +55,9 @@ if (seeded) {
   // LONG Scanner produksi hanya 15m (DIRECTION_TIMEFRAMES) → sinyal seed di 15m.
   await seedSignals(repos, { timeframe: '15m' });
   await seedWorkerHistory(repos);
+  // Reversal Radar (LONG Scanner): matriks kandidat SINTETIS per tahap/status/likuiditas/provisional ditulis lewat
+  // repositori asli (tests/helpers/reversalSeed.js) beserta 60 candle tertutup per seri untuk harga & mini-chart.
+  await seedReversalCandidates(repos, { withCandles: true });
   // Peristiwa skenario berumur 2–20 jam: batas basi alert dinaikkan KHUSUS penyemaian ini (SEED_SYNC_TUNING);
   // default produksi (30 menit) tidak berubah.
   const summary = await runSmartMoneySync({
@@ -62,22 +66,6 @@ if (seeded) {
   if (summary.status !== 'OK' || summary.alerts === 0) {
     throw new Error(`Seeding smart money E2E gagal: ${JSON.stringify({ status: summary.status, alerts: summary.alerts, errors: summary.errors })}`);
   }
-}
-// Rute Reversal Radar (backend/api/reversalRoutes.js, docs/19 §7) dikembangkan paralel dengan UI-nya. Selama rute asli
-// belum terdaftar di buildApp, server E2E menyediakan pengganti KOSONG (tanpa kandidat, bentuk respons sesuai kontrak)
-// agar LONG Scanner tidak menghasilkan error konsol 404 pada tes layar umum (app.spec, signals.spec). Dilewati
-// otomatis begitu rute asli ada (hasRoute), sehingga tes seeded selalu memakai rute sebenarnya. Tes UI Reversal Radar
-// (reversal.spec.js) tidak bergantung padanya: respons dimock di browser lewat page.route.
-if (!app.hasRoute({ method: 'GET', url: '/api/reversal/candidates' })) {
-  app.get('/api/reversal/candidates', async () => ({
-    items: [],
-    count: 0,
-    meta: {
-      timeframes: ['5m', '15m', '1h'],
-      sensitivity: 'MEDIUM',
-      filters: { LOW: { minScore: 60, minEvidence: 4 }, MEDIUM: { minScore: 45, minEvidence: 3 }, HIGH: { minScore: 0, minEvidence: 0 } },
-    },
-  }));
 }
 await app.listen({ host: config.host, port: config.port });
 

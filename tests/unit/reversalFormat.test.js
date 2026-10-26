@@ -174,6 +174,22 @@ describe('reversalFormat — nilai baris', () => {
     expect(entries[0].status).toBe('Baru');
   });
 
+  it('UNIT-RRF-008c historyEntries melipat perubahan provisional berurutan menjadi entri terakhir dengan jumlah perubahan', () => {
+    const prov = (at, from, to) => ({ type: 'PROVISIONAL_STAGE', fromStage: from, toStage: to, occurredAt: at, provisional: true });
+    const entries = historyEntries([
+      { type: 'OPENED', toStage: 'EARLY_FORMATION', toStatus: 'NEW', occurredAt: 100, price: 1 },
+      prov(110, 'EARLY_FORMATION', 'DEVELOPING_REVERSAL'),
+      prov(120, 'DEVELOPING_REVERSAL', 'EARLY_FORMATION'),
+      prov(130, 'EARLY_FORMATION', 'DEVELOPING_REVERSAL'),
+      { type: 'STAGE_UP', fromStage: 'EARLY_FORMATION', toStage: 'DEVELOPING_REVERSAL', toStatus: 'DEVELOPING', occurredAt: 200, price: 1.1 },
+      prov(210, 'DEVELOPING_REVERSAL', 'CONFIRMED_BREAKOUT'),
+    ]);
+    expect(entries.map((e) => [e.at, e.provisional, e.changes])).toEqual([[100, false, 1], [130, true, 3], [200, false, 1], [210, true, 1]]);
+    expect(entries[1].title).toBe('Tahap provisional (candle berjalan) · 3 perubahan berurutan');
+    expect(entries[1].stage).toBe('Early Formation → Developing Reversal');
+    expect(entries[3].title).toBe('Tahap provisional (candle berjalan)');
+  });
+
   it('UNIT-RRF-009 normalizeScoreComponents selalu 5 grup berurutan, poin dibatasi 0..max, label grup Indonesia', () => {
     const out = normalizeScoreComponents([{ id: 'STRUCTURE', label: 'Struktur', points: 42, max: 30 }, { id: 'VOLUME', points: -3 }, { id: 'ASING', points: 9 }]);
     expect(out.map((c) => c.id)).toEqual(['EXHAUSTION', 'BASE', 'STRUCTURE', 'VOLUME', 'TRIGGER']);

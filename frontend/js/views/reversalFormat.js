@@ -411,7 +411,7 @@ export function markersOf(row, events = []) {
 /** Entri riwayat (urut waktu naik) dari event API; event provisional ditandai. Tanpa event → []. */
 export function historyEntries(events) {
   const list = (Array.isArray(events) ? events : []).filter((e) => e && typeof e.type === 'string');
-  return list.map((e) => {
+  const entries = list.map((e) => {
     const stage = e.toStage ? stageLabel(e.toStage) : null;
     const transition = e.fromStage && e.toStage ? `${stageLabel(e.fromStage)} → ${stageLabel(e.toStage)}` : stage;
     const reason = e.reason ? CANCEL_REASON_LABELS[e.reason] ?? codeText(e.reason) : null;
@@ -425,8 +425,22 @@ export function historyEntries(events) {
       reason,
       provisional: e.provisional === true,
       terminal: e.type === 'CANCELLED' || e.type === 'EXPIRED',
+      changes: 1,
     };
   }).sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+  // Perubahan tahap provisional yang berurutan (tanpa event candle tutup di antaranya) dilipat menjadi entri terakhirnya
+  // dengan jumlah perubahan: candle berjalan bisa berpindah tahap berkali-kali sebelum tutup — riwayatnya tetap
+  // tersimpan di server, tetapi daftar tidak dipenuhi entri provisional yang berkedip.
+  const out = [];
+  for (const entry of entries) {
+    const prev = out[out.length - 1];
+    if (entry.provisional && prev?.provisional) {
+      out[out.length - 1] = { ...entry, changes: prev.changes + 1 };
+    } else {
+      out.push(entry);
+    }
+  }
+  return out.map((e) => (e.changes > 1 ? { ...e, title: `${e.title} · ${e.changes} perubahan berurutan` } : e));
 }
 
 /** Komponen skor: selalu 5 grup berurutan (poin 0 bila tidak ada), nilai dibatasi 0..max. */
