@@ -8,13 +8,16 @@
 
 import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { ConfigError, loadConfig } from '../backend/app/config.js';
 import { openDatabase } from '../backend/database/connection.js';
 import { migrate } from '../backend/database/migrate.js';
+import { parseCalibrationFile } from '../backend/backtest/calibration.js';
 import { assembleWorker } from './assemble.js';
 
 /** Tabel kalibrasi hasil `npm run backtest -- --write-calibration config/calibration.json` (opsional). */
-const CALIBRATION_PATH = process.env.CALIBRATION_PATH ?? 'config/calibration.json';
+// Relatif ke root repo (bukan cwd proses), kecuali CALIBRATION_PATH diatur.
+const CALIBRATION_PATH = process.env.CALIBRATION_PATH ?? fileURLToPath(new URL('../config/calibration.json', import.meta.url));
 
 /**
  * Kalibrasi skor konfluensi → peluang historis. Tanpa file (atau file rusak) → null: scanner tetap jalan dan peluang
@@ -29,8 +32,7 @@ function loadCalibration(path, logger) {
     return null;
   }
   try {
-    const parsed = JSON.parse(raw);
-    if (parsed?.version !== 1 || !parsed.tables || typeof parsed.tables !== 'object') throw new Error('bentuk tidak dikenal');
+    const parsed = parseCalibrationFile(raw);
     logger.info({ path, tables: Object.keys(parsed.tables) }, 'kalibrasi backtest dimuat');
     return parsed;
   } catch (err) {

@@ -173,3 +173,14 @@ describe('analyzeOrderFlow', () => {
     }
   });
 });
+
+describe('order flow — baris lama tanpa taker', () => {
+  it('EDGE-OF-TAKER-001 jendela campuran (sebagian takerBuyVolume 0 dari data lama) → taker/CVD null, bukan jual agresif palsu', () => {
+    const candles = makeCandles(Array.from({ length: 60 }, (_, i) => 100 + i * 0.1), { ratio: 0.6 });
+    for (let i = 0; i < 45; i += 1) candles[i] = { ...candles[i], takerBuyVolume: 0, takerBuyQuoteVolume: 0 };
+    const r = analyzeOrderFlow(candles);
+    expect(r.takerBuyRatio).toBeNull();
+    expect(r.cvdSlope).toBeNull();
+    expect(r.divergence).not.toBe('BEARISH');
+  });
+});

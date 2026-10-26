@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CALIBRATION_METHOD, MIN_CALIBRATION_SAMPLES, applyCalibration, fitCalibration, reliabilityReport,
+  CALIBRATION_METHOD, MIN_CALIBRATION_SAMPLES, applyCalibration, fitCalibration, isUsableCalibration, parseCalibrationFile,
+  reliabilityReport,
 } from '../../../backend/backtest/calibration.js';
 import { wilsonInterval } from '../../../backend/backtest/metrics.js';
 
@@ -121,5 +122,39 @@ describe('kalibrasi isotonik', () => {
     expect(reliabilityReport(table, off).ece).toBeCloseTo(0.1, 12);
     expect(reliabilityReport(table, []).ece).toBeNull();
     expect(reliabilityReport(null, good)).toBeNull();
+  });
+});
+
+describe('isUsableCalibration (file kalibrasi dari disk)', () => {
+  const good = { version: 1, totalSamples: 120, bins: [
+    { lo: 10, hi: 40, n: 60, wins: 15, probability: 0.26, lower: 0.15, upper: 0.37 },
+    { lo: 41, hi: 90, n: 60, wins: 27, probability: 0.45, lower: 0.33, upper: 0.57 },
+  ] };
+  it('NEG-CAL-FILE-001 tabel rusak/di luar rentang ditolak; applyCalibration → null, tidak melempar', () => {
+    expect(isUsableCalibration(good)).toBe(true);
+    for (const bad of [
+      { ...good, bins: [null] },
+      { ...good, bins: [{ ...good.bins[0], probability: 1.5 }, good.bins[1]] },
+      { ...good, bins: [{ ...good.bins[0], lower: undefined }, good.bins[1]] },
+      { ...good, bins: [good.bins[1], good.bins[0]] },
+      { ...good, totalSamples: 99 },
+    ]) {
+      expect(isUsableCalibration(bad)).toBe(false);
+      expect(applyCalibration(bad, 50)).toBeNull();
+    }
+    expect(applyCalibration(good, 80)).toMatchObject({ probability: 0.45, samples: 60 });
+  });
+});
+
+describe('parseCalibrationFile (CLI → worker)', () => {
+  it('UNIT-CAL-FILE-001 round-trip: tabel fitCalibration dalam bentuk file CLI dapat dimuat dan dipakai pipeline', () => {
+    const samples = Array.from({ length: 300 }, (_, i) => ({ score: i % 100, win: i % 100 > 60 ? 1 : (i % 3 === 0 ? 1 : 0) }));
+    const table = fitCalibration(samples);
+    const text = JSON.stringify({ version: 1, tables: { 'LONG:*': table, 'SHORT:15m': table, 'XX:*': table }, generatedAt: 1, meta: {} });
+    const parsed = parseCalibrationFile(text);
+    expect(Object.keys(parsed.tables)).toEqual(['LONG:*', 'SHORT:15m']);
+    expect(applyCalibration(parsed.tables['LONG:*'], 90).probability).toBeGreaterThan(applyCalibration(parsed.tables['LONG:*'], 10).probability);
+    expect(() => parseCalibrationFile('{"generatedAt":1,"table":{}}')).toThrow(/bentuk/);
+    expect(() => parseCalibrationFile(JSON.stringify({ version: 1, tables: { 'LONG:*': fitCalibration(samples.slice(0, 50)) } }))).toThrow(/valid/);
   });
 });

@@ -57,15 +57,26 @@ function calibrationFor(calibration, direction, timeframe, score) {
   const tables = calibration?.tables;
   if (!tables || typeof tables !== 'object') return null;
   const table = tables[`${direction}:${timeframe}`] ?? tables[`${direction}:*`] ?? null;
-  return table ? applyCalibration(table, score) : null;
+  if (!table) return null;
+  try {
+    const c = applyCalibration(table, score);
+    const unit = (v) => Number.isFinite(v) && v >= 0 && v <= 1;
+    return c && unit(c.probability) && unit(c.lower) && unit(c.upper) ? c : null;
+  } catch {
+    return null; // tabel rusak tidak boleh menghentikan analisis seri
+  }
 }
 
 /**
  * View + konfluensi v3: `view.confluence` (skor, tier, komponen, konfirmasi, konflik, veto, kalibrasi) dan entri
  * penjelasan `CONFLUENCE:*` (kontribusi komponen dijumlahkan = skor konfluensi; entri lain kontribusi 0).
  */
-function withConfluence(view, { direction, timeframe, context, features, params }) {
-  const c = computeConfluence({ direction, view, context, ...features }, params.confluence ?? {});
+function withConfluence(view, { direction, timeframe, context, features, params, scoreView }) {
+  // Timeframe tanpa HTF (1h): alignment selalu UNCONFIRMED karena tidak ada pembanding, bukan karena setup buruk —
+  // komponen HTF dikeluarkan dari penyebut alih-alih dinilai 0.
+  const hasHtf = HIGHER_TIMEFRAMES[timeframe].length > 0;
+  const input = hasHtf ? { view: scoreView, context } : { view: { ...scoreView, alignment: null }, context: null };
+  const c = computeConfluence({ direction, ...input, ...features }, params.confluence ?? {});
   const calibration = calibrationFor(params.calibration, direction, timeframe, c.score);
   const explanation = [
     {
@@ -165,7 +176,15 @@ export function analyzeDirectionsAt({
     const patterns = patternsByDirection[direction];
     const directionContext = direction === 'LONG' ? context : contextForDirection(context, timeframe, direction);
     let view = buildSignalView({ symbol, timeframe, patterns, context: directionContext, liquidity, dataQuality: quality, params: params.view });
-    if (confluenceOn) view = withConfluence(view, { direction, timeframe, context: directionContext, features, params });
+    if (confluenceOn) {
+      // Tier (yang menggerbang state) dihitung TANPA likuiditas 24 jam saat ini: ukuran itu hanya ada untuk candle terbaru
+      // (replay/backtest tidak memilikinya), sehingga live, restart, dan backtest memberi state yang sama. Risk flag
+      // likuiditas tetap tampil di view; flag likuiditas dari candle (detektor) tetap ikut veto.
+      const scoreView = liquidity === undefined || liquidity === null ? view : buildSignalView({
+        symbol, timeframe, patterns, context: directionContext, dataQuality: quality, params: params.view,
+      });
+      view = withConfluence(view, { direction, timeframe, context: directionContext, features, params, scoreView });
+    }
     const market = markets[direction];
     const result = transition(prevByDirection[direction] ?? null, { candle: last, patterns, context: directionContext, market, view }, params.signals);
     out[direction] = { direction, evaluationTime, patterns, context: directionContext, view, market, ...result };

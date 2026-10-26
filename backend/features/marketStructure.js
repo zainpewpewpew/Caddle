@@ -136,7 +136,11 @@ export function analyzeMarketStructure(candles, { left = 2, right = 2, maxSwings
   const labeledLows = labelSwings(lows, 'LOW');
   const all = [...labeledHighs, ...labeledLows]
     .sort((a, b) => a.index - b.index || (a.type === b.type ? 0 : a.type === 'HIGH' ? -1 : 1));
-  result.swings = all.slice(-maxSwings);
+  // Swing HIGH & LOW pada indeks sama (outside bar) tidak pernah dipisah oleh batas maxSwings: urutan seri keduanya
+  // bergantung tipe, sehingga memotong di antaranya membuat hasil LONG ≠ cermin SHORT.
+  let start = Math.max(0, all.length - maxSwings);
+  while (start > 0 && all[start - 1].index === all[start].index) start -= 1;
+  result.swings = all.slice(start);
   for (const s of result.swings) if (s.label) result.counts[s.label] += 1;
 
   const lastHigh = labeledHighs.at(-1) ?? null;

@@ -110,7 +110,9 @@ Input fitur boleh `null` → komponen dilewati (tidak dihitung lulus).
 - `calibration.js` — `fitCalibration(samples /*{score, win}*/, { bins })` (PAV isotonik + Laplace) dan
   `applyCalibration(table, score)` → `{ probability, lower, upper, samples } | null`.
 - `synthetic.js` — generator pasar sintetis berbenih (random walk, rezim tren, akumulasi/distribusi tertanam).
-- `runner.js` — replay walk-forward memanggil `analyzeDirectionsAt` + fitur + confluence, menghasilkan trade.
+- `runner.js` — replay candle demi candle memanggil `analyzeDirectionsAt` (fitur + confluence ikut), menghasilkan trade
+  v2 (tanpa gerbang tier) dan v3 (gerbang tier) dari sinyal yang sama. Validasi saat ini: holdout berurutan waktu
+  (60% train / 40% test) dengan embargo `maxBars` + purging; `walkForwardSplits` tersedia untuk fold berikutnya.
 - `scripts/backtest.js` — CLI (Binance REST di Mac, cache disk, atau CSV) → laporan `reports/backtest-*.md|json`.
 
 ## Kejujuran

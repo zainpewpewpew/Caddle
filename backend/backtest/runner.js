@@ -142,14 +142,16 @@ function calibrate(trades, testStart, embargoMs) {
   const table = fitCalibration(train.map(toSample));
   const testSamples = test.map(toSample);
   const reliability = reliabilityReport(table, testSamples);
-  const base = testSamples.length ? testSamples.reduce((a, s) => a + s.win, 0) / testSamples.length : null;
+  // Baseline = selalu memprediksi base rate TRAIN (tanpa melihat hasil test).
+  const trainSamples = train.map(toSample);
+  const base = trainSamples.length ? trainSamples.reduce((a, s) => a + s.win, 0) / trainSamples.length : null;
   return {
     sample: 'test',
     trainSamples: train.length,
     testSamples: testSamples.length,
     ece: reliability?.ece ?? null,
     brier: reliability?.brier ?? null,
-    brierBaseline: base === null ? null : brierScore(testSamples.map((s) => ({ p: base, y: s.win }))),
+    brierBaseline: base === null || testSamples.length === 0 ? null : brierScore(testSamples.map((s) => ({ p: base, y: s.win }))),
     bins: (reliability?.bins ?? []).map((b) => ({ lower: b.lo, upper: b.hi, n: b.n, predicted: b.predicted, observed: b.observed })),
     table: train.length ? table : null,
   };

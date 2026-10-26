@@ -43,6 +43,9 @@ function volumeOf(c) {
 function cvdDelta(c) {
   const v = volumeOf(c);
   if (v === null || !isNum(c.takerBuyVolume) || c.takerBuyVolume < 0 || c.takerBuyVolume > v) return null;
+  // takerBuyVolume 0 dengan volume > 0 = baris lama tanpa data taker (default kolom migrasi 003), bukan "100% jual":
+  // diperlakukan tidak tersedia agar jendela campuran tidak menghasilkan tekanan jual palsu (asimetri LONG/SHORT).
+  if (c.takerBuyVolume === 0 && v > 0) return null;
   return 2 * c.takerBuyVolume - v;
 }
 

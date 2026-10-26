@@ -255,7 +255,10 @@ function regimeComponent(r, ctx) {
   const label = r.regime ?? null;
   const labelPart = label !== null && Object.hasOwn(labelValue, label) ? labelValue[label] : null;
   const against = label === againstTrend;
-  const erPart = isNum(r.efficiencyRatio) ? (against ? 0 : ramp(r.efficiencyRatio, 0.2, 0.6)) : null;
+  // ER tidak bertanda: hanya dihitung bila gerak jendelanya searah (efficiencyDirection·d > 0); gerak efisien yang
+  // berlawanan (mis. jatuh lurus sebelum ADX ≥ 25) bernilai 0, bukan konfirmasi.
+  const erAgainst = against || (isNum(r.efficiencyDirection) && r.efficiencyDirection * d < 0);
+  const erPart = isNum(r.efficiencyRatio) ? (erAgainst ? 0 : ramp(r.efficiencyRatio, 0.2, 0.6)) : null;
   const value = blend([{ w: 0.7, v: labelPart }, { w: 0.3, v: erPart }]);
 
   const adxText = isNum(r.adx) ? `ADX ${num(r.adx, 1)}` : 'ADX –';
@@ -288,7 +291,10 @@ function liquidityComponent(l, ctx) {
   const climax = l.climax ?? null;
   const climaxPart = climax && climax.type === climaxWith && isFresh(climax, p.freshBars) ? 1 : 0;
   const ab = isNum(l.absorption) ? l.absorption * d : null;
-  const pos = isNum(l.position) ? (d > 0 ? l.position : 1 - l.position) : null;
+  // Posisi dalam range hanya bermakna selama harga masih di dalam range; breakout/breakdown pada candle terakhir
+  // (inRange false, posisi ter-clamp 0/1) tidak boleh dibaca "dekat dasar/puncak range".
+  const insideRange = l.inRange === true;
+  const pos = isNum(l.position) && insideRange ? (d > 0 ? l.position : 1 - l.position) : null;
   const value = blend([
     { w: 0.5, v: Math.max(sweepPart, climaxPart) },
     { w: 0.25, v: ab === null ? null : ramp(ab, 0, 0.5) },
@@ -315,7 +321,7 @@ function liquidityComponent(l, ctx) {
     else ctx.conflicts.push(`${text} — penyerapan di sisi berlawanan`);
   }
   if (pos !== null) {
-    const text = `Harga di ${pct(l.position)} range`;
+    const text = `Harga di ${pct(l.position)} range`; // pos !== null ⇒ masih di dalam range
     if (pos <= 0.35) ctx.confirmations.push(`${text} — dekat ${d > 0 ? 'dasar' : 'puncak'} range, risiko-imbal menarik`);
     else if (pos >= 0.8) ctx.conflicts.push(`${text} — sudah dekat ${d > 0 ? 'puncak' : 'dasar'} range`);
   }

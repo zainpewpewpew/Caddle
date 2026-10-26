@@ -236,3 +236,26 @@ describe('konfluensi v3', () => {
     expect(() => tierRank('E')).toThrow(RangeError);
   });
 });
+
+describe('konfluensi v3 — perbaikan review', () => {
+  const regimeValue = (x) => computeConfluence(x).components.find((c) => c.id === 'regime').value;
+  const liqValue = (x) => computeConfluence(x).components.find((c) => c.id === 'liquidity').value;
+
+  it('EDGE-CNF-ER-001 efficiency ratio tinggi dari gerak BERLAWANAN arah tidak menjadi konfirmasi', () => {
+    const up = idealLong();
+    up.regime = { ...up.regime, regime: 'RANGING', adx: 22, efficiencyRatio: 0.9, efficiencyDirection: 1 };
+    const down = idealLong();
+    down.regime = { ...up.regime, efficiencyDirection: -1 };
+    expect(regimeValue(up)).toBeCloseTo(0.7 * 0.5 + 0.3 * 1, 9);
+    expect(regimeValue(down)).toBeCloseTo(0.7 * 0.5, 9);
+  });
+
+  it('EDGE-CNF-POS-001 breakdown di luar range (inRange false) tidak dibaca "dekat dasar range"', () => {
+    const inside = idealLong();
+    inside.liquidity = { ...inside.liquidity, sweepLow: null, climax: null, absorption: 0, position: 0, inRange: true };
+    const broken = idealLong();
+    broken.liquidity = { ...inside.liquidity, inRange: false };
+    expect(liqValue(inside)).toBeGreaterThan(liqValue(broken));
+    expect(computeConfluence(broken).confirmations.some((t) => /dekat dasar range/.test(t))).toBe(false);
+  });
+});

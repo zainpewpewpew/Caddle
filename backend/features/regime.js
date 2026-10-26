@@ -262,6 +262,8 @@ export function analyzeRegime(candles, {
     bandwidthPercentile,
     squeeze,
     efficiencyRatio: at(erSeries),
+    // Arah gerak jendela ER (efficiency ratio tidak bertanda): 1 naik, −1 turun, 0 datar, null bila data kurang.
+    efficiencyDirection: last >= erPeriod ? Math.sign(closes[last] - closes[last - erPeriod]) : null,
     regime,
   };
 }

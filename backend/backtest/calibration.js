@@ -106,9 +106,37 @@ function findBin(bins, score) {
   return bins.length - 1;
 }
 
-const usable = (table) =>
-  table && Array.isArray(table.bins) && table.bins.length > 0 && Number.isFinite(table.totalSamples)
-  && table.totalSamples >= MIN_CALIBRATION_SAMPLES;
+const unit = (v) => Number.isFinite(v) && v >= 0 && v <= 1;
+const validBin = (b) => b !== null && typeof b === 'object' && Number.isFinite(b.lo) && Number.isFinite(b.hi) && b.lo <= b.hi
+  && Number.isInteger(b.n) && b.n >= 0 && unit(b.probability) && unit(b.lower) && unit(b.upper);
+
+/**
+ * Tabel layak dipakai: bentuk lengkap (bin terurut, peluang & interval 0..1) dan total sampel ≥ 100. Tabel dari file
+ * (config/calibration.json) bisa rusak/diedit tangan, jadi divalidasi penuh agar tidak pernah menghasilkan peluang palsu
+ * atau error di pipeline.
+ */
+export function isUsableCalibration(table) {
+  if (!table || typeof table !== 'object' || !Array.isArray(table.bins) || table.bins.length === 0) return false;
+  if (!Number.isFinite(table.totalSamples) || table.totalSamples < MIN_CALIBRATION_SAMPLES) return false;
+  return table.bins.every((b, i) => validBin(b) && (i === 0 || table.bins[i - 1].hi <= b.lo));
+}
+
+const usable = isUsableCalibration;
+
+/**
+ * Isi file config/calibration.json (tulisan `npm run backtest -- --write-calibration`) → { version: 1, tables } dengan
+ * hanya tabel valid berkunci 'LONG|SHORT:*|5m|15m|1h'. Melempar Error bila JSON/bentuk tidak dikenal atau tidak ada tabel
+ * yang layak (pemanggil mengabaikan file dan peluang tidak ditampilkan).
+ * @param {string} text
+ */
+export function parseCalibrationFile(text) {
+  const parsed = JSON.parse(text);
+  if (parsed?.version !== 1 || !parsed.tables || typeof parsed.tables !== 'object') throw new Error('bentuk tidak dikenal');
+  const tables = Object.fromEntries(Object.entries(parsed.tables)
+    .filter(([key, table]) => /^(LONG|SHORT):(\*|5m|15m|1h)$/.test(key) && isUsableCalibration(table)));
+  if (Object.keys(tables).length === 0) throw new Error('tidak ada tabel yang valid (≥ 100 sampel)');
+  return { version: 1, tables };
+}
 
 /**
  * Peluang empiris untuk satu skor. null bila tabel null/kosong, total sampel < 100, atau skor tidak valid.

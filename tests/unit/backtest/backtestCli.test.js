@@ -77,6 +77,7 @@ describe('main (end-to-end offline dengan CSV & runner palsu)', () => {
     await writeFile(join(dir, 'BTCUSDT-1h-2024-01.csv'), rows.join('\n'), 'utf8');
     const runBacktest = vi.fn(async () => ({
       meta: { candidate: 'v3' },
+      calibrationTable: { version: 1, tables: { 'LONG:*': { bins: [] } } },
       variants: { v3: { trainSummary: null, testSummary: { n: 3, winRate: 1, winRateCi: [0.44, 1], expectancyR: 2, profitFactor: Infinity }, calibration: { ece: 0, brier: 0, table: { bins: [] } } } },
     }));
     const out = join(dir, 'reports');
@@ -96,7 +97,8 @@ describe('main (end-to-end offline dengan CSV & runner palsu)', () => {
     const json = JSON.parse(await readFile(join(out, files[0]), 'utf8'));
     expect(json.variants.v3.testSummary.profitFactor).toBe('Infinity');
     expect(json.meta.source).toBe('csv');
-    expect(JSON.parse(await readFile(cal, 'utf8')).table).toEqual({ bins: [] });
+    // Bentuk yang dibaca worker/index.js (loadCalibration): { version: 1, tables: { 'ARAH:TF': tabel } } + metadata.
+    expect(JSON.parse(await readFile(cal, 'utf8'))).toMatchObject({ version: 1, tables: { 'LONG:*': { bins: [] } } });
   });
 
   it('UNIT-BTCLI-021 runner belum ada → kode 3 tanpa menulis apa pun; argumen salah → kode 2', async () => {

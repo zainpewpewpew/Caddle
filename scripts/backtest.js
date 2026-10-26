@@ -219,14 +219,15 @@ export async function main(argv = process.argv.slice(2), { loadRunner = () => im
   log(`Data JSON: ${base}.json`);
 
   if (args.writeCalibration) {
-    const candidate = result.meta.candidate ?? 'v3';
-    const table = result.calibrationTable ?? result.variants[candidate]?.calibration?.table ?? null;
+    const table = result.calibrationTable?.tables ? result.calibrationTable : null;
     if (!table) {
       log('Tabel kalibrasi tidak ada di hasil runner — config kalibrasi TIDAK ditulis.');
     } else {
       const target = resolve(args.writeCalibration);
       await mkdir(join(target, '..'), { recursive: true });
-      await writeFile(target, toJson({ generatedAt: startedAt, source: args.source, meta: result.meta, table }), 'utf8');
+      // Bentuk yang dibaca worker/index.js: { version: 1, tables: { 'LONG:*': tabel, 'SHORT:*': tabel } } + metadata.
+      // Worker hanya memakai tabel dengan ≥ 100 sampel train; tabel lebih kecil diabaikan (peluang tidak ditampilkan).
+      await writeFile(target, toJson({ version: 1, tables: table.tables, generatedAt: startedAt, source: args.source, meta: result.meta }), 'utf8');
       log(`Kalibrasi ditulis: ${target}`);
     }
   }

@@ -156,7 +156,7 @@ function confluenceOf(view) {
     throw new RangeError('view.confluence harus { score 0..100, tier A/B/C/D }');
   }
   const prob = c.calibration?.probability;
-  return { score: c.score, tier: c.tier, probability: isFiniteNumber(prob) ? prob : null };
+  return { score: c.score, tier: c.tier, probability: isFiniteNumber(prob) && prob >= 0 && prob <= 1 ? prob : null };
 }
 
 /** Gerbang tier v3 untuk state EARLY: lolos bila tidak ada konfluensi (perilaku lama) atau gerbang dimatikan. */
@@ -165,9 +165,14 @@ function tierAllowsEarly(view, p) {
   return tierRank(view.confluence.tier) >= tierRank(p.minEarlyTier);
 }
 
-/** Field konfluensi snapshot — hanya ditambahkan bila view membawa konfluensi (bentuk snapshot lama tidak berubah). */
-function confluenceFields(view) {
-  if (view.confluence === null) return {};
+/**
+ * Field konfluensi snapshot — hanya ditambahkan bila view membawa konfluensi (bentuk snapshot lama tidak berubah). View
+ * tanpa konfluensi atas snapshot yang pernah punya konfluensi → null eksplisit, agar nilai basi tidak terbawa.
+ */
+function confluenceFields(view, prev = null) {
+  if (view.confluence === null) {
+    return prev && prev.confluenceScore !== undefined ? { confluenceScore: null, confidenceTier: null, winProbability: null } : {};
+  }
   return { confluenceScore: view.confluence.score, confidenceTier: view.confluence.tier, winProbability: view.confluence.probability };
 }
 
@@ -362,7 +367,7 @@ function advance(prev, input, p, direction) {
     classification: mergeClassification(prev.classification, patterns.classification),
     patternScore: view.patternScore, earlyScore: view.earlyScore,
     alignment: context?.alignment ?? null, riskFlags: view.riskFlags,
-    ...confluenceFields(view),
+    ...confluenceFields(view, prev),
     lastCandleTime: candle.openTime, lastEvaluatedAt: candle.closeTime,
     barsInState,
     // Ekskursi searah sinyal: LONG harga tertinggi, SHORT harga terendah.
