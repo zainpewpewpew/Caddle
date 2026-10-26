@@ -142,8 +142,11 @@ export function explorerTokenUrl(chain, address) {
 }
 
 /**
- * Aset "quote" (native, wrapped native, stablecoin utama) per chain. Swap token X ↔ aset quote menentukan arah
- * beli/jual X. Aset quote tidak pernah menjadi target radar akumulasi. Alamat kontrak resmi (huruf kecil).
+ * Aset "quote" (native, wrapped native, stablecoin utama, serta ETH bridged yang umum dipakai sebagai alat bayar)
+ * per chain. Swap token X ↔ aset quote menentukan arah beli/jual X. Aset quote tidak pernah menjadi target radar
+ * akumulasi dan tidak dihitung sebagai posisi PnL. Alamat kontrak resmi (huruf kecil); hanya alamat yang telah
+ * diverifikasi yang dicantumkan — lebih baik aset quote terlewat daripada salah alamat.
+ * Simbol `USDC.e` = USDC bridged (versi lama sebelum USDC native), `USDbC` = USD Base Coin (USDC bridged di Base).
  */
 export const QUOTE_ASSETS = Object.freeze({
   ethereum: Object.freeze({
@@ -157,29 +160,42 @@ export const QUOTE_ASSETS = Object.freeze({
     [NATIVE_TOKEN]: 'ETH',
     '0x4200000000000000000000000000000000000006': 'WETH',
     '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'USDC',
+    '0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca': 'USDbC',
+    '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': 'DAI',
   }),
   arbitrum: Object.freeze({
     [NATIVE_TOKEN]: 'ETH',
     '0x82af49447d8a07e3bd95bd0d56f35241523fbab1': 'WETH',
     '0xaf88d065e77c8cc2239327c5edb3a432268e5831': 'USDC',
+    '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8': 'USDC.e',
     '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9': 'USDT',
+    '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1': 'DAI',
   }),
   optimism: Object.freeze({
     [NATIVE_TOKEN]: 'ETH',
     '0x4200000000000000000000000000000000000006': 'WETH',
     '0x0b2c639c533813f4aa9d7837caf62653d097ff85': 'USDC',
+    '0x7f5c764cbc14f9669b88837ca1490cca17c31607': 'USDC.e',
+    '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58': 'USDT',
+    '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1': 'DAI',
   }),
   bsc: Object.freeze({
     [NATIVE_TOKEN]: 'BNB',
     '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c': 'WBNB',
     '0x55d398326f99059ff775485246999027b3197955': 'USDT',
     '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d': 'USDC',
+    '0xc5f0f7b66764f6ec8c8dff7ba683102295e16409': 'FDUSD',
+    '0xe9e7cea3dedca5984780bafc599bd69add087d56': 'BUSD',
+    '0x2170ed0880ac9a755fd29b2688956bd959f933f8': 'ETH', // Binance-Peg Ethereum Token (bukan native BSC)
   }),
   polygon: Object.freeze({
     [NATIVE_TOKEN]: 'POL',
     '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270': 'WPOL',
+    '0x7ceb23fd6bc0add59e62ac25578270cff1b9f619': 'WETH', // ETH bridged (PoS) — bukan wrapped native POL
     '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359': 'USDC',
+    '0x2791bca1f2de4661ed88a30c99a7a9449aa84174': 'USDC.e',
     '0xc2132d05d31c914a87c6611c10748aeb04b58e8f': 'USDT',
+    '0x8f3cf7ad23cd3cadbd9735aff958023239c6a063': 'DAI',
   }),
   solana: Object.freeze({
     [NATIVE_TOKEN]: 'SOL',
@@ -192,6 +208,41 @@ export const QUOTE_ASSETS = Object.freeze({
 export function isQuoteAsset(chain, address) {
   return Object.prototype.hasOwnProperty.call(QUOTE_ASSETS[chain] ?? {}, address);
 }
+
+/** Simbol stablecoin USD di QUOTE_ASSETS. Hanya aset ini yang dinilai 1 USD/unit (classify.js). */
+export const STABLECOIN_SYMBOLS = Object.freeze(['USDC', 'USDC.e', 'USDbC', 'USDT', 'DAI', 'FDUSD', 'BUSD']);
+
+/** Stablecoin USD per chain: alamat kontrak → simbol (subset QUOTE_ASSETS, diturunkan dari STABLECOIN_SYMBOLS). */
+export const STABLECOINS = Object.freeze(Object.fromEntries(Object.entries(QUOTE_ASSETS).map(([chain, assets]) => [
+  chain,
+  Object.freeze(Object.fromEntries(Object.entries(assets).filter(([, symbol]) => STABLECOIN_SYMBOLS.includes(symbol)))),
+])));
+
+/** true bila token adalah stablecoin USD (1 USD/unit) di chain tersebut. Identitas = alamat kontrak, bukan simbol. */
+export function isStablecoinAsset(chain, address) {
+  return Object.prototype.hasOwnProperty.call(STABLECOINS[chain] ?? {}, address);
+}
+
+/**
+ * Alamat wrapped native per chain (simbol 'W' + simbol native di QUOTE_ASSETS: WETH, WBNB, WPOL, WSOL). Deposit/withdraw
+ * kontrak ini sering diindeks sebagai mint dari / burn ke ZERO_ADDRESS — itu bungkus/buka koin native, BUKAN LP.
+ */
+export const WRAPPED_NATIVE = Object.freeze(Object.fromEntries(Object.entries(QUOTE_ASSETS).map(([chain, assets]) => [
+  chain,
+  Object.freeze(Object.keys(assets).filter((a) => a !== NATIVE_TOKEN && assets[a] === `W${assets[NATIVE_TOKEN]}`)),
+])));
+
+/** true bila alamat adalah wrapped native chain tersebut (WETH di ethereum/base/arbitrum/optimism, WBNB, WPOL, WSOL). */
+export function isWrappedNative(chain, address) {
+  return (WRAPPED_NATIVE[chain] ?? []).includes(address);
+}
+
+/**
+ * logIndex ≥ batas ini adalah indeks SINTETIS (bukan urutan log on-chain): adapter Etherscan-compatible memakai
+ * 1e15–3e15 untuk baris tanpa logIndex, normalize.js memakai COLLISION_LOG_INDEX_BASE (5e15) untuk kunci yang
+ * bertabrakan. Indeks sintetis tidak boleh dipakai untuk mengurutkan aktivitas dalam satu blok.
+ */
+export const SYNTHETIC_LOG_INDEX_MIN = 1e15;
 
 /** Teks penafian standar (Bahasa Indonesia) yang wajib tampil bersama skor & sinyal. */
 export const DISCLAIMERS = Object.freeze({

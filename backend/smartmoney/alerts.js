@@ -12,15 +12,34 @@
 // MULTI_WALLET_BUY     RadarToken.independentBuyers ≥ prefs.minIndependentBuyers (wallet = null → '*').
 // LARGE_SELL           SWAP_SELL dengan USD diketahui ≥ prefs.largeSellUsd.
 // WALLET_EXIT          wallet DIPANTAU, positions qtyBefore > 0 dan qtyAfter ≤ 10 % qtyBefore, dengan SWAP_SELL
-//                      dan/atau CEX_DEPOSIT di batch; teks membedakan "dijual" vs "dipindah ke exchange, belum
-//                      tentu dijual". Pengurangan lewat transfer biasa tidak memicu alert.
+//                      dan/atau CEX_DEPOSIT di batch. Pengurangan lewat transfer biasa saja tidak memicu alert.
+//                      Teks mengikuti jalur DOMINAN dengan persentase dari jumlah yang berkurang: swap ("dijual via
+//                      swap"), deposit exchange ("dipindah ke exchange, belum tentu dijual"), dan sisa yang tidak
+//                      tercakup swap/deposit di batch ("dipindah lewat transfer/LP/bridge, belum tentu dijual").
+//                      Mis. 1 % swap + 99 % transfer → "99% dipindah lewat transfer/LP/bridge …, 1% dijual via swap",
+//                      bukan "dijual via swap". Severity HIGH hanya bila swap ≥ 50 % pengurangan, selain itu MEDIUM.
 // dedupeKey = `${kind}:${tokenKey}:${wallet|'*'}:${bucket}`, bucket = floor(t / cooldownMs), t = waktu peristiwa
 // (blockTime aktivitas pemicu; untuk MULTI_WALLET_BUY pembelian terakhir di radar) sehingga run berulang atas
-// peristiwa yang sama dalam satu ember menghasilkan kunci yang sama.
+// peristiwa yang sama dalam satu ember menghasilkan kunci yang sama. Format ini TIDAK berubah.
+//
+// ─── Waktu: peristiwa basi & cooldown sejati ───────────────────────────────────────────────────────
+// - Peristiwa basi: alert dengan now − t > prefs.maxEventAgeMs (default 30 menit = 2 × interval sinkronisasi
+//   15 menit) tidak dibuat — data lama yang baru tiba (terlambat) bukan "baru". Dihitung `skipped.stale`.
+// - Cooldown sejati (ember tetap tidak cukup: dua jual berjarak 2 menit di sisi berbeda batas ember lolos): argumen
+//   ketiga opsional `{ lastAlertAt: Map<baseKey, epochMs> }`, baseKey = alertBaseKey(alert) =
+//   `${kind}:${tokenKey}:${wallet|'*'}`. Alert ditahan bila t − lastAlertAt < cooldownMs (termasuk t lebih awal dari
+//   alert terakhir). Di dalam satu run, alert yang lolos memperbarui waktu terakhir baseKey-nya (= t), sehingga
+//   peristiwa berikutnya untuk baseKey yang sama dalam cooldown juga ditahan. Dihitung `skipped.cooldown`.
+//   Pemanggil (sinkronisasi) mengisi lastAlertAt dari alert tersimpan (eventAt, atau createdAt bila tidak ada).
+// - deriveAlertsDetailed → { alerts, skipped: { stale, cooldown } }; deriveAlerts → alerts saja (kompatibel).
+//
+// ─── Provenans ─────────────────────────────────────────────────────────────────────────────────────
+// `isSimulated` = true bila ADA aktivitas sumber alert yang isSimulated === true (termasuk tx radar yang dipakai
+// REPEAT_ACCUMULATION, dan RadarToken.isSimulated untuk MULTI_WALLET_BUY). Data simulasi tidak boleh tampil live.
 //
 // Ekstensi kontrak (aditif, dibutuhkan filterAlerts): `usd` (number|null), `walletScore` (number|null),
 // `watchlisted` (wallet atau token ada di watchlist), `walletWatched` (wallet ada di watchlist), `symbol`,
-// `evidence.walletUrl`, `evidence.tokenUrl`.
+// `evidence.walletUrl`, `evidence.tokenUrl`, `eventAt` (t), `isSimulated`.
 // filterAlerts: wallet dipantau dikecualikan dari minWalletScore; WALLET_EXIT dikecualikan dari minUsd (keluar
 // diukur dari proporsi kepemilikan, bukan nominal); alert ber-USD tidak diketahui hanya lolos minUsd bila dipantau.
 
@@ -39,12 +58,17 @@ export const DEFAULT_ALERT_PREFS = Object.freeze({
   minIndependentBuyers: 3,
   cooldownMs: 6 * 3_600_000,
   watchlistOnly: false,
+  /** Umur maksimum peristiwa (now − waktu peristiwa) agar dialertkan: 2 × interval sinkronisasi 15 menit. */
+  maxEventAgeMs: 2 * 15 * 60_000,
 });
 
 const REPEAT_MIN_BUYS = 3;
 const EXIT_DROP = 0.9;
 const COOLDOWN_MIN = 60_000;
 const COOLDOWN_MAX = 7 * 24 * 3_600_000;
+const EVENT_AGE_MIN = 60_000;
+const EVENT_AGE_MAX = 7 * 24 * 3_600_000;
+const SWAP_HIGH_SHARE = 0.5;
 const KIND_ORDER = Object.fromEntries(ALERT_KINDS.map((k, i) => [k, i]));
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -89,6 +113,12 @@ export function validateAlertPrefs(prefs) {
     }
   }
   if ('watchlistOnly' in prefs && typeof prefs.watchlistOnly !== 'boolean') errors.push('watchlistOnly harus boolean');
+  if ('maxEventAgeMs' in prefs) {
+    const v = prefs.maxEventAgeMs;
+    if (!(Number.isInteger(v) && v >= EVENT_AGE_MIN && v <= EVENT_AGE_MAX)) {
+      errors.push(`maxEventAgeMs harus bilangan bulat ${EVENT_AGE_MIN}..${EVENT_AGE_MAX} ms`);
+    }
+  }
   return errors;
 }
 
@@ -106,15 +136,101 @@ function txUrl(a) {
   return a.explorerUrl ?? explorerTxUrl(a.chain, a.txHash);
 }
 
+const simulated = (x) => x?.isSimulated === true;
+
+/**
+ * Kunci dasar cooldown sebuah alert: dedupeKey tanpa ember waktu.
+ * @param {{ kind: string, tokenKey: string, wallet?: string|null }} alert
+ * @returns {string} `${kind}:${tokenKey}:${wallet ?? '*'}`
+ */
+export function alertBaseKey(alert) {
+  return `${alert.kind}:${alert.tokenKey}:${alert.wallet ?? '*'}`;
+}
+
+function resolveLastAlertAt(options) {
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('Opsi alert harus objek');
+  }
+  const { lastAlertAt = new Map() } = options;
+  if (!(lastAlertAt instanceof Map)) throw new TypeError('lastAlertAt harus Map<baseKey, epoch ms>');
+  return lastAlertAt;
+}
+
+/** Jumlah (amount) yang diketahui dari daftar aktivitas; null bila ada yang tidak diketahui. */
+function knownQty(list) {
+  let sum = 0;
+  for (const a of list) {
+    if (!(isNum(a.amount) && a.amount >= 0)) return null;
+    sum += a.amount;
+  }
+  return sum;
+}
+
+/**
+ * Teks jalur keluar WALLET_EXIT berdasarkan jalur dominan (porsi dari jumlah yang berkurang).
+ * @returns {{ verb: string, detail: string, swapShare: number }}
+ */
+function exitWording(sells, deposits, dropQty) {
+  const swapQty = knownQty(sells);
+  const cexQty = knownQty(deposits);
+  const PHRASE = {
+    swap: { verb: 'menjual', single: 'dijual via swap', part: 'dijual via swap' },
+    cex: { verb: 'memindahkan ke exchange', single: 'dipindah ke exchange, belum tentu dijual', part: 'dipindah ke exchange (belum tentu dijual)' },
+    other: {
+      verb: 'memindahkan', single: 'dipindah lewat transfer/LP/bridge, belum tentu dijual',
+      part: 'dipindah lewat transfer/LP/bridge (belum tentu dijual)',
+    },
+  };
+  if (swapQty === null || cexQty === null || !(swapQty + cexQty > 0)) {
+    // Jumlah tidak diketahui → hanya jenis jalur yang disebut, tanpa persentase dan tanpa klaim "dijual" penuh.
+    if (!sells.length) return { verb: PHRASE.cex.verb, detail: PHRASE.cex.single, swapShare: 0 };
+    if (!deposits.length) {
+      return { verb: 'menjual / memindahkan', detail: 'ada penjualan via swap (porsi tidak diketahui; sisanya belum tentu dijual)', swapShare: 0 };
+    }
+    return {
+      verb: 'menjual / memindahkan',
+      detail: 'sebagian dijual via swap, sebagian dipindah ke exchange (porsi tidak diketahui; belum tentu dijual)',
+      swapShare: 0,
+    };
+  }
+  const total = Math.max(dropQty, swapQty + cexQty);
+  const shares = [
+    { key: 'swap', share: swapQty / total },
+    { key: 'cex', share: cexQty / total },
+    { key: 'other', share: Math.max(0, total - swapQty - cexQty) / total },
+  ].filter((x) => x.share > 0).sort((x, y) => y.share - x.share);
+  const swapShare = swapQty / total;
+  const dominant = shares[0].key;
+  if (shares.length === 1) return { verb: PHRASE[dominant].verb, detail: PHRASE[dominant].single, swapShare };
+  const pct = (v) => (v > 0 && v < 0.01 ? '< 1' : String(Math.round(v * 100)));
+  return {
+    verb: PHRASE[dominant].verb,
+    detail: shares.map((x) => `${pct(x.share)}% ${PHRASE[x.key].part}`).join(', '),
+    swapShare,
+  };
+}
+
 /**
  * Menurunkan alert dari aktivitas baru & radar terkini.
  * @param {{ activities: object[], radar?: object[], watchlist?: { wallets?: Set<string>, tokens?: Set<string> },
  *   walletScores?: Map<string, { score: number, eligible: boolean, flags: object[] }>,
  *   positions?: Map<string, Map<string, { qtyBefore: number, qtyAfter: number }>>, now: number }} input
  * @param {Partial<typeof DEFAULT_ALERT_PREFS>} [prefs]
+ * @param {{ lastAlertAt?: Map<string, number> }} [options] waktu alert terakhir per alertBaseKey (cooldown sejati)
  * @returns {object[]} Alert[] unik per dedupeKey, terurut (jenis, dedupeKey).
  */
-export function deriveAlerts(input, prefs = {}) {
+export function deriveAlerts(input, prefs = {}, options = {}) {
+  return deriveAlertsDetailed(input, prefs, options).alerts;
+}
+
+/**
+ * Seperti deriveAlerts, ditambah jumlah alert yang ditahan karena peristiwa basi atau cooldown.
+ * @param {object} input lihat deriveAlerts
+ * @param {Partial<typeof DEFAULT_ALERT_PREFS>} [prefs]
+ * @param {{ lastAlertAt?: Map<string, number> }} [options]
+ * @returns {{ alerts: object[], skipped: { stale: number, cooldown: number } }}
+ */
+export function deriveAlertsDetailed(input, prefs = {}, options = {}) {
   if (input === null || typeof input !== 'object') throw new TypeError('Input alert harus objek');
   const {
     activities = [], radar = [], watchlist = {}, walletScores = new Map(), positions = new Map(), now,
@@ -123,20 +239,30 @@ export function deriveAlerts(input, prefs = {}) {
   if (!Array.isArray(radar)) throw new TypeError('radar harus array');
   if (!Number.isInteger(now)) throw new TypeError('now harus epoch ms bilangan bulat');
   const p = resolvePrefs(prefs);
+  const lastAlertAt = resolveLastAlertAt(options ?? {});
   const watchedWallets = watchlist.wallets instanceof Set ? watchlist.wallets : new Set();
   const watchedTokens = watchlist.tokens instanceof Set ? watchlist.tokens : new Set();
   const radarByToken = new Map(radar.map((r) => [r.tokenKey, r]));
   const bucket = (t) => Math.floor(t / p.cooldownMs);
 
   const out = new Map();
+  const skipped = { stale: 0, cooldown: 0 };
+  const lastEmitted = new Map(); // baseKey → waktu peristiwa alert terakhir yang lolos di run ini
   const emit = (alert) => {
-    if (!out.has(alert.dedupeKey)) out.set(alert.dedupeKey, alert);
+    if (out.has(alert.dedupeKey)) return;
+    if (now - alert.eventAt > p.maxEventAgeMs) { skipped.stale += 1; return; }
+    const key = alertBaseKey(alert);
+    const last = lastEmitted.has(key) ? lastEmitted.get(key) : lastAlertAt.get(key);
+    if (isNum(last) && alert.eventAt - last < p.cooldownMs) { skipped.cooldown += 1; return; }
+    lastEmitted.set(key, alert.eventAt);
+    out.set(alert.dedupeKey, alert);
   };
   const base = ({ kind, severity, chain, tKey, wallet, t, token }) => ({
     kind, severity,
     dedupeKey: `${kind}:${tKey}:${wallet ?? '*'}:${bucket(t)}`,
     chain, tokenKey: tKey, wallet: wallet ?? null, symbol: token?.symbol ?? null,
     createdAt: now,
+    eventAt: t,
   });
 
   const acts = dedupeActivities(activities).filter((a) => isNum(a.blockTime) && a.blockTime <= now && !isQuoteAsset(a.chain, a.token.address));
@@ -188,6 +314,7 @@ export function deriveAlerts(input, prefs = {}) {
           message: `${who} membeli ${tl} via swap senilai ${formatUsd(usd)}. Pembelian swap pertama atas token ini dalam periode pantauan.`,
           evidence: evidenceOf([first]),
           ...extra, usd,
+          isSimulated: simulated(first),
         });
       }
     }
@@ -206,6 +333,7 @@ export function deriveAlerts(input, prefs = {}) {
           message: `${who} sudah ${txs.size} kali membeli ${tl} via swap dalam jendela radar (beli bersih ${formatUsd(usd)}).`,
           evidence: evidenceOf(buys),
           ...extra, usd,
+          isSimulated: buys.some(simulated) || radarBuyTimes.some(simulated),
         });
       }
     }
@@ -219,27 +347,29 @@ export function deriveAlerts(input, prefs = {}) {
         message: `${who} menjual ${tl} via swap senilai ${formatUsd(s.usdValue)}.`,
         evidence: evidenceOf([s]),
         ...extra, usd: s.usdValue,
+        isSimulated: simulated(s),
       });
     }
 
-    // WALLET_EXIT — hanya wallet dipantau, kepemilikan turun ≥ 90 % lewat swap dan/atau deposit exchange.
+    // WALLET_EXIT — hanya wallet dipantau, kepemilikan turun ≥ 90 % dengan swap dan/atau deposit exchange di batch;
+    // teks mengikuti jalur dominan (lihat header).
     const exits = [...sells, ...deposits].sort((x, y) => x.blockTime - y.blockTime);
     if (watched && exits.length && isNum(pos?.qtyBefore) && pos.qtyBefore > 0 && isNum(pos?.qtyAfter)
       && pos.qtyAfter <= (1 - EXIT_DROP) * pos.qtyBefore) {
-      const viaSwap = sells.length > 0;
-      const viaCex = deposits.length > 0;
-      const dropPct = Math.round((1 - Math.max(0, pos.qtyAfter) / pos.qtyBefore) * 100);
+      const dropQty = pos.qtyBefore - Math.max(0, pos.qtyAfter);
+      const dropPct = Math.round((dropQty / pos.qtyBefore) * 100);
       const usd = exits.every((a) => isNum(a.usdValue)) ? exits.reduce((s, a) => s + a.usdValue, 0) : null;
-      let verb; let detail;
-      if (viaSwap && !viaCex) { verb = 'menjual'; detail = 'dijual via swap'; }
-      else if (viaCex && !viaSwap) { verb = 'memindahkan ke exchange'; detail = 'dipindah ke exchange, belum tentu dijual'; }
-      else { verb = 'menjual / memindahkan'; detail = 'sebagian dijual via swap, sebagian dipindah ke exchange (belum tentu dijual)'; }
+      const { verb, detail, swapShare } = exitWording(sells, deposits, dropQty);
       emit({
-        ...base({ kind: 'WALLET_EXIT', severity: viaSwap ? 'HIGH' : 'MEDIUM', chain, tKey, wallet, t: exits[exits.length - 1].blockTime, token }),
+        ...base({
+          kind: 'WALLET_EXIT', severity: swapShare >= SWAP_HIGH_SHARE ? 'HIGH' : 'MEDIUM', chain, tKey, wallet,
+          t: exits[exits.length - 1].blockTime, token,
+        }),
         title: `Keluar: ${shortAddress(wallet)} ${verb} ${token.symbol ?? '?'} (${shortAddress(token.address)})`,
-        message: `${who} mengurangi kepemilikan ${tl} sebesar ${dropPct}% — ${detail} (${formatUsd(usd)}).`,
+        message: `${who} mengurangi kepemilikan ${tl} sebesar ${dropPct}% — ${detail} (nilai swap/deposit ${formatUsd(usd)}).`,
         evidence: evidenceOf(exits),
         ...extra, usd,
+        isSimulated: exits.some(simulated),
       });
     }
   }
@@ -263,10 +393,12 @@ export function deriveAlerts(input, prefs = {}) {
         walletUrl: null, tokenUrl: explorerTokenUrl(r.chain, r.token?.address),
       },
       usd, walletScore: null, watchlisted: watchedTokens.has(r.tokenKey), walletWatched: false,
+      isSimulated: simulated(r) || txs.some(simulated),
     });
   }
 
-  return [...out.values()].sort((x, y) => (KIND_ORDER[x.kind] - KIND_ORDER[y.kind]) || cmp(x.dedupeKey, y.dedupeKey));
+  const alerts = [...out.values()].sort((x, y) => (KIND_ORDER[x.kind] - KIND_ORDER[y.kind]) || cmp(x.dedupeKey, y.dedupeKey));
+  return { alerts, skipped };
 }
 
 /**

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_ALERT_PREFS, deriveAlerts, filterAlerts, validateAlertPrefs } from '../../../backend/smartmoney/alerts.js';
+import {
+  DEFAULT_ALERT_PREFS, alertBaseKey, deriveAlerts, deriveAlertsDetailed, filterAlerts, validateAlertPrefs,
+} from '../../../backend/smartmoney/alerts.js';
 import { ALERT_KINDS, tokenKey, walletKey } from '../../../backend/smartmoney/contracts.js';
 import { buildAccumulationRadar } from '../../../backend/smartmoney/radar.js';
 import { HOUR, PEPE, PEPE_FAKE, T0, act, addr, scores } from './radarAlertFixtures.js';
@@ -11,11 +13,14 @@ const WS = scores([[W[0], 80], [W[1], 75], [W[2], 70], [W[3], 40]]);
 const wk = (a) => walletKey('ethereum', a);
 const radarOf = (activities, now = NOW) => buildAccumulationRadar({ activities, walletScores: WS, now, windowMs: 24 * HOUR });
 
-function derive({ activities = [], radar = [], watchWallets = [], watchTokens = [], positions = new Map(), now = NOW } = {}, prefs) {
+// Fixture memakai peristiwa 1–3 jam sebelum NOW. Default maxEventAgeMs (30 menit) akan menandainya basi, jadi helper
+// ini melonggarkan batas umur ke 24 jam; perilaku peristiwa basi & cooldown sejati diuji khusus (ALR-013..014).
+const LOOSE_AGE = { maxEventAgeMs: 24 * HOUR };
+function derive({ activities = [], radar = [], watchWallets = [], watchTokens = [], positions = new Map(), now = NOW } = {}, prefs, options) {
   return deriveAlerts({
     activities, radar, watchlist: { wallets: new Set(watchWallets.map(wk)), tokens: new Set(watchTokens) },
     walletScores: WS, positions, now,
-  }, prefs);
+  }, { ...LOOSE_AGE, ...prefs }, options);
 }
 const kinds = (alerts) => alerts.map((a) => a.kind);
 const pos = (wallet, qtyBefore, qtyAfter, tKey = PEPE_KEY) => new Map([[wk(wallet), new Map([[tKey, { qtyBefore, qtyAfter }]])]]);
@@ -186,5 +191,124 @@ describe('filterAlerts & dedupe', () => {
     expect(validateAlertPrefs({ foo: 1 })[0]).toContain('foo');
     expect(() => deriveAlerts({ activities: [], now: NOW }, { cooldownMs: 0 })).toThrow(RangeError);
     expect(() => filterAlerts([], { prefs: { minUsd: -5 } })).toThrow(RangeError);
+  });
+});
+
+describe('deriveAlerts — waktu peristiwa, cooldown sejati, provenans, teks keluar', () => {
+  const MIN = 60_000;
+
+  it('UNIT-SM-ALR-013 peristiwa basi (data lama yang terlambat tiba) tidak dialertkan sebagai baru; dihitung skipped.stale', () => {
+    expect(DEFAULT_ALERT_PREFS.maxEventAgeMs).toBe(30 * MIN);
+    // probe p7b: beli 9 hari lalu yang baru tiba sekarang
+    const late = act({ wallet: W[0], at: NOW - 9 * 24 * HOUR, usd: 5000 });
+    const input = { activities: [late], walletScores: WS, now: NOW };
+    expect(deriveAlertsDetailed(input)).toEqual({ alerts: [], skipped: { stale: 1, cooldown: 0 } });
+    expect(deriveAlerts(input)).toEqual([]);
+    // segar (≤ 30 menit, batas inklusif) → alert dengan eventAt = waktu peristiwa
+    const fresh = act({ wallet: W[0], at: NOW - 30 * MIN, usd: 5000 });
+    const ok = deriveAlertsDetailed({ ...input, activities: [fresh] });
+    expect(kinds(ok.alerts)).toEqual(['NEW_BUY']);
+    expect(ok.alerts[0]).toMatchObject({ eventAt: fresh.blockTime, createdAt: NOW });
+    expect(ok.skipped).toEqual({ stale: 0, cooldown: 0 });
+    // MULTI_WALLET_BUY dengan pembelian terakhir 3 jam lalu → basi
+    const buys = [W[0], W[1], W[2]].map((w, i) => act({ wallet: w, at: NOW - (i + 3) * HOUR, usd: 2000 }));
+    const multi = deriveAlertsDetailed({ activities: [], radar: radarOf(buys), walletScores: WS, now: NOW });
+    expect(multi.alerts).toEqual([]);
+    expect(multi.skipped.stale).toBe(1);
+    expect(kinds(deriveAlerts({ activities: [], radar: radarOf(buys), walletScores: WS, now: NOW }, { maxEventAgeMs: 4 * HOUR }))).toEqual(['MULTI_WALLET_BUY']);
+    // validasi preferensi
+    expect(validateAlertPrefs({ maxEventAgeMs: 24 * HOUR })).toEqual([]);
+    expect(validateAlertPrefs({ maxEventAgeMs: 1000 })).toHaveLength(1);
+    expect(validateAlertPrefs({ maxEventAgeMs: 8 * 24 * HOUR })).toHaveLength(1);
+    expect(validateAlertPrefs({ maxEventAgeMs: HOUR + 0.5 })).toHaveLength(1);
+    expect(() => deriveAlerts(input, { maxEventAgeMs: 0 })).toThrow(RangeError);
+  });
+
+  it('UNIT-SM-ALR-014 cooldown sejati: lastAlertAt per alertBaseKey menahan alert walau beda ember; format dedupeKey tetap', () => {
+    const cd = DEFAULT_ALERT_PREFS.cooldownMs;
+    const boundary = Math.floor(NOW / cd) * cd;
+    // probe p7a: dua jual besar berjarak 2 menit di sisi berbeda batas ember, pada dua run berurutan
+    const s1 = act({ wallet: W[0], type: 'SWAP_SELL', at: boundary - MIN, usd: 50_000 });
+    const s2 = act({ wallet: W[0], type: 'SWAP_SELL', at: boundary + MIN, usd: 50_000 });
+    const run1 = deriveAlerts({ activities: [s1], walletScores: WS, now: boundary - MIN / 2 });
+    expect(kinds(run1)).toEqual(['LARGE_SELL']);
+    const [a1] = run1;
+    expect(alertBaseKey(a1)).toBe(`LARGE_SELL:${PEPE_KEY}:${W[0]}`);
+    expect(alertBaseKey({ kind: 'MULTI_WALLET_BUY', tokenKey: PEPE_KEY, wallet: null })).toBe(`MULTI_WALLET_BUY:${PEPE_KEY}:*`);
+    expect(a1.dedupeKey).toBe(`${alertBaseKey(a1)}:${Math.floor(s1.blockTime / cd)}`); // format lama
+    const now2 = boundary + 1.5 * MIN;
+    // tanpa lastAlertAt: ember baru → alert lagi 2 menit kemudian (kunci berbeda)
+    expect(kinds(deriveAlerts({ activities: [s2], walletScores: WS, now: now2 }))).toEqual(['LARGE_SELL']);
+    // dengan lastAlertAt → ditahan dan dihitung; wallet lain tidak terpengaruh
+    const lastAlertAt = new Map([[alertBaseKey(a1), a1.eventAt]]);
+    const other = act({ wallet: W[1], type: 'SWAP_SELL', at: boundary + MIN, usd: 50_000 });
+    const r2 = deriveAlertsDetailed({ activities: [s2, other], walletScores: WS, now: now2 }, {}, { lastAlertAt });
+    expect(r2.alerts.map((a) => a.wallet)).toEqual([W[1]]);
+    expect(r2.skipped).toEqual({ stale: 0, cooldown: 1 });
+    // lastAlertAt = createdAt (≥ waktu peristiwa) juga menahan peristiwa yang lebih awal
+    expect(deriveAlerts({ activities: [s2], walletScores: WS, now: now2 }, {}, { lastAlertAt: new Map([[alertBaseKey(a1), now2]]) })).toEqual([]);
+    // setelah cooldown penuh → alert lagi
+    const s3 = act({ wallet: W[0], type: 'SWAP_SELL', at: a1.eventAt + cd, usd: 50_000 });
+    expect(kinds(deriveAlerts({ activities: [s3], walletScores: WS, now: s3.blockTime + MIN }, {}, { lastAlertAt }))).toEqual(['LARGE_SELL']);
+    // dalam satu run: dua jual melintasi batas ember → satu alert (yang pertama)
+    const both = deriveAlertsDetailed({ activities: [s2, s1], walletScores: WS, now: now2 });
+    expect(both.alerts.map((a) => a.eventAt)).toEqual([s1.blockTime]);
+    expect(both.skipped.cooldown).toBe(1);
+    expect(() => deriveAlerts({ activities: [], now: NOW }, {}, { lastAlertAt: {} })).toThrow(TypeError);
+  });
+
+  it('UNIT-SM-ALR-015 provenans: isSimulated di setiap alert (true bila ada aktivitas sumber simulasi)', () => {
+    const live = (a) => ({ ...a, isSimulated: false, provider: 'etherscan' });
+    const FAKE_KEY = tokenKey('ethereum', PEPE_FAKE.address);
+    const acts = [
+      act({ wallet: W[0], at: NOW - 20 * MIN, usd: 5000 }),
+      act({ wallet: W[1], at: NOW - 15 * MIN, usd: 5000 }),
+      act({ wallet: W[2], at: NOW - 10 * MIN, usd: 5000 }),
+      act({ wallet: W[0], type: 'SWAP_SELL', token: PEPE_FAKE, at: NOW - 5 * MIN, usd: 20_000, amount: 1000 }),
+    ];
+    const run = (list) => deriveAlerts({
+      activities: list, radar: radarOf(list), walletScores: WS, watchlist: { wallets: new Set([wk(W[0])]) },
+      positions: pos(W[0], 1000, 0, FAKE_KEY), now: NOW,
+    });
+    const sim = run(acts);
+    expect([...new Set(kinds(sim))]).toEqual(['NEW_BUY', 'MULTI_WALLET_BUY', 'LARGE_SELL', 'WALLET_EXIT']);
+    expect(sim.every((a) => a.isSimulated === true)).toBe(true);
+    const real = run(acts.map(live));
+    expect(kinds(real)).toEqual(kinds(sim));
+    expect(real.every((a) => a.isSimulated === false)).toBe(true);
+    // REPEAT_ACCUMULATION: batch live, tetapi tx radar sebelumnya simulasi → tetap ditandai simulasi
+    const older = [15, 25].map((m) => act({ wallet: W[1], at: NOW - m * MIN, usd: 3000 }));
+    const fresh = live(act({ wallet: W[1], at: NOW - MIN, usd: 3000 }));
+    const repeat = deriveAlerts({ activities: [fresh], radar: radarOf([...older, fresh]), walletScores: WS, now: NOW });
+    expect(repeat.map((a) => [a.kind, a.isSimulated])).toEqual([['REPEAT_ACCUMULATION', true]]);
+  });
+
+  it('UNIT-SM-ALR-016 WALLET_EXIT mengikuti jalur dominan dengan persentase (1% swap + 99% transfer ≠ "dijual via swap")', () => {
+    const exitOf = (activities, before = 1000, after = 0) => derive({ activities, watchWallets: [W[0]], positions: pos(W[0], before, after) })
+      .find((a) => a.kind === 'WALLET_EXIT');
+    const small = act({ wallet: W[0], type: 'SWAP_SELL', at: NOW - 10 * MIN, usd: 80, amount: 10 });
+    const moved = exitOf([small]);
+    expect(moved.title).toBe('Keluar: 0x0000…000b memindahkan PEPE (0x0000…aaa1)');
+    expect(moved.message).toContain('sebesar 100% — 99% dipindah lewat transfer/LP/bridge (belum tentu dijual), 1% dijual via swap (nilai swap/deposit $80,00)');
+    expect(moved.severity).toBe('MEDIUM');
+
+    const s60 = act({ wallet: W[0], type: 'SWAP_SELL', at: NOW - 10 * MIN, usd: 6000, amount: 600 });
+    const d40 = act({ wallet: W[0], type: 'CEX_DEPOSIT', at: NOW - 5 * MIN, usd: 4000, amount: 400 });
+    const mixed = exitOf([s60, d40]);
+    expect(mixed.title).toContain('menjual PEPE');
+    expect(mixed.message).toContain('— 60% dijual via swap, 40% dipindah ke exchange (belum tentu dijual) (nilai swap/deposit $10.000)');
+    expect(mixed.severity).toBe('HIGH');
+
+    const d60 = act({ wallet: W[0], type: 'CEX_DEPOSIT', at: NOW - 10 * MIN, usd: 6000, amount: 600 });
+    const s40 = act({ wallet: W[0], type: 'SWAP_SELL', at: NOW - 5 * MIN, usd: 4000, amount: 400 });
+    const cexMostly = exitOf([d60, s40]);
+    expect(cexMostly.title).toContain('memindahkan ke exchange PEPE');
+    expect(cexMostly.message).toContain('60% dipindah ke exchange (belum tentu dijual), 40% dijual via swap');
+    expect(cexMostly.severity).toBe('MEDIUM');
+
+    // jumlah tidak diketahui → tanpa klaim "dijual via swap" penuh
+    const unknown = exitOf([{ ...small, amount: null }]);
+    expect(unknown.message).toContain('ada penjualan via swap (porsi tidak diketahui; sisanya belum tentu dijual)');
+    expect(unknown.severity).toBe('MEDIUM');
   });
 });

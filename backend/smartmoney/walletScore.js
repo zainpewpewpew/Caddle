@@ -6,10 +6,19 @@
 // Bobot dan skala di bawah BELUM dikalibrasi. Skor 0..100 adalah ringkasan bukti yang dapat dijelaskan, BUKAN
 // probabilitas profit. Skor tidak pernah membaca saldo wallet.
 //
+// ─── Trade = round trip posisi ─────────────────────────────────────────────────────────────────────
+// "Trade tertutup" (n) = `pnl.roundTrips` (pnl.js: episode posisi per token dari ~0 sampai datar lagi, atau per
+// transaksi jual bila posisi belum pernah datar), BUKAN potongan lot FIFO `pnl.closedTrades` — 10 beli kecil + 1 jual
+// adalah SATU trade. PnlResult lama tanpa `roundTrips` (masukan buatan tangan) → `closedTrades` dipakai apa adanya.
+// Semua komponen di bawah (n, return, meanExTop, lama pegang, konsistensi mingguan, drawdown) memakai round trip.
+//
 // ─── Komponen (masing-masing 0..1) ───────────────────────────────────────────────────────────────────
 // profitability   r = min(mean, meanExTop) × n/(n+k), k = 10 (return per trade dalam %; meanExTop = rata-rata
-//                 tanpa trade terbaik, 0 bila n = 1). Nilai = max(0, tanh(r / profitScalePct)), skala 30 %.
-//                 Satu trade beruntung → meanExTop = 0 → profitabilitas 0.
+//                 tanpa trade terbaik, 0 bila n = 1). Return tiap trade DIBATASI di +returnCapPct (200 %) sebelum
+//                 dirata-rata (winsorisasi atas) — satu/dua hasil ekstrem tidak bisa mendominasi walau n besar.
+//                 Nilai = max(0, tanh(r / profitScalePct)), skala 30 %. Satu trade beruntung → meanExTop = 0 →
+//                 profitabilitas 0. Metrik medianReturnPct/shrunkMeanReturnPct/meanReturnExTopPct tetap memakai
+//                 return mentah (informasi); `metrics.effectiveReturnPct` (aditif) = r yang dipakai skor.
 // consistency     minggu aktif (UTC, floor(closeAt / 7 hari)) dengan PnL realisasi > 0: (P + 0,5·k)/(W + k), k = 4
 //                 (shrinkage ke 0,5); bila W < 4 minggu: min(0,5, nilai) × W/4 (bukti belum cukup — tidak
 //                 boleh dikreditkan penuh).
@@ -48,6 +57,7 @@ export const DEFAULT_WALLET_SCORE_PARAMS = Object.freeze({
   concentrationThreshold: 0.6,
   concentrationPenaltyMax: 0.7,
   historySaturationDays: 180,
+  returnCapPct: 200,
   minClosedTrades: 10,
   minTokens: 3,
   minHistoryDays: 30,
@@ -102,7 +112,7 @@ export function resolveWalletScoreParams(overrides = {}) {
   for (const key of ['concentrationThreshold', 'concentrationPenaltyMax', 'minCompletenessRatio', 'mixedMinShare', 'riskDrawdownWeight']) {
     assertFinite(key, p[key], 0, 1);
   }
-  for (const key of ['profitScalePct', 'drawdownScalePct', 'diversificationScale', 'historySaturationDays']) {
+  for (const key of ['profitScalePct', 'drawdownScalePct', 'diversificationScale', 'historySaturationDays', 'returnCapPct']) {
     if (p[key] <= 0) throw new RangeError(`${key} harus > 0`);
   }
   return Object.freeze(p);
@@ -123,8 +133,10 @@ function styleOf(holds, p) {
 }
 
 function maxDrawdown(trades) {
-  // Basis: biaya trade terbesar (proksi modal yang pernah dipakai sekaligus; bukan saldo).
-  const base = Math.max(0, ...trades.map((t) => (isNum(t.costUsd) ? t.costUsd : 0)));
+  // Basis: biaya trade terbesar (proksi modal yang pernah dipakai sekaligus; bukan saldo). Loop, bukan
+  // Math.max(...arr): spread argumen gagal (RangeError) di atas ~125 ribu elemen.
+  let base = 0;
+  for (const t of trades) if (isNum(t.costUsd) && t.costUsd > base) base = t.costUsd;
   if (!(base > 0)) return { pct: 0, usd: 0 };
   let equity = base;
   let peak = base;
@@ -156,8 +168,11 @@ export function scoreWallet({ pnl, activities = [], flags = [], now } = {}, para
   const limitations = [];
   const reasons = [];
 
-  // Trade tertutup hanya yang sudah ditutup ≤ now (tanpa look-ahead), urut deterministik.
-  const trades = (Array.isArray(pnl?.closedTrades) ? pnl.closedTrades : [])
+  // Trade (round trip) hanya yang sudah ditutup ≤ now (tanpa look-ahead), urut deterministik.
+  let source = [];
+  if (Array.isArray(pnl?.roundTrips)) source = pnl.roundTrips;
+  else if (Array.isArray(pnl?.closedTrades)) source = pnl.closedTrades;
+  const trades = source
     .filter((t) => t && isNum(t.closeAt) && t.closeAt <= now)
     .map((t) => ({ ...t, ret: tradeReturnPct(t) }))
     .sort((a, b) => a.closeAt - b.closeAt || String(a.tokenKey).localeCompare(String(b.tokenKey)) || (a.openAt ?? 0) - (b.openAt ?? 0));
@@ -166,13 +181,17 @@ export function scoreWallet({ pnl, activities = [], flags = [], now } = {}, para
   const tokenSet = new Set(trades.map((t) => t.tokenKey));
   const distinctTokens = tokenSet.size;
 
-  // Profitabilitas (shrinkage + tanpa trade terbaik).
+  // Profitabilitas (return dibatasi returnCapPct + shrinkage + tanpa trade terbaik).
   const meanRet = mean(rets);
   const sortedRets = [...rets].sort((a, b) => b - a);
   const meanExTop = n > 1 ? mean(sortedRets.slice(1)) : 0;
   const shrink = n / (n + p.shrinkageK);
   const shrunkMean = meanRet * shrink;
-  const effective = Math.min(meanRet, meanExTop) * shrink;
+  const cappedSorted = sortedRets.map((r) => Math.min(r, p.returnCapPct));
+  const cappedCount = sortedRets.filter((r) => r > p.returnCapPct).length;
+  const cappedMean = mean(cappedSorted);
+  const cappedExTop = n > 1 ? mean(cappedSorted.slice(1)) : 0;
+  const effective = Math.min(cappedMean, cappedExTop) * shrink;
   const profitability = clamp01(Math.max(0, Math.tanh(effective / p.profitScalePct)));
 
   // Konsistensi mingguan.
@@ -193,7 +212,8 @@ export function scoreWallet({ pnl, activities = [], flags = [], now } = {}, para
 
   // Risiko.
   const dd = maxDrawdown(trades);
-  const worst = n ? Math.min(...rets) : null;
+  let worst = null;
+  for (const r of rets) if (worst === null || r < worst) worst = r;
   const rawRisk = n
     ? p.riskDrawdownWeight * (1 - Math.tanh(dd.pct / p.drawdownScalePct))
       + (1 - p.riskDrawdownWeight) * (1 - Math.min(1, Math.abs(Math.min(0, worst)) / 100))
@@ -211,12 +231,13 @@ export function scoreWallet({ pnl, activities = [], flags = [], now } = {}, para
     : 0;
   const diversification = clamp01((1 - Math.exp(-distinctTokens / p.diversificationScale)) * (1 - concentrationPenalty));
 
-  // Lama riwayat (aktivitas setelah `now` diabaikan).
-  const firstTimes = [
-    ...(Array.isArray(activities) ? activities : []).map((a) => a?.blockTime).filter((t) => isNum(t) && t <= now),
-    ...trades.map((t) => t.openAt).filter((t) => isNum(t) && t <= now),
-  ];
-  const firstAt = firstTimes.length ? Math.min(...firstTimes) : null;
+  // Lama riwayat (aktivitas setelah `now` diabaikan). Loop, bukan Math.min(...arr) (aman untuk riwayat sangat besar).
+  let firstAt = null;
+  const noteFirst = (t) => {
+    if (isNum(t) && t <= now && (firstAt === null || t < firstAt)) firstAt = t;
+  };
+  for (const a of Array.isArray(activities) ? activities : []) noteFirst(a?.blockTime);
+  for (const t of trades) noteFirst(t.openAt);
   const historyDays = firstAt !== null ? (now - firstAt) / DAY_MS : 0;
   const history = clamp01(historyDays / p.historySaturationDays);
 
@@ -254,9 +275,9 @@ export function scoreWallet({ pnl, activities = [], flags = [], now } = {}, para
   if (completenessRatio === null) {
     limitations.push('Kelengkapan PnL tidak diketahui — dianggap 0 (skor dipotong setengah)');
   } else if (completenessRatio < p.minCompletenessRatio) {
-    limitations.push(`PnL tidak lengkap: hanya ${pct(completenessRatio)} jumlah jual berbiaya diketahui (minimal ${pct(p.minCompletenessRatio)})`);
+    limitations.push(`PnL tidak lengkap: hanya ${pct(completenessRatio)} nilai jual berbiaya diketahui (minimal ${pct(p.minCompletenessRatio)})`);
   } else if (completenessRatio < 1) {
-    limitations.push(`PnL sebagian: ${pct(completenessRatio)} jumlah jual berbiaya diketahui; skor dikalikan ${round(completenessFactor, 2)}`);
+    limitations.push(`PnL sebagian: ${pct(completenessRatio)} nilai jual berbiaya diketahui; skor dikalikan ${round(completenessFactor, 2)}`);
   }
   const eligible = n >= p.minClosedTrades && distinctTokens >= p.minTokens && historyDays >= p.minHistoryDays
     && !isExcluded(flagList) && !farmer && completenessRatio !== null && completenessRatio >= p.minCompletenessRatio;
@@ -265,6 +286,9 @@ export function scoreWallet({ pnl, activities = [], flags = [], now } = {}, para
     limitations.push(`Return rata-rata sangat bergantung pada trade terbaik (${fmtPct(sortedRets[0])}); dinilai tanpa trade tersebut`);
   }
   if (n === 1) limitations.push('Hanya satu trade tertutup — satu hasil beruntung tidak dianggap keahlian');
+  if (cappedCount > 0) {
+    limitations.push(`${cappedCount} trade dengan return di atas +${p.returnCapPct}% dibatasi +${p.returnCapPct}% dalam skor — hasil ekstrem tidak boleh mendominasi`);
+  }
   if (concentrationPenalty > 0) {
     limitations.push(`${pct(topTokenPnlShare)} PnL positif berasal dari satu token — diversifikasi dipenalti`);
   }
@@ -279,7 +303,7 @@ export function scoreWallet({ pnl, activities = [], flags = [], now } = {}, para
     if (weeklyPositiveShare !== null) parts.push(`${pct(weeklyPositiveShare)} minggu profit`);
     parts.push(`drawdown maks ${Math.round(dd.pct)}%`);
     reasons.push(parts.join(', '));
-    reasons.push(`Return median per trade ${fmtPct(median(rets))}; rata-rata terkoreksi (shrinkage, tanpa trade terbaik) ${fmtPct(effective)}`);
+    reasons.push(`Return median per trade ${fmtPct(median(rets))}; rata-rata terkoreksi (shrinkage, tanpa trade terbaik, return per trade maks +${p.returnCapPct}%) ${fmtPct(effective)}`);
     if (worst !== null && worst < 0) reasons.push(`Trade terburuk ${fmtPct(worst)}`);
     if (winRate !== null) reasons.push(`Win rate ${pct(winRate)} (informasi saja, tidak menambah skor)`);
   }
@@ -302,6 +326,7 @@ export function scoreWallet({ pnl, activities = [], flags = [], now } = {}, para
       medianReturnPct: round(median(rets), 4),
       shrunkMeanReturnPct: round(shrunkMean, 4),
       meanReturnExTopPct: round(n ? meanExTop : null, 4),
+      effectiveReturnPct: round(n ? effective : null, 4),
       maxDrawdownPct: round(dd.pct, 4),
       worstTradeReturnPct: round(worst, 4),
       topTokenPnlShare: round(topTokenPnlShare, 4),
