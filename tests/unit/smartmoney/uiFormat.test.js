@@ -331,6 +331,12 @@ describe('Smart Money UI — preferensi notifikasi', () => {
     const defaults = validateAlertPrefsClient(prefsToForm(DEFAULT_ALERT_PREFS));
     expect(defaults.prefs).toEqual({ ...DEFAULT_ALERT_PREFS, kinds: [...ALERT_KINDS] });
     expect(validateAlertPrefs(defaults.prefs)).toEqual([]);
+    // maxEventAgeMs (tanpa field form) dibawa hanya bila valid menurut aturan server; selain itu dihilangkan.
+    for (const [value, kept] of [[60_000, true], [604_800_000, true], [59_999, false], [604_800_001, false], [1.5e6 + 0.5, false], ['1800000', false]]) {
+      const res = validateAlertPrefsClient({ ...form, maxEventAgeMs: value });
+      expect('maxEventAgeMs' in res.prefs, `maxEventAgeMs=${value}`).toBe(kept);
+      expect(validateAlertPrefs(res.prefs)).toEqual([]);
+    }
   });
 
   it('UNIT-SM-UI-045 detail 400 server smart money ({ field, path: /prefs/x }) & kunci asing → umum', () => {

@@ -49,11 +49,15 @@ CREATE TABLE sm_tokens (
 
 -- Aktivitas hasil klasifikasi (Activity). `id` = kunci dedupe deterministik chain:tx:wallet:token, sehingga
 -- transaksi duplikat (batch berulang / provider berbeda) diabaikan INSERT OR IGNORE.
+-- `block_number` / `log_index` (classify.js): nomor blok & logIndex on-chain TERKECIL dari kaki-kaki aktivitas;
+-- NULL bila tidak diketahui / hanya kaki sintetis (logIndex buatan adapter ≥ SYNTHETIC_LOG_INDEX_MIN).
 CREATE TABLE sm_activities (
   id                       TEXT    PRIMARY KEY,
   chain                    TEXT    NOT NULL CHECK (chain IN ('ethereum', 'base', 'arbitrum', 'optimism', 'bsc', 'polygon', 'solana')),
   tx_hash                  TEXT    NOT NULL,
   block_time               INTEGER NOT NULL,
+  block_number             INTEGER CHECK (block_number IS NULL OR block_number >= 0),
+  log_index                INTEGER CHECK (log_index IS NULL OR log_index >= 0),
   wallet                   TEXT    NOT NULL,
   token_address            TEXT    NOT NULL,
   token_symbol             TEXT,
@@ -160,6 +164,9 @@ CREATE TABLE sm_alerts (
   message        TEXT    NOT NULL,
   evidence_json  TEXT    NOT NULL CHECK (json_valid(evidence_json)),
   created_at     INTEGER NOT NULL,
+  -- Waktu peristiwa sumber alert (alerts.js `eventAt`): dasar cooldown sejati & penanda keterlambatan data.
+  -- NULL = tidak diketahui (pembaca memakai created_at).
+  event_at       INTEGER CHECK (event_at IS NULL OR event_at >= 0),
   is_simulated   INTEGER NOT NULL DEFAULT 0 CHECK (is_simulated IN (0, 1))
 ) STRICT;
 

@@ -7,6 +7,7 @@
 // salah dari kode internal (aktivitas, skor, mapping) melempar RangeError/TypeError; masukan pengguna
 // (watchlist) mengembalikan null/false agar route dapat menjawab 400 tanpa try/catch.
 
+import { alertBaseKey } from './alerts.js';
 import {
   ACTIVITY_TYPES, ALERT_KINDS, ALERT_SEVERITIES, CLASSIFICATION_CONFIDENCE, EXCLUDING_FLAGS, LABEL_CATEGORIES,
   NATIVE_TOKEN, PROVIDER_ERROR_CODES, TRADING_STYLES, explorerTxUrl, isChain, normalizeAddress, normalizeTxHash, walletKey,
@@ -38,6 +39,12 @@ function address(chain, value, name = 'alamat') {
 }
 function assertTime(v, name) {
   if (!Number.isInteger(v) || v < 0) throw new TypeError(`${name} harus epoch milidetik (bilangan bulat ≥ 0)`);
+}
+/** Bilangan bulat aman ≥ 0 atau null/undefined (→ null); selain itu RangeError. */
+function optionalIndex(v, name) {
+  if (v === null || v === undefined) return null;
+  if (!(Number.isSafeInteger(v) && v >= 0)) throw new RangeError(`${name} harus bilangan bulat ≥ 0 atau null`);
+  return v;
 }
 function optionalTime(v, name) {
   if (v !== null && v !== undefined) assertTime(v, name);
@@ -96,6 +103,8 @@ function activityOf(row) {
     chain: row.chain,
     txHash: row.tx_hash,
     blockTime: row.block_time,
+    blockNumber: row.block_number,
+    logIndex: row.log_index,
     wallet: row.wallet,
     token: { address: row.token_address, symbol: row.token_symbol, name: row.token_name, decimals: row.token_decimals },
     type: row.type,
@@ -142,8 +151,8 @@ function alertOf(row) {
   return {
     id: row.id, dedupeKey: row.dedupe_key, kind: row.kind, severity: row.severity, chain: row.chain,
     tokenKey: row.token_key, wallet: row.wallet, title: row.title, message: row.message,
-    evidence: parse(row.evidence_json), createdAt: row.created_at, isSimulated: toBool(row.is_simulated),
-    read: toBool(row.is_read),
+    evidence: parse(row.evidence_json), createdAt: row.created_at, eventAt: row.event_at ?? null,
+    isSimulated: toBool(row.is_simulated), read: toBool(row.is_read),
   };
 }
 
@@ -163,6 +172,8 @@ function activityParams(a, now) {
   const txHash = normalizeTxHash(chain, a.txHash);
   if (txHash === null) throw new RangeError('activity.txHash tidak valid');
   assertTime(a.blockTime, 'activity.blockTime');
+  const blockNumber = optionalIndex(a.blockNumber, 'activity.blockNumber');
+  const logIndex = optionalIndex(a.logIndex, 'activity.logIndex');
   const wallet = address(chain, a.wallet, 'activity.wallet');
   const tokenAddress = address(chain, a.token?.address, 'activity.token.address');
   if (!ACTIVITY_TYPES.includes(a.type)) throw new RangeError(`Jenis aktivitas tidak dikenal: ${String(a.type)}`);
@@ -183,6 +194,8 @@ function activityParams(a, now) {
     chain,
     txHash,
     blockTime: a.blockTime,
+    blockNumber,
+    logIndex,
     wallet,
     tokenAddress,
     tokenSymbol: optionalText(a.token.symbol, 64),
@@ -225,9 +238,9 @@ function mappingProblem(r) {
 
 /** Isi baris aktivitas yang menentukan "berubah" saat klasifikasi ulang (baris DB vs parameter baru). */
 const activitySignature = (row) => json([row.type, row.direction, row.amount, row.usd_value, row.block_time,
-  row.token_symbol, row.counterparty, row.confidence, row.reason]);
+  row.token_symbol, row.counterparty, row.confidence, row.reason, row.block_number, row.log_index]);
 const paramsSignature = (p) => json([p.type, p.direction, p.amount, p.usdValue, p.blockTime, p.tokenSymbol,
-  p.counterparty, p.confidence, p.reason]);
+  p.counterparty, p.confidence, p.reason, p.blockNumber, p.logIndex]);
 
 /** Daftar hash tx kanonik unik; RangeError bila ada yang tidak valid. */
 function normalizeTxs(chain, txHashes) {
@@ -350,11 +363,12 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
 
     // --- aktivitas ---
     insertActivity: db.prepare(`INSERT OR IGNORE INTO sm_activities
-        (id, chain, tx_hash, block_time, wallet, token_address, token_symbol, token_name, token_decimals, type, direction,
-         amount, usd_value, counterparty, counterparty_label_json, confidence, reason, provider, is_simulated, ingested_at)
-      VALUES (@id, @chain, @txHash, @blockTime, @wallet, @tokenAddress, @tokenSymbol, @tokenName, @tokenDecimals, @type,
-         @direction, @amount, @usdValue, @counterparty, @counterpartyLabelJson, @confidence, @reason, @provider,
-         @isSimulated, @now)`),
+        (id, chain, tx_hash, block_time, block_number, log_index, wallet, token_address, token_symbol, token_name,
+         token_decimals, type, direction, amount, usd_value, counterparty, counterparty_label_json, confidence, reason,
+         provider, is_simulated, ingested_at)
+      VALUES (@id, @chain, @txHash, @blockTime, @blockNumber, @logIndex, @wallet, @tokenAddress, @tokenSymbol, @tokenName,
+         @tokenDecimals, @type, @direction, @amount, @usdValue, @counterparty, @counterpartyLabelJson, @confidence,
+         @reason, @provider, @isSimulated, @now)`),
     // Data terlambat: nilai USD yang dulu tidak diketahui diisi bila batch berikutnya membawanya. Nilai yang sudah
     // ada tidak pernah ditimpa (hasil pertama tetap, agar riwayat tidak berubah diam-diam).
     fillUsd: db.prepare(`UPDATE sm_activities SET usd_value = @usdValue
@@ -455,10 +469,14 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
 
     // --- alert ---
     insertAlert: db.prepare(`INSERT OR IGNORE INTO sm_alerts
-        (dedupe_key, kind, severity, chain, token_key, wallet, title, message, evidence_json, created_at, is_simulated)
-      VALUES (@dedupeKey, @kind, @severity, @chain, @tokenKey, @wallet, @title, @message, @evidence, @createdAt, @isSimulated)`),
+        (dedupe_key, kind, severity, chain, token_key, wallet, title, message, evidence_json, created_at, event_at,
+         is_simulated)
+      VALUES (@dedupeKey, @kind, @severity, @chain, @tokenKey, @wallet, @title, @message, @evidence, @createdAt, @eventAt,
+         @isSimulated)`),
     existingKeys: db.prepare('SELECT dedupe_key FROM sm_alerts WHERE dedupe_key IN (SELECT value FROM json_each(?))'),
-    alertTimesSince: db.prepare('SELECT dedupe_key, created_at FROM sm_alerts WHERE created_at >= ?'),
+    // Waktu peristiwa (event_at; created_at bila tidak diketahui) alert yang DIBUAT sejak @since.
+    alertTimesSince: db.prepare(`SELECT dedupe_key, kind, token_key, wallet, COALESCE(event_at, created_at) AS at
+      FROM sm_alerts WHERE created_at >= ?`),
     listAlerts: db.prepare(`SELECT a.*, (r.alert_id IS NOT NULL) AS is_read FROM sm_alerts a
       LEFT JOIN sm_alert_reads r ON r.alert_id = a.id AND r.user_id = @userId
       WHERE (@kind IS NULL OR a.kind = @kind) AND (@unreadOnly = 0 OR r.alert_id IS NULL)
@@ -1030,13 +1048,14 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
         if (!nonEmpty(a.dedupeKey)) throw new RangeError('dedupeKey wajib diisi');
         assertChain(a.chain);
         assertTime(a.createdAt, 'alert.createdAt');
+        const eventAt = optionalTime(a.eventAt, 'alert.eventAt');
         if (!nonEmpty(a.title) || !nonEmpty(a.message)) throw new RangeError('Judul dan pesan alert wajib diisi');
         // Tanpa default: alert dari data simulasi tidak boleh tersimpan diam-diam sebagai data live.
         if (typeof a.isSimulated !== 'boolean') throw new RangeError('alert.isSimulated wajib boolean');
         return {
           dedupeKey: a.dedupeKey, kind: a.kind, severity: a.severity, chain: a.chain, tokenKey: a.tokenKey ?? null,
           wallet: a.wallet ?? null, title: a.title, message: a.message, evidence: json(a.evidence ?? {}),
-          createdAt: a.createdAt, isSimulated: flag(a.isSimulated),
+          createdAt: a.createdAt, eventAt, isSimulated: flag(a.isSimulated),
         };
       });
       return tx.insertAlerts(params);
@@ -1049,8 +1068,10 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     },
 
     /**
-     * Waktu alert terakhir per kunci dasar `${kind}:${tokenKey}:${wallet|'*'}` (dedupeKey tanpa segmen ember cooldown
-     * terakhir) untuk alert dengan createdAt ≥ `since` — masukan cooldown deriveAlerts (`lastAlertAt`).
+     * Waktu PERISTIWA alert terakhir per kunci dasar alerts.js alertBaseKey (`${kind}:${tokenKey}:${wallet|'*'}`)
+     * untuk alert yang dibuat (createdAt) ≥ `since` — masukan cooldown sejati deriveAlertsDetailed (`lastAlertAt`).
+     * Waktu = eventAt; createdAt bila eventAt tidak diketahui (baris tanpa event_at). Alert tanpa tokenKey memakai
+     * dedupeKey tanpa segmen ember terakhir.
      * @returns {Promise<Map<string, number>>}
      */
     async lastAlertTimes({ since = 0 } = {}) {
@@ -1058,8 +1079,10 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
       const out = new Map();
       for (const r of stmt.alertTimesSince.all(since)) {
         const i = r.dedupe_key.lastIndexOf(':');
-        const base = i > 0 ? r.dedupe_key.slice(0, i) : r.dedupe_key;
-        if (!(out.get(base) >= r.created_at)) out.set(base, r.created_at);
+        const base = r.token_key !== null
+          ? alertBaseKey({ kind: r.kind, tokenKey: r.token_key, wallet: r.wallet })
+          : (i > 0 ? r.dedupe_key.slice(0, i) : r.dedupe_key);
+        if (!(out.get(base) >= r.at)) out.set(base, r.at);
       }
       return out;
     },

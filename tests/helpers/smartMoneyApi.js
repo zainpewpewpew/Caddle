@@ -10,6 +10,12 @@ import { TEST_ORIGIN, createClock, createTestApp, login } from './testApp.js';
 export const SM = '/api/smart-money';
 
 /**
+ * Tuning KHUSUS penyemaian skenario: peristiwa fixture berumur berjam-jam, sedangkan maxEventAgeMs default alerts.js
+ * (30 menit) melewatinya sebagai basi. Default produksi tidak diubah — override hanya di panggilan penyemaian ini.
+ */
+export const SEED_SYNC_TUNING = Object.freeze({ alertMaxEventAgeMs: 24 * 3_600_000 });
+
+/**
  * Aplikasi uji smart money.
  * @param {{ providers?: string, seed?: boolean, scenario?: object, fixtureOptions?: object, env?: object,
  *   users?: object[], registry?: (ctx: { config: object, clock: Function, fixture: object }) => object }} [options]
@@ -32,8 +38,8 @@ export async function createSmartMoneyApp({
     }),
   });
   const repo = ctx.app.services.repos.smartMoney;
-  const sync = () => runSmartMoneySync({
-    repo, registry: ctx.app.services.smartMoneyRegistry, clock, config: ctx.config.smartMoney,
+  const sync = (tuning = SEED_SYNC_TUNING) => runSmartMoneySync({
+    repo, registry: ctx.app.services.smartMoneyRegistry, clock, config: ctx.config.smartMoney, tuning,
   });
   const summary = seed ? await sync() : null;
   return { ...ctx, clock, scenario, fixture, repo, sync, summary };

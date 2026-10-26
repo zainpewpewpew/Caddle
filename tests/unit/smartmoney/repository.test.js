@@ -384,11 +384,37 @@ describe('repositori smart money', () => {
     await repo.insertAlerts([
       alert({ dedupeKey: `NEW_BUY:ethereum:${TOKEN}:${WALLET}:10`, createdAt: NOW - 10 }),
       alert({ dedupeKey: `NEW_BUY:ethereum:${TOKEN}:${WALLET}:11`, createdAt: NOW - 5 }),
-      alert({ dedupeKey: `MULTI_WALLET_BUY:ethereum:${TOKEN}:*:11`, createdAt: NOW - 100 }),
+      alert({ kind: 'MULTI_WALLET_BUY', wallet: null, dedupeKey: `MULTI_WALLET_BUY:ethereum:${TOKEN}:*:11`, createdAt: NOW - 100 }),
     ]);
     const times = await repo.lastAlertTimes({ since: NOW - 50 });
     expect(times).toEqual(new Map([[`NEW_BUY:ethereum:${TOKEN}:${WALLET}`, NOW - 5]]));
     expect((await repo.lastAlertTimes()).get(`MULTI_WALLET_BUY:ethereum:${TOKEN}:*`)).toBe(NOW - 100);
+  });
+
+  it('UNIT-SM-REPO-021 aktivitas menyimpan blockNumber/logIndex (null = tidak diketahui); perubahan logIndex = berubah', async () => {
+    const { repo } = setup();
+    await repo.insertActivities([activity({ blockNumber: 21_000_000, logIndex: 7 }), activity({ txHash: tx('tx-2') })]);
+    const rows = await repo.listActivities({ chain: 'ethereum', wallet: WALLET, limit: 10 });
+    expect(rows.find((a) => a.txHash === tx('tx-1'))).toMatchObject({ blockNumber: 21_000_000, logIndex: 7 });
+    expect(rows.find((a) => a.txHash === tx('tx-2'))).toMatchObject({ blockNumber: null, logIndex: null });
+    await expect(repo.insertActivities([activity({ txHash: tx('tx-3'), logIndex: -1 })])).rejects.toThrow(/logIndex/);
+    await expect(repo.insertActivities([activity({ txHash: tx('tx-3'), blockNumber: 1.5 })])).rejects.toThrow(/blockNumber/);
+    const res = await repo.replaceActivitiesForTxs('ethereum', WALLET, [tx('tx-2')], [activity({ txHash: tx('tx-2'), blockNumber: 5, logIndex: 0 })]);
+    expect(res.changedIds).toEqual([activity({ txHash: tx('tx-2') }).id]);
+  });
+
+  it('UNIT-SM-REPO-022 alert menyimpan eventAt; lastAlertTimes memakai eventAt (createdAt bila tidak ada) per alertBaseKey', async () => {
+    const { repo, u1 } = setup();
+    await repo.insertAlerts([
+      alert({ dedupeKey: `NEW_BUY:ethereum:${TOKEN}:${WALLET}:20`, createdAt: NOW, eventAt: NOW - 600_000 }),
+      alert({ kind: 'LARGE_SELL', dedupeKey: `LARGE_SELL:ethereum:${TOKEN}:${WALLET}:20`, createdAt: NOW - 50 }),
+    ]);
+    const [newest] = await repo.listAlerts({ userId: u1, limit: 10 });
+    expect(newest).toMatchObject({ kind: 'NEW_BUY', createdAt: NOW, eventAt: NOW - 600_000 });
+    const times = await repo.lastAlertTimes({ since: NOW - 1000 });
+    expect(times.get(`NEW_BUY:ethereum:${TOKEN}:${WALLET}`)).toBe(NOW - 600_000);
+    expect(times.get(`LARGE_SELL:ethereum:${TOKEN}:${WALLET}`)).toBe(NOW - 50);
+    await expect(repo.insertAlerts([alert({ dedupeKey: 'x:1', eventAt: -5 })])).rejects.toThrow(/eventAt/);
   });
 
   it('UNIT-SM-REPO-020 dukungan sinkronisasi: status, watchlist & preferensi semua pengguna, waktu sinkron wallet, ringkasan skor', async () => {

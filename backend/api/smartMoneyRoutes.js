@@ -183,25 +183,28 @@ function baseKeyOf(dedupeKey) {
   return i > 0 ? dedupeKey.slice(0, i) : dedupeKey;
 }
 
+/** Waktu alert untuk cooldown: waktu peristiwa (eventAt) bila diketahui, selain itu createdAt (alerts.js). */
+const alertTime = (a) => (isTime(a.eventAt) ? a.eventAt : a.createdAt);
+
 /**
- * Cooldown per pengguna atas alert tersimpan: diproses kronologis per kunci dasar; alert pertama dipertahankan dan
- * alert berikutnya yang berjarak < `cooldownMs` dari alert terakhir yang dipertahankan disembunyikan. Urutan masukan
- * dipertahankan pada keluaran.
- * @param {Array<{ id: number, dedupeKey: string, createdAt: number }>} alerts
+ * Cooldown per pengguna atas alert tersimpan: diproses kronologis (waktu PERISTIWA `eventAt`, atau createdAt bila
+ * tidak ada — semantik cooldown sejati alerts.js) per kunci dasar; alert pertama dipertahankan dan alert berikutnya
+ * yang berjarak < `cooldownMs` dari alert terakhir yang dipertahankan disembunyikan. Urutan masukan dipertahankan.
+ * @param {Array<{ id: number, dedupeKey: string, createdAt: number, eventAt?: number|null }>} alerts
  * @param {number} cooldownMs
  * @returns {object[]}
  */
 export function applyUserCooldown(alerts, cooldownMs) {
   if (!Array.isArray(alerts)) throw new TypeError('alerts harus array');
   if (!(isNum(cooldownMs) && cooldownMs >= 0)) throw new RangeError('cooldownMs harus angka ≥ 0');
-  const chronological = [...alerts].sort((x, y) => (x.createdAt - y.createdAt) || (x.id - y.id));
+  const chronological = [...alerts].sort((x, y) => (alertTime(x) - alertTime(y)) || (x.id - y.id));
   const lastKept = new Map();
   const kept = new Set();
   for (const a of chronological) {
     const base = baseKeyOf(a.dedupeKey);
     const prev = lastKept.get(base);
-    if (prev !== undefined && a.createdAt - prev < cooldownMs) continue;
-    lastKept.set(base, a.createdAt);
+    if (prev !== undefined && alertTime(a) - prev < cooldownMs) continue;
+    lastKept.set(base, alertTime(a));
     kept.add(a);
   }
   return alerts.filter((a) => kept.has(a));
@@ -258,7 +261,9 @@ function publicLastRun(entry) {
     reclassified: num(v.reclassified),
     duplicates: num(v.duplicates),
     rejected: num(v.rejected),
+    collisions: num(v.collisions),
     alerts: num(v.alerts),
+    alertsSkipped: plainCounts(v.alertsSkipped),
     scored: num(v.scored),
     wallets: plainCounts(v.wallets),
     discovery: plainCounts(v.discovery),
@@ -401,7 +406,8 @@ export async function smartMoneyRoutes(app, { repo, signals, registry, config, c
     return items.map((r) => ({
       ...r,
       buyers: (r.buyers ?? []).map((b) => ({ ...b, label: labels.get(makeWalletKey(r.chain, b.wallet)) ?? null })),
-      isSimulated: simulatedTokens.has(r.tokenKey),
+      // Provenans radar.js (aktivitas sumber setelah saring) ATAU aktivitas simulasi apa pun token itu di jendela.
+      isSimulated: r.isSimulated === true || simulatedTokens.has(r.tokenKey),
       watching: watch.tokens.has(r.tokenKey),
     }));
   }
@@ -444,7 +450,7 @@ export async function smartMoneyRoutes(app, { repo, signals, registry, config, c
   const publicAlert = (a) => ({
     id: a.id, kind: a.kind, severity: a.severity, dedupeKey: a.dedupeKey, chain: a.chain, tokenKey: a.tokenKey,
     wallet: a.wallet, title: a.title, message: a.message, evidence: a.evidence, createdAt: a.createdAt,
-    isSimulated: a.isSimulated, read: a.read, usd: a.usd, walletScore: a.walletScore, symbol: a.symbol,
+    eventAt: a.eventAt ?? null, isSimulated: a.isSimulated, read: a.read, usd: a.usd, walletScore: a.walletScore, symbol: a.symbol,
     watchlisted: a.watchlisted, walletWatched: a.walletWatched,
   });
 
