@@ -8,6 +8,8 @@ const firstEventAt = (signal, states) => signal.events.find((e) => states.includ
 
 /** Baris riwayat dari sinyal + event transisinya (GET /api/signals/history, kedua arah). */
 export function historyRow(signal) {
+  // peakPrice dari server = harga ekstrem searah sinyal (LONG: tertinggi, SHORT: terendah; docs/07 §7), sehingga
+  // Pergerakan LONG ≥ 0 dan Pergerakan SHORT ≤ 0 (harga turun dari harga deteksi).
   const move = signal.peakPrice && signal.firstDetectedPrice ? signal.peakPrice / signal.firstDetectedPrice - 1 : null;
   return {
     ...signal,
@@ -31,7 +33,7 @@ export async function signalsView() {
   panel({
     title: 'Riwayat sinyal',
     flush: true,
-    footer: 'Pergerakan = perubahan dari harga deteksi ke harga ekstrem yang dicatat sejak deteksi pertama (LONG: harga tertinggi, MFE); nilai negatif berarti harga turun. Bukan hasil trading.',
+    footer: 'Pergerakan = perubahan dari harga deteksi ke harga ekstrem searah sinyal sejak deteksi pertama (MFE): harga tertinggi untuk LONG, harga terendah untuk SHORT (nilai negatif = harga turun). Bukan hasil trading.',
   },
   dataTable({
     caption: 'Riwayat sinyal',

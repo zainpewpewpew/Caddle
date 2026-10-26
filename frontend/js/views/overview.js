@@ -47,8 +47,9 @@ export async function overviewView(ctx) {
     stat({ label: 'Kandidat LONG aktif', value: formatInteger(byDirection ? byDirection.LONG : data.activeSignals), hint: 'QUIET → BREAKOUT', testId: 'kpi-active' }),
     // Hanya bila server melaporkan jumlah per arah; payload lama tidak menampilkan angka SHORT tebakan.
     byDirection && stat({ label: 'Kandidat SHORT aktif', value: formatInteger(byDirection.SHORT), hint: 'QUIET → BREAKDOWN', testId: 'kpi-active-short' }),
+    // earlySignals & alignedSignals dari server tetap hitungan LONG (rincian per arah: earlyByDirection/alignedByDirection).
     stat({ label: 'Sinyal tahap awal', value: formatInteger(data.earlySignals), hint: 'EARLY_BULLISH' }),
-    stat({ label: 'Konfirmasi multi-TF', value: formatInteger(data.alignedSignals), hint: 'Sinyal aktif ALIGNED' }),
+    stat({ label: 'Konfirmasi multi-TF', value: formatInteger(data.alignedSignals), hint: 'Sinyal LONG aktif ALIGNED' }),
     stat({
       label: 'Ingesti terakhir',
       value: data.lastIngestionAt ? formatRelative(data.lastIngestionAt) : '—',

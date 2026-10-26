@@ -60,7 +60,7 @@ Laporan pengujian: `docs/laporan/milestone-2-3-pengujian.md`.
 
 ## Short Scanner — kandidat SHORT riset (dalam pengerjaan, belum di `main`)
 
-Status: backend & dokumentasi selesai di cabang kerja; pengujian belum dijalankan untuk perubahan ini. Sinyal SHORT adalah kandidat riset (struktur bearish), bukan rekomendasi jual/short; tidak ada eksekusi order.
+Status: backend, frontend & dokumentasi selesai di cabang kerja; pengujian belum dijalankan untuk perubahan ini. Sinyal SHORT adalah kandidat riset (struktur bearish), bukan rekomendasi jual/short; tidak ada eksekusi order.
 
 | Item | Status | Lokasi |
 |---|---|---|
@@ -68,7 +68,8 @@ Status: backend & dokumentasi selesai di cabang kerja; pengujian belum dijalanka
 | State SHORT (`EARLY_BEARISH`, `BREAKDOWN`, invalidasi di atas harga), alignment & risk flag relatif arah | Backend selesai | `backend/signals/`, `backend/timeframe/`, `backend/scoring/` |
 | Satu worker memindai LONG & SHORT dengan candle & fitur bersama; kursor analisis per arah; migrasi `005` (`signals.direction`, satu sinyal terbuka per simbol × timeframe × arah, baris lama = LONG) | Backend selesai | `backend/analysis/pipeline.js`, `worker/assemble.js`, `backend/database/migrations/005_signal_direction.sql` |
 | API `direction` (`/api/signals/active` default LONG, `/api/signals/history` default kedua arah) + rincian Overview per arah | Backend selesai | `backend/api/signalRoutes.js`, `backend/database/repositories/overviewRepository.js` |
-| Tes khusus SHORT (unit, integrasi, E2E) | **Belum** — tes yang ada hanya disesuaikan dengan migrasi `005` dan pemindaian dua arah | `tests/` |
+| Halaman SHORT Scanner (`#/short-scanner`, `direction=SHORT`) dan LONG Scanner (`#/screener`, tanpa `direction`); badge arah & konfirmasi BREAKOUT/BREAKDOWN di Signal History; KPI *Kandidat SHORT aktif* dari `activeByDirection`; kontrol scanner persisten di Overview & kedua halaman Scanner | Frontend selesai | `frontend/js/views/screener.js`, `signals.js`, `overview.js`, `signalFormat.js`, `workerControl.js` |
+| Tes khusus SHORT (unit, integrasi, E2E) | **Belum** — tes yang ada hanya disesuaikan dengan migrasi `005`, pemindaian dua arah, judul LONG Scanner, route SHORT Scanner di daftar layar E2E, dan kontrol scanner persisten | `tests/` |
 | Validasi out-of-sample pola SHORT | **Belum** — butuh data historis nyata & backtest (M6). Tidak ada klaim profitabilitas | — |
 
 ## Milestone 4–8

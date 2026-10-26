@@ -72,10 +72,11 @@ const SCANNERS = {
 // Semua filter dikirim ke server (nama field form → parameter query API) dan diterapkan SEBELUM limit.
 // Tidak ada filter di klien: memfilter setelah potongan top-N patternScore membuat hasil diam-diam tidak lengkap.
 const SERVER_FILTERS = { tf: 'timeframe', pattern: 'classification', stage: 'state', alignment: 'alignment', minScore: 'minScore' };
-// Batas maksimum API (1–500). Sinyal terbuka maks. 1 per simbol × timeframe (≤ 100 × 3), sehingga daftar lengkap
-// dan urutan Early Score di klien mencakup seluruh hasil. API tidak mengirim total/penanda terpotong (count = panjang
-// halaman), jadi count = limit hanya berarti "batas tercapai": bisa tepat 500, bisa lebih. UI menyatakan itu apa adanya
-// ("≥ 500", "mungkin terpotong"), tidak mengklaim ada sisa yang belum tentu ada.
+// Batas maksimum API (1–500). Sinyal terbuka maks. 1 per simbol × timeframe × arah dan tiap halaman meminta satu
+// arah (≤ 100 × 3), sehingga daftar lengkap dan urutan Early Score di klien mencakup seluruh hasil. API tidak
+// mengirim total/penanda terpotong (count = panjang halaman), jadi count = limit hanya berarti "batas tercapai": bisa
+// tepat 500, bisa lebih. UI menyatakan itu apa adanya ("≥ 500", "mungkin terpotong"), tidak mengklaim ada sisa yang
+// belum tentu ada.
 const SCREENER_LIMIT = 500;
 
 function buildQuery(form, cfg) {
