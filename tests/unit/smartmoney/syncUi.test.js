@@ -14,7 +14,7 @@ import { SYNC_PATH, SYNC_POLL_MS, syncControl } from '../../../frontend/js/views
 import { installFakeDom } from './helpers/fakeDom.js';
 
 const NOW = Date.UTC(2026, 9, 26, 9, 0);
-const NO_WALLETS_TEXT = 'Belum ada wallet yang dilacak — ikuti wallet lewat Watchlist & Alerts, atau isi kunci Binance read-only (BINANCE_API_KEY + BINANCE_API_SECRET) agar wallet baru ditemukan otomatis.';
+const NO_WALLETS_TEXT = 'Belum ada wallet yang dilacak — penemuan otomatis (cukup ETHERSCAN_API_KEY, kunci Binance tidak wajib) belum menemukan kandidat; lihat catatan run, jalankan npm run smart-money:check, atau ikuti wallet lewat Watchlist & Alerts.';
 const NO_RESULT_TEXT = 'Sinkronisasi selesai, tetapi ringkasannya belum tersedia — muat ulang halaman atau lihat log server';
 
 /** Ringkasan run (`lastRun`) berbentuk kontrak GET /api/smart-money/sync. */
@@ -134,7 +134,7 @@ describe('Sync UI — helper murni', () => {
     for (const v of [null, undefined, 'OK']) expect(syncResultLines(v)).toEqual([]);
   });
 
-  it('UNIT-SM-SYNCUI-006 tanpa wallet yang dilacak (wallets.tracked === 0) → petunjuk Watchlist & Alerts / kunci Binance read-only', () => {
+  it('UNIT-SM-SYNCUI-006 tanpa wallet yang dilacak (wallets.tracked === 0) → petunjuk penemuan otomatis (kunci Binance tidak wajib) / Watchlist & Alerts', () => {
     expect(SYNC_NO_WALLETS_HINT).toBe(NO_WALLETS_TEXT);
     const zero = { tracked: 0, selected: 0, synced: 0, failed: 0, deferred: 0, skippedNoProvider: 0 };
     for (const status of ['OK', 'DEGRADED', 'ABORTED', 'FAILED']) {
@@ -143,7 +143,7 @@ describe('Sync UI — helper murni', () => {
       expect(lines.filter((l) => l === NO_WALLETS_TEXT)).toHaveLength(1);
     }
     // Ringkasan tanpa angka lain pun tetap memberi petunjuk.
-    expect(syncResultLines({ status: 'OK', wallets: { tracked: 0 } })).toEqual(['Belum ada wallet yang dilacak — ikuti wallet lewat Watchlist & Alerts, atau isi kunci Binance read-only (BINANCE_API_KEY + BINANCE_API_SECRET) agar wallet baru ditemukan otomatis.']);
+    expect(syncResultLines({ status: 'OK', wallets: { tracked: 0 } })).toEqual(['Belum ada wallet yang dilacak — penemuan otomatis (cukup ETHERSCAN_API_KEY, kunci Binance tidak wajib) belum menemukan kandidat; lihat catatan run, jalankan npm run smart-money:check, atau ikuti wallet lewat Watchlist & Alerts.']);
     // NO_PROVIDERS punya penjelasannya sendiri (ETHERSCAN_API_KEY); wallet yang dilacak, tidak diketahui, atau bukan angka → tanpa petunjuk.
     expect(syncResultLines(summary({ status: 'NO_PROVIDERS', wallets: zero }))).toEqual([]);
     for (const tracked of [3, null, undefined, '0']) {
@@ -215,6 +215,26 @@ describe('Sync UI — helper murni', () => {
     expect(new ApiError(409, { error: 'SYNC_RUNNING', message: 'Sedang berjalan.', run }).body.run).toEqual(run);
     expect(new ApiError(500, null)).toMatchObject({ status: 500, code: 'UNKNOWN', message: 'HTTP 500', body: null });
     expect(new ApiError(502, 'Bad Gateway').body).toBeNull();
+  });
+
+  it('UNIT-SM-SYNCUI-011 jalur penemuan & pemetaan: mode binance / trending (+ chain), pemetaan binance-public "(publik, tanpa kunci)"', () => {
+    const lines = (discovery, mapping = { upserted: 12, rejected: 1 }) => syncResultLines(summary({ discovery, mapping }));
+    expect(lines({ candidates: 30, added: 8, mode: 'binance' })).toContain('Penemuan wallet (token listing Binance): 8 wallet baru dari 30 kandidat');
+    expect(lines({ candidates: 6, added: 2, mode: 'trending', trendingChain: 'base' }))
+      .toContain('Penemuan wallet (token trending GeckoTerminal di base — belum tentu listing Binance): 2 wallet baru dari 6 kandidat');
+    expect(lines({ candidates: 0, added: 0, mode: 'trending', trendingChain: null }))
+      .toContain('Penemuan wallet (token trending GeckoTerminal — belum tentu listing Binance): 0 wallet baru');
+    // Mode tidak dikenal / 'none' / tidak ada → tanpa keterangan jalur.
+    for (const mode of ['none', undefined, 'lain', 7]) {
+      expect(lines({ candidates: 0, added: 0, mode })).toContain('Penemuan wallet: 0 wallet baru');
+    }
+    expect(lines({ added: 1 }, { refreshed: ['binance-public'], upserted: 120, rejected: 0 }))
+      .toContain('Pemetaan Binance (publik, tanpa kunci): 120 kontrak diperbarui');
+    expect(lines({ added: 1 }, { refreshed: ['binance-mapping'], upserted: 120, rejected: 2 }))
+      .toContain('Pemetaan Binance: 120 kontrak diperbarui (2 ditolak)');
+    for (const refreshed of [[], 'binance-public', null]) {
+      expect(lines({ added: 1 }, { refreshed, upserted: 0, rejected: 0 })).toContain('Pemetaan Binance: 0 kontrak diperbarui');
+    }
   });
 });
 
@@ -558,7 +578,7 @@ describe('Sync UI — komponen syncControl', () => {
     expect(text(q(sync, 'sm-sync-last'))).toContain('Hasil sinkron terakhir');
   });
 
-  it('UNIT-SM-SYNCUI-028 status FAILED → badge "Gagal" (bear); hasil tanpa wallet dilacak memuat petunjuk Watchlist / Binance', async () => {
+  it('UNIT-SM-SYNCUI-028 status FAILED → badge "Gagal" (bear); hasil tanpa wallet dilacak memuat petunjuk penemuan otomatis / Watchlist', async () => {
     const FAILED = summary({
       status: 'FAILED', trigger: 'schedule', startedAt: NOW - 600_000, finishedAt: NOW - 590_000,
       notes: ['Run dihentikan karena error provider.'], errors: [{ provider: 'etherscan', code: 'INVALID_KEY', message: 'Invalid API Key' }],

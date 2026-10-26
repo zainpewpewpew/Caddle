@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createFixtureProvider } from '../../../backend/smartmoney/providers/fixtureProvider.js';
 import { LIVE_PROVIDER_FACTORIES, createLiveProviderRegistry } from '../../../backend/smartmoney/providers/live.js';
+import { parseSmartMoneyConfig } from '../../../backend/smartmoney/config.js';
 import { buildScenario } from '../../fixtures/smartmoney/scenario.js';
 
 const SCENARIO = buildScenario();
@@ -52,6 +53,32 @@ describe('registri provider live (providers/live.js)', () => {
     expect(on.withCapability('walletTransfers', 'base').map((a) => a.id)).toEqual(['routescan']);
     expect(on.withCapability('walletDiscovery', 'ethereum').map((a) => a.id)).toEqual(['geckoterminal']);
     expect(on.withCapability('binanceMapping').map((a) => a.id)).toEqual(['binance-mapping']);
+    expect(calls).toEqual([]);
+  });
+
+  it('UNIT-SM-LIVE-007 binance-public: tanpa kunci apa pun → aktif (pemetaan publik), tanpa jaringan saat dirakit; mode otomatis Etherscan-saja', () => {
+    const calls = [];
+    const fetchImpl = async (url) => { calls.push(String(url)); throw new Error('jaringan tidak boleh dipanggil'); };
+    expect(LIVE_PROVIDER_FACTORIES['binance-public']).toMatchObject({ requiresKey: false, isSimulated: false });
+    const registry = createLiveProviderRegistry(config(['binance-public']), { env: {}, fetchImpl });
+    const [adapter] = registry.list();
+    expect(registry.list()).toHaveLength(1);
+    expect(adapter).toMatchObject({ id: 'binance-public', requiresKey: false, isSimulated: false });
+    expect(adapter.isConfigured()).toBe(true);
+    expect(registry.unavailable()).toEqual([]);
+    expect(registry.withCapability('binanceMapping').map((a) => a.id)).toEqual(['binance-public']);
+    // Kunci Binance di env tidak pernah diteruskan ke mode publik.
+    const env = { BINANCE_API_KEY: 'a'.repeat(64), BINANCE_API_SECRET: 'b'.repeat(64) };
+    const withKeys = createLiveProviderRegistry(config(['binance-public']), { env, fetchImpl });
+    expect(JSON.stringify(withKeys.list())).not.toMatch(/a{64}|b{64}/);
+
+    // Mode otomatis dengan ETHERSCAN_API_KEY saja → empat adapter aktif, pemetaan oleh binance-public.
+    const autoEnv = { ETHERSCAN_API_KEY: 'AAAABBBBCCCCDDDD' };
+    const auto = createLiveProviderRegistry({ nodeEnv: 'development', smartMoney: parseSmartMoneyConfig(autoEnv) }, { env: autoEnv, fetchImpl });
+    expect(auto.list().map((a) => a.id)).toEqual(['etherscan', 'routescan', 'geckoterminal', 'binance-public']);
+    expect(auto.unavailable()).toEqual([]);
+    expect(auto.withCapability('binanceMapping').map((a) => a.id)).toEqual(['binance-public']);
+    expect(auto.withCapability('walletDiscovery', 'ethereum').every((a) => typeof a.trendingTokens === 'function')).toBe(true);
     expect(calls).toEqual([]);
   });
 

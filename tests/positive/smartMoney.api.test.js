@@ -5,7 +5,7 @@ import { DEFAULT_ALERT_PREFS } from '../../backend/smartmoney/alerts.js';
 import {
   ALERT_KINDS, DISCLAIMERS, RELEVANCE_LEVELS, explorerAddressUrl, explorerTokenUrl, explorerTxUrl,
 } from '../../backend/smartmoney/contracts.js';
-import { runSmartMoneySync } from '../../backend/smartmoney/sync.js';
+import { SYNC_STATE_KEYS, runSmartMoneySync } from '../../backend/smartmoney/sync.js';
 import { DEFAULT_MANUAL_COOLDOWN_MS } from '../../backend/smartmoney/syncRunner.js';
 import { seedSignals } from '../helpers/signalSeed.js';
 import { SM, createSmartMoneyApp, session } from '../helpers/smartMoneyApi.js';
@@ -411,5 +411,27 @@ describe('API Smart Money — tombol "Sync sekarang"', () => {
     await ctx.app.services.smartMoneySync.pending();
     expect((await admin.get(`${SM}/sync`)).json()).toMatchObject({ running: false, run: null, lastRun: { status: 'OK', startedAt: ctx.clock() } });
     expect((await syncAudit()).map((a) => [a.outcome, a.detail.reason ?? null])).toEqual([['failure', 'SYNC_RUNNING'], ['success', null]]);
+  });
+  it('POS-SM-API-019 lastRun.discovery memuat mode & trendingChain (string pendek aman); teks bebas di hitungan tetap dibuang', async () => {
+    ctx = await createSmartMoneyApp();
+    const admin = await session(ctx.app);
+    // Ringkasan run seed asli: token MATCHED tersedia → mode binance; trendingChain null tidak diteruskan.
+    expect((await admin.get(`${SM}/sync`)).json().lastRun.discovery).toEqual({
+      candidates: ctx.summary.discovery.candidates, added: ctx.summary.discovery.added,
+      skippedChains: ctx.summary.discovery.skippedChains, mode: 'binance',
+    });
+    await ctx.repo.setSyncState(SYNC_STATE_KEYS.lastRun, {
+      ...ctx.summary,
+      discovery: {
+        candidates: 4, added: 2, skippedChains: ['ethereum', 'base'], mode: 'trending', trendingChain: 'ethereum',
+        bebas: 'Teks bebas <script>alert(1)</script>', huruf: 'Trending', panjang: 'x'.repeat(33), kosong: '',
+      },
+      mapping: { refreshed: ['binance-public'], upserted: 120, rejected: 0, sumber: 'https://www.binance.com/bapi' },
+    }, { now: ctx.clock() });
+    for (const path of ['/sync', '/status']) {
+      const { lastRun } = (await admin.get(`${SM}${path}`)).json();
+      expect(lastRun.discovery, path).toEqual({ candidates: 4, added: 2, skippedChains: ['ethereum', 'base'], mode: 'trending', trendingChain: 'ethereum' });
+      expect(lastRun.mapping, path).toEqual({ refreshed: ['binance-public'], upserted: 120, rejected: 0 });
+    }
   });
 });
