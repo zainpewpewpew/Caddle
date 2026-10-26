@@ -14,7 +14,8 @@ Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — men
 | Short Scanner (lanjutan M3) | Pola SHORT SD & PVD, state SHORT, API `direction`, migrasi `005`, halaman SHORT Scanner | **Di `main`** — kode selesai; pengujian end-to-end dilakukan pemilik di mesin lokal |
 | 4 — Dashboard premium | Screener, grafik, real-time | **Sebagian** — grafik koin di sebelah tabel scanner, halaman detail Symbol Intelligence ([docs/08](docs/08-grafik-simbol.md)), proses sync scanner live ([docs/09](docs/09-proses-sync.md)) |
 | 5 — Pattern Discovery Lab | Upload, anotasi, definisi pola berversi | Belum dimulai |
-| 6 — Backtesting | Replay historis, metrik, out-of-sample | Belum dimulai |
+| Akurasi scanner v3 | Fitur struktur pasar/order flow/rezim/Wyckoff, skor konfluensi + tier A–D LONG & SHORT, gerbang tier, migrasi `006` | **Di `main`** — lihat [docs/13](docs/13-panduan-akurasi-v3.md); bobot = hipotesis yang wajib diverifikasi backtest data nyata |
+| 6 — Backtesting | Replay historis, metrik, out-of-sample | **Sebagian** — `npm run backtest` (walk-forward, triple barrier, Wilson CI, kalibrasi); dijalankan pemilik di Mac karena Binance diblokir dari cloud |
 | 7 — Keamanan & QA | Pengujian lengkap, pemindaian, pentest | Berjalan terus sejak M1 |
 | 8 — Deployment privat | Docker, HTTPS, backup, monitoring | Belum dimulai |
 
@@ -123,6 +124,7 @@ Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
 | `npm run migrate` | Menerapkan migrasi database (termasuk `005` arah sinyal Short Scanner) |
 | `npm run user:create -- --username <u> --role admin\|analyst` | Membuat pengguna |
 | `npm run user:password -- --username <u>` | Mengganti kata sandi pengguna (prompt tersembunyi) dan mencabut semua sesinya |
+| `npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01` | Backtest walk-forward sebelum (v2) vs sesudah (v3); laporan di `reports/` ([docs/13](docs/13-panduan-akurasi-v3.md)) |
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |

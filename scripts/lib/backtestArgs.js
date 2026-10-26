@@ -18,8 +18,8 @@ Opsi:
   --to 2025-10-01             akhir rentang (UTC, eksklusif; bawaan sekarang)
   --target-r 2                target dalam kelipatan risiko (R)
   --max-bars 48               batas waktu trade (candle)
-  --folds 5                   jumlah fold walk-forward
-  --embargo 48                embargo antar fold (candle; bawaan = max-bars)
+  --folds 5                   (cadangan; runner saat ini memakai holdout waktu 60% train / 40% test)
+  --embargo 48                (cadangan; embargo runner = max-bars candle + purging)
   --seed 42                   benih data sintetis
   --synthetic-symbols 6       jumlah simbol sintetis
   --synthetic-bars 3000       jumlah candle sintetis per simbol & timeframe dasar
