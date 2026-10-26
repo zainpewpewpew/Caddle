@@ -289,3 +289,42 @@ route `backend/api/smartMoneyRoutes.js` di bawah `/api/smart-money/*` (semua waj
 | `GET/PUT /alert-prefs` | filter notifikasi per pengguna |
 | `GET /screener-links` | peta `futuresSymbol → ringkasan smart money` untuk chip di LONG Scanner |
 | `GET /evaluation` | laporan evaluasi historis terakhir atau `{ available: false }` |
+
+## 5. Bentuk respons API (dipakai frontend)
+
+Semua respons daftar menyertakan blok `meta`:
+
+```js
+meta: {
+  simulated: boolean,                 // true bila ADA data is_simulated di hasil → UI wajib tampilkan pita DATA SIMULASI
+  dataAsOf: number|null,              // blockTime aktivitas terbaru yang tersimpan
+  lastSyncAt: number|null,            // sukses sinkron terakhir (provider mana pun)
+  isStale: boolean,                   // lastSyncAt lebih tua dari staleAfterMinutes, atau belum pernah sinkron
+  coverage: { chains: [string], wallets: number, activities: number },
+  providersConfigured: number,        // 0 → UI menampilkan keadaan "belum ada sumber data" (bukan data palsu)
+  disclaimers: DISCLAIMERS,           // dari contracts.js
+}
+```
+
+- `GET /status` → `{ meta, providers: [{ id, displayName, requiresKey, configured, isSimulated, chains, capabilities,
+  lastAttemptAt, lastSuccessAt, lastErrorCode, lastErrorMessage, state: 'OK'|'DEGRADED'|'DOWN'|'NEVER' }] }`
+- `GET /radar` → `{ meta, window, computedAt, items: [RadarToken & { binance: Match, screener, watching: boolean }] }`
+  (`buyers[].wallet` adalah alamat; `buyers[].label` label terbaik `{ label, category, source }|null`).
+- `GET /wallets` → `{ meta, items: [{ chain, address, score, eligible, style, clusterId, clusterSize, flags,
+  metrics, topReason, labels: [{ label, category, source }], lastActivityAt, watching }] }`
+- `GET /wallets/:chain/:address` → `{ meta, wallet: { chain, address, explorerUrl, firstSeenAt, lastActivityAt,
+  discoveredVia, discoveryReason, isSimulated }, labels, score: WalletScore|null, flags, cluster: { id, members,
+  reasons }|null, pnl: { summary, positions }, activities: [Activity] (terbaru dulu, ≤ 200), watching }` — 404
+  `{ error: 'NOT_FOUND' }` bila wallet tidak dilacak; 400 bila alamat tidak valid untuk chain.
+- `GET /tokens/:chain/:address` → `{ meta, token, binance: Match, radar: RadarToken|null (jendela 24h),
+  activities: [Activity] (≤ 200), screener, watching }`
+- `GET /watchlist` → `{ items: [{ kind, chain, address, note, createdAt, summary }] }`;
+  `POST /watchlist` body `{ kind: 'WALLET'|'TOKEN', chain, address, note? }` → 201 item;
+  `DELETE /watchlist` body `{ kind, chain, address }` → 204.
+- `GET /alerts` → `{ meta, items: [Alert & { id, read, isSimulated }], unread: number }`;
+  `POST /alerts/read` body `{ ids: [int] }` atau `{ all: true }` → `{ updated }`.
+- `GET /alert-prefs` → `{ prefs, isDefault }`; `PUT /alert-prefs` body `{ prefs }` → `{ prefs }` (400 dengan
+  `details` bila tidak valid).
+- `GET /screener-links` → `{ meta, items: { [futuresSymbol]: { tokenKey, symbol, chain, independentBuyers,
+  conviction, state, lastActivityAt } } }` — hanya token `MATCHED`.
+- `GET /evaluation` → `{ meta, available: false }` atau `{ meta, available: true, computedAt, params, report }`.
