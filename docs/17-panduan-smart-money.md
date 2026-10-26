@@ -470,8 +470,9 @@ tidak memuat kunci; tetap periksa sebelum menempel, dan jangan pernah menempel i
      (`SMART_MONEY_SYNC_MINUTES`) setelah putaran sebelumnya selesai. Log-nya bertanda `smart-money` di terminal
      `npm start`. Tombol **Sync sekarang** dan jadwal ini tidak pernah berjalan bersamaan.
    - **Terminal:** `npm run smart-money:sync` (satu putaran, cetak ringkasan) atau `npm run smart-money:sync -- --loop`
-     (berulang sampai Ctrl+C); tambah `--verbose` untuk log lengkap. Jangan jalankan `--loop` bersamaan dengan worker
-     — kuota API terpakai dua kali.
+     (berulang sampai Ctrl+C); tambah `--verbose` untuk log lengkap. Putaran terminal tidak pernah berjalan bersamaan
+     dengan worker atau tombol **Sync sekarang** (yang datang belakangan dilewati), tetapi jangan biarkan `--loop`
+     hidup bersama worker: jadwalnya jadi dobel dan kuota API habis dua kali lebih cepat.
 3. Putaran awal: pemetaan Binance → penemuan wallet (4 token MATCHED per putaran, bergiliran) → riwayat 180 hari per
    wallet. Radar baru terisi setelah ada wallet **eligible**; di awal "Belum ada akumulasi pada jendela ini" itu normal.
    Pantau progres di Wallet Discovery dengan *Hanya eligible* dimatikan.
