@@ -44,6 +44,10 @@
   --lr-stage-breakout: #4fe0ae;
   --lr-stage-invalid: var(--lr-bear);
   --lr-stage-expired: var(--lr-text-3);
+  /* Cermin bearish untuk SHORT (EARLY_BEARISH ↔ EARLY_BULLISH, BREAKDOWN ↔ BREAKOUT). Kontras ≥ 7:1 vs --lr-surface-2. */
+  --lr-stage-early-bear: #f49ac1;
+  --lr-stage-momentum-bear: var(--lr-bear);
+  --lr-stage-breakdown: #ff8a65;
 
   /* ---- Tipografi ---- */
   --lr-font-sans: "Inter", "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;

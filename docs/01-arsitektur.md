@@ -68,9 +68,9 @@ Modul yang direncanakan dan posisinya:
 | `backend/ingestion/` (klien Binance, validasi candle, backfill) | 2 | repositori `candles`, `symbols` |
 | `worker/` (loop scanner, jadwal, metrik) | 2 | ingestion, indicators, patterns |
 | `backend/indicators/` (EMA, ATR, RVOL, swing) — fungsi murni | 3 | — |
-| `backend/patterns/` (SA, PVA, evaluator aturan deklaratif) | 3 | indicators |
+| `backend/patterns/` (SA & PVA untuk LONG; SD & PVD untuk SHORT sebagai cermin SA/PVA; evaluator aturan deklaratif) | 3 | indicators |
 | `backend/timeframe/` (trend classifier, timeframe resolver) | 3 | indicators |
-| `backend/scoring/`, `backend/signals/` (state machine) | 3 | patterns, timeframe |
+| `backend/scoring/`, `backend/signals/` (state machine LONG & SHORT) | 3 | patterns, timeframe |
 | `backend/backtest/` (replay deterministik) | 6 | patterns, signals (mode replay) |
 
 Fungsi indikator & pola akan murni (input candle tertutup → output), sehingga worker live dan backtest memakai kode yang sama — mencegah perbedaan perilaku live vs replay.

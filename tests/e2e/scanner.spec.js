@@ -77,6 +77,15 @@ test('E2E-SUP-002 analyst melihat state scanner tanpa tombol kontrol (System Hea
   await expect(callout.getByTestId('worker-callout-message')).toHaveText('Scanner belum berjalan. Data pasar dan sinyal tidak diperbarui. Minta admin menjalankannya dari System Health.');
   await expect(callout.getByRole('button')).toHaveCount(0);
 
+  // Kontrol persisten yang sama tampil di atas tabel LONG Scanner dan SHORT Scanner, juga tanpa tombol untuk analyst.
+  for (const [route, title] of [['screener', 'LONG Scanner'], ['short-scanner', 'SHORT Scanner']]) {
+    await page.goto(`/#/${route}`);
+    await expect(page.locator('.page h1')).toHaveText(title);
+    const control = page.getByTestId('worker-callout');
+    await expect(control).toContainText('Scanner belum berjalan.');
+    await expect(control.getByRole('button')).toHaveCount(0);
+  }
+
   await page.goto('/#/health');
   await expect(stateOf(page)).toHaveText('Berhenti');
   await expect(card(page).getByText('Hanya admin yang dapat menjalankan atau menghentikan scanner.')).toBeVisible();
@@ -84,20 +93,33 @@ test('E2E-SUP-002 analyst melihat state scanner tanpa tombol kontrol (System Hea
   expect(errors).toEqual([]);
 });
 
-test('E2E-SUP-003 admin menjalankan scanner dari callout Overview', async ({ page }) => {
+test('E2E-SUP-003 admin menjalankan scanner dari kontrol Overview; tombol tetap tampil dan dapat menghentikan scanner', async ({ page }) => {
   const errors = watchErrors(page);
   await signIn(page, E2E_USERS.admin);
   const callout = page.getByTestId('worker-callout');
   await expect(callout).toContainText('Scanner belum berjalan.');
   await callout.getByRole('button', { name: 'Jalankan scanner' }).click();
   await expect(callout).toContainText('Scanner berjalan.');
-  await expect(callout.getByRole('button')).toHaveCount(0);
+  // Tombol tidak hilang: berganti menjadi "Hentikan scanner" (nonaktif selama pemantauan sesaat setelah start).
+  await expect(callout.getByRole('button')).toHaveCount(1);
+  await expect(callout.getByRole('button', { name: 'Hentikan scanner' })).toBeVisible();
 
   await page.goto('/#/health');
   await expect(stateOf(page)).toHaveText('Berjalan');
-  await stopViaUi(page);
+  // Kontrol Overview yang dimuat saat scanner berjalan: "Hentikan scanner" langsung aktif, dengan konfirmasi inline.
   await page.goto('/#/overview');
-  await expect(page.getByTestId('worker-callout')).toContainText('Scanner belum berjalan.');
+  await expect(page.locator('.page h1')).toHaveText('Overview');
+  const control = page.getByTestId('worker-callout');
+  const stop = control.getByRole('button', { name: 'Hentikan scanner' });
+  await expect(stop).toBeEnabled();
+  await stop.click();
+  const confirm = control.getByRole('group', { name: /Hentikan scanner\?/ });
+  await expect(confirm.getByRole('button', { name: 'Batal' })).toBeFocused();
+  await confirm.getByRole('button', { name: 'Ya, hentikan' }).click();
+  await expect(confirm).toBeHidden();
+  // Worker tiruan keluar segera setelah SIGTERM; kontrol memantau tiap 2 detik sampai "Berhenti".
+  await expect(control).toContainText('Scanner belum berjalan.', { timeout: 10_000 });
+  await expect(control.getByRole('button', { name: 'Jalankan scanner' })).toBeEnabled();
   expect(errors).toEqual([]);
 });
 
@@ -174,7 +196,7 @@ test('E2E-SUP-006 callout Overview: worker crash sesaat setelah dijalankan → p
   expect(errors).toEqual([]);
 });
 
-test('E2E-SUP-007 callout Overview dengan keyboard: setelah start berhasil fokus pindah ke pesan callout, tidak hilang ke <body>', async ({ page }) => {
+test('E2E-SUP-007 kontrol Overview dengan keyboard: setelah start berhasil tombol tetap ada sebagai "Hentikan scanner" dan fokus tetap di dalam kontrol, tidak hilang ke <body>', async ({ page }) => {
   const errors = watchErrors(page);
   await signIn(page, E2E_USERS.admin);
   const callout = page.getByTestId('worker-callout');
@@ -182,9 +204,10 @@ test('E2E-SUP-007 callout Overview dengan keyboard: setelah start berhasil fokus
   await button.focus();
   await page.keyboard.press('Enter');
   await expect(callout).toContainText('Scanner berjalan.');
-  await expect(callout.getByRole('button')).toHaveCount(0);
+  const stopButtons = await callout.getByRole('button', { name: 'Hentikan scanner' }).count();
   const focused = await page.evaluate(() => ({
     tag: document.activeElement?.tagName,
+    text: document.activeElement?.textContent,
     inCallout: Boolean(document.activeElement?.closest('[data-testid="worker-callout"]')),
   }));
 
@@ -192,7 +215,10 @@ test('E2E-SUP-007 callout Overview dengan keyboard: setelah start berhasil fokus
   await page.goto('/#/health');
   await expect(stateOf(page)).toHaveText('Berjalan');
   await stopViaUi(page);
-  expect(focused.tag).not.toBe('BODY');
+  expect(stopButtons).toBe(1);
+  // Tombol yang ditekan tetap memegang fokus (aria-disabled selama pemantauan, bukan atribut disabled).
+  expect(focused.tag).toBe('BUTTON');
+  expect(focused.text).toBe('Hentikan scanner');
   expect(focused.inCallout).toBe(true);
   expect(errors).toEqual([]);
 });

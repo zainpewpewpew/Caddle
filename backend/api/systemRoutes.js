@@ -1,6 +1,7 @@
 // Status sistem nyata. Status worker berasal dari heartbeat di database; bila worker belum
 // pernah berjalan dilaporkan 'not_running', bukan data palsu. `workerControl` = status supervisor
 // (proses worker yang dijalankan dari website, lihat backend/system/workerSupervisor.js).
+// GET /api/system/sync = subset ringan untuk memantau proses sync scanner secara langsung.
 import { buildMarketContext } from '../system/marketContext.js';
 import { summarizeWorker } from '../system/workerStatus.js';
 
@@ -28,6 +29,16 @@ export async function systemRoutes(app, { db, overview, ingestion, candles, sche
       ...worker,
       workerControl: control,
     };
+  });
+
+  // Polling ringan panel "Proses sync scanner" (tiap 2–10 detik, docs/09-proses-sync.md): satu baca status ingesti
+  // (heartbeat dipakai ulang oleh supervisor), tanpa ping database, metrik memori, atau konteks pasar.
+  // `worker` = tampilan GET /api/system/worker; `scanner` memuat `sync`; error terbaru (maks. 5) dari summarizeWorker.
+  app.get('/api/system/sync', async () => {
+    const ingestionStatus = await ingestion.getStatus();
+    const { scanner, binance, ingestion: { recentErrors } } = summarizeWorker(ingestionStatus, clock());
+    const worker = { enabled: workerControl, ...(await workerSupervisor.status({ heartbeat: ingestionStatus.heartbeat })) };
+    return { serverTime: clock(), worker, scanner, binance, recentErrors };
   });
 
   app.get('/api/overview', async () => {

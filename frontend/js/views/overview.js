@@ -1,9 +1,10 @@
 import { api } from '../lib/api.js';
-import { badge, dataTable, emptyState, page, panel, stage, stat } from '../lib/components.js';
+import { badge, dataTable, emptyState, page, panel, stat } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { formatInteger, formatPercent, formatPrice, formatRelative, formatUtc } from '../lib/format.js';
 import { MILESTONES } from './roadmap.js';
-import { workerStartCallout } from './workerControl.js';
+import { directionBadge, directionOf, signalStage } from './signalFormat.js';
+import { workerControlBar } from './workerControl.js';
 import { binancePill, scannerPill } from './workerFormat.js';
 
 const TREND_TONE = { BULLISH: 'bull', NEUTRAL: undefined, BEARISH: 'bear' };
@@ -26,15 +27,29 @@ function trendBadge(item) {
   return badge(text, tone);
 }
 
+/**
+ * Jumlah kandidat aktif per arah dari `activeByDirection` (bila payload Overview memuatnya).
+ * @returns {{ LONG: number, SHORT: number }|null} null → payload lama: KPI memakai activeSignals saja.
+ */
+export function activeCountsByDirection(data) {
+  const map = data?.activeByDirection;
+  if (!map || typeof map !== 'object') return null;
+  return Number.isInteger(map.LONG) && Number.isInteger(map.SHORT) ? { LONG: map.LONG, SHORT: map.SHORT } : null;
+}
+
 export async function overviewView(ctx) {
   // Status kontrol scanner bersifat pelengkap: kegagalannya tidak boleh menggagalkan Overview.
   const [data, worker] = await Promise.all([api('/api/overview'), api('/api/system/worker').catch(() => null)]);
 
+  const byDirection = activeCountsByDirection(data);
   const kpis = h('div', { class: 'grid grid--kpi' },
     stat({ label: 'Simbol dipantau', value: formatInteger(data.monitoredSymbols), hint: 'USDT-M perpetual', testId: 'kpi-monitored' }),
-    stat({ label: 'Kandidat LONG aktif', value: formatInteger(data.activeSignals), hint: 'QUIET → BREAKOUT', testId: 'kpi-active' }),
+    stat({ label: 'Kandidat LONG aktif', value: formatInteger(byDirection ? byDirection.LONG : data.activeSignals), hint: 'QUIET → BREAKOUT', testId: 'kpi-active' }),
+    // Hanya bila server melaporkan jumlah per arah; payload lama tidak menampilkan angka SHORT tebakan.
+    byDirection && stat({ label: 'Kandidat SHORT aktif', value: formatInteger(byDirection.SHORT), hint: 'QUIET → BREAKDOWN', testId: 'kpi-active-short' }),
+    // earlySignals & alignedSignals dari server tetap hitungan LONG (rincian per arah: earlyByDirection/alignedByDirection).
     stat({ label: 'Sinyal tahap awal', value: formatInteger(data.earlySignals), hint: 'EARLY_BULLISH' }),
-    stat({ label: 'Konfirmasi multi-TF', value: formatInteger(data.alignedSignals), hint: 'Sinyal aktif ALIGNED' }),
+    stat({ label: 'Konfirmasi multi-TF', value: formatInteger(data.alignedSignals), hint: 'Sinyal LONG aktif ALIGNED' }),
     stat({
       label: 'Ingesti terakhir',
       value: data.lastIngestionAt ? formatRelative(data.lastIngestionAt) : '—',
@@ -62,19 +77,22 @@ export async function overviewView(ctx) {
         text: 'Muncul setelah worker mengingesti candle 1h BTCUSDT/ETHUSDT dari Binance USDT-M Futures. Tidak ada data contoh yang ditampilkan.',
       }));
 
+  // Kolom Arah hanya bila baris membawa field direction: baris tanpa field itu tidak pernah diberi label arah tebakan.
+  const hasDirection = data.recentDetections.some((r) => r.direction !== undefined);
   const detections = panel({ title: 'Deteksi pola terbaru', flush: true },
     dataTable({
       compact: true,
       caption: 'Deteksi pola terbaru',
       columns: [
         { key: 'symbol', label: 'Symbol' },
+        hasDirection && { key: 'direction', label: 'Arah', render: (r) => directionBadge(r.direction), sortValue: (r) => directionOf(r.direction) },
         { key: 'timeframe', label: 'TF' },
         { key: 'classification', label: 'Pola' },
-        { key: 'state', label: 'Tahap', render: (r) => stage(r.state) },
+        { key: 'state', label: 'Tahap', render: (r) => signalStage(r.state, r.direction) },
         { key: 'first_detected_at', label: 'Deteksi pertama', render: (r) => formatUtc(r.first_detected_at) },
-      ],
+      ].filter(Boolean),
       rows: data.recentDetections,
-      empty: emptyState({ iconName: 'radar', title: 'Belum ada deteksi', text: 'Deteksi SA/PVA muncul di sini setelah worker berjalan dan menemukan pola pada candle tertutup.' }),
+      empty: emptyState({ iconName: 'radar', title: 'Belum ada deteksi', text: 'Deteksi SA/PVA (LONG) dan SD/PVD (SHORT) muncul di sini setelah worker berjalan dan menemukan pola pada candle tertutup.' }),
     }));
 
   const status = panel({ title: 'Status pemindaian' },
@@ -94,7 +112,7 @@ export async function overviewView(ctx) {
     title: 'Overview',
     subtitle: 'Ringkasan kondisi pemindaian. Semua angka berasal dari database; nilai nol berarti memang belum ada data.',
   },
-  workerStartCallout({ user: ctx?.user, status: worker }),
+  workerControlBar({ user: ctx?.user, status: worker }),
   kpis,
   h('div', { class: 'grid grid--main-side' },
     h('div', { class: 'stack' }, market, detections),

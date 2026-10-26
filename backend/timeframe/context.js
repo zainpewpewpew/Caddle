@@ -5,8 +5,8 @@
 // candle 5m 10:00–10:04:59.999 → evaluationTime 10:04:59.999 → candle 15m 10:00–10:14:59.999
 // BELUM tutup sehingga tidak dipakai; konteks 15m memakai 09:45–09:59:59.999.
 
-import { HIGHER_TIMEFRAMES, TIMEFRAMES, TIMEFRAME_MS } from '../market/contracts.js';
-import { resolveAlignment } from './alignment.js';
+import { HIGHER_TIMEFRAMES, TIMEFRAMES, TIMEFRAME_MS, resolveDirection } from '../market/contracts.js';
+import { orientTrend, resolveAlignment } from './alignment.js';
 import { classifyTrend } from './trend.js';
 
 export const DEFAULT_CONTEXT_PARAMS = Object.freeze({
@@ -71,12 +71,15 @@ function trendFor(timeframe, candles, t, { maxStaleBars, settleWindowMs, trendPa
  * (candle kurang dari warm-up trend) — konteks tidak pernah dikarang dari data yang tidak cukup.
  * @param {{ baseTimeframe: '5m'|'15m'|'1h', evaluationTime: number,
  *   candlesByTimeframe: Record<string, import('../market/contracts.js').Candle[]>,
- *   params?: { maxStaleBars?: number, settleWindowMs?: number, trend?: object } }} input
+ *   params?: { maxStaleBars?: number, settleWindowMs?: number, trend?: object },
+ *   direction?: 'LONG'|'SHORT' }} input
+ *   direction (default LONG): alignment dihitung relatif terhadap arah (SHORT: ALIGNED = HTF BEARISH).
+ *   Trend per timeframe tidak bergantung arah.
  * @returns {{ alignment: string, trends: Record<string, { trend: string|null, reasons: string[],
  *   score?: number, asOf: number|null, candleCount: number }> }}
  *   `trends` memuat timeframe dasar (kunci pertama) lalu setiap HTF.
  */
-export function buildTimeframeContext({ baseTimeframe, evaluationTime, candlesByTimeframe, params = {} } = {}) {
+export function buildTimeframeContext({ baseTimeframe, evaluationTime, candlesByTimeframe, params = {}, direction } = {}) {
   if (!TIMEFRAMES.includes(baseTimeframe)) throw new RangeError(`Timeframe dasar tidak didukung: ${baseTimeframe}`);
   if (typeof evaluationTime !== 'number' || !Number.isInteger(evaluationTime)) {
     throw new TypeError('evaluationTime harus bilangan bulat epoch ms');
@@ -95,8 +98,30 @@ export function buildTimeframeContext({ baseTimeframe, evaluationTime, candlesBy
   const higher = HIGHER_TIMEFRAMES[baseTimeframe];
   for (const tf of higher) trends[tf] = trendFor(tf, candlesByTimeframe[tf], evaluationTime, opts);
 
-  // Trend dasar tidak tersedia tidak menghukum sinyal: hanya BEARISH yang membuat baseTrendOk false.
-  const baseTrendOk = trends[baseTimeframe].trend !== 'BEARISH';
-  const alignment = resolveAlignment({ baseTrendOk, higherTrends: higher.map((tf) => trends[tf].trend) });
-  return { alignment, trends };
+  return { alignment: alignmentFor(trends, baseTimeframe, resolveDirection(direction)), trends };
+}
+
+/**
+ * Alignment dari trend yang sudah dihitung, relatif terhadap arah. Trend dasar tidak tersedia tidak
+ * menghukum sinyal: hanya trend dasar yang BERLAWANAN arah (LONG: BEARISH, SHORT: BULLISH) membuat
+ * baseTrendOk false.
+ */
+function alignmentFor(trends, baseTimeframe, direction) {
+  const baseTrendOk = orientTrend(trends[baseTimeframe].trend, direction) !== 'BEARISH';
+  return resolveAlignment({ baseTrendOk, higherTrends: HIGHER_TIMEFRAMES[baseTimeframe].map((tf) => trends[tf].trend), direction });
+}
+
+/**
+ * Konteks untuk arah lain dari konteks yang sudah dibangun (trend dipakai ulang, tanpa menghitung
+ * ulang EMA/swing HTF): hanya alignment yang dihitung ulang. Objek `trends` dibagi (baca saja).
+ * @param {{ alignment: string, trends: object }} context hasil buildTimeframeContext
+ * @param {'5m'|'15m'|'1h'} baseTimeframe
+ * @param {'LONG'|'SHORT'} direction
+ */
+export function contextForDirection(context, baseTimeframe, direction) {
+  if (!TIMEFRAMES.includes(baseTimeframe)) throw new RangeError(`Timeframe dasar tidak didukung: ${baseTimeframe}`);
+  if (context === null || typeof context !== 'object' || context.trends === null || typeof context.trends !== 'object') {
+    throw new TypeError('context harus hasil buildTimeframeContext');
+  }
+  return { alignment: alignmentFor(context.trends, baseTimeframe, resolveDirection(direction)), trends: context.trends };
 }

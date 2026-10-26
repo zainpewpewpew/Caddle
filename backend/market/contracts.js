@@ -17,12 +17,28 @@ export const HIGHER_TIMEFRAMES = Object.freeze({
   '1h': Object.freeze([]),
 });
 
+/**
+ * Arah sinyal. LONG = struktur bullish (SA/PVA), SHORT = struktur bearish (SD/PVD, cermin SA/PVA).
+ * Keduanya kandidat RISET, bukan perintah transaksi. Data/argumen tanpa arah (lama) = 'LONG'.
+ */
+export const DIRECTIONS = Object.freeze(['LONG', 'SHORT']);
+export const DEFAULT_DIRECTION = 'LONG';
+
+/** Kunci pola LONG (nama lama dipertahankan untuk kompatibilitas). */
 export const PATTERN_KEYS = Object.freeze(['SA', 'PVA']);
+/** Kunci pola SHORT: Silent Distribution (#003) & Progressive Volume Distribution (#004). */
+export const SHORT_PATTERN_KEYS = Object.freeze(['SD', 'PVD']);
+export const PATTERN_KEYS_BY_DIRECTION = Object.freeze({ LONG: PATTERN_KEYS, SHORT: SHORT_PATTERN_KEYS });
+/** Klasifikasi LONG (nama lama dipertahankan untuk kompatibilitas). */
 export const CLASSIFICATIONS = Object.freeze(['SA', 'PVA', 'BOTH', 'NONE']);
+export const SHORT_CLASSIFICATIONS = Object.freeze(['SD', 'PVD', 'BOTH', 'NONE']);
+export const CLASSIFICATIONS_BY_DIRECTION = Object.freeze({ LONG: CLASSIFICATIONS, SHORT: SHORT_CLASSIFICATIONS });
 export const TRENDS = Object.freeze(['BULLISH', 'NEUTRAL', 'BEARISH']);
 export const ALIGNMENTS = Object.freeze(['ALIGNED', 'PARTIALLY_CONFIRMED', 'UNCONFIRMED', 'COUNTERTREND']);
+/** Semua state sinyal. EARLY_BEARISH & BREAKDOWN hanya untuk SHORT; EARLY_BULLISH & BREAKOUT hanya untuk LONG. */
 export const SIGNAL_STATES = Object.freeze([
   'NO_PATTERN', 'QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'INVALIDATED', 'EXPIRED',
+  'EARLY_BEARISH', 'BREAKDOWN',
 ]);
 export const TERMINAL_STATES = Object.freeze(['INVALIDATED', 'EXPIRED']);
 export const RISK_FLAGS = Object.freeze([
@@ -49,6 +65,16 @@ export const RISK_FLAGS = Object.freeze([
  * @property {boolean} isClosed         hanya candle tertutup yang boleh dipakai untuk sinyal terkonfirmasi
  * @property {'rest'|'ws'} source
  */
+
+/**
+ * Arah yang divalidasi; undefined/null = DEFAULT_DIRECTION ('LONG').
+ * @throws {RangeError} bila nilai bukan 'LONG'/'SHORT'
+ */
+export function resolveDirection(direction) {
+  if (direction === undefined || direction === null) return DEFAULT_DIRECTION;
+  if (!DIRECTIONS.includes(direction)) throw new RangeError(`Arah tidak dikenal: ${String(direction)}`);
+  return direction;
+}
 
 /** Open time yang sejajar dengan batas interval UTC. */
 export function isAlignedOpenTime(openTime, timeframe) {

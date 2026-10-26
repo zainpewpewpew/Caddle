@@ -1,5 +1,6 @@
 import { badge, callout, dataTable, emptyState, inputField, page, panel, score, segmented, selectField, stage, stat, statusPill, toggle } from '../lib/components.js';
 import { h } from '../lib/dom.js';
+import { directionBadge, patternBadge, signalStage } from './signalFormat.js';
 
 // Halaman referensi design system untuk review visual. Tabel memakai baris ilustratif
 // yang ditandai jelas — bukan data pasar.
@@ -46,9 +47,12 @@ export async function designSystemView() {
     panel({ title: 'Status & tahap sinyal' },
       h('div', { class: 'stack' },
         h('div', { class: 'cluster' }, ['QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'INVALIDATED', 'EXPIRED'].map((s) => stage(s))),
+        // Tahap SHORT: MOMENTUM_BUILDING sinyal SHORT bernada bear lewat data-direction.
+        h('div', { class: 'cluster' }, ['QUIET', 'EARLY_BEARISH', 'MOMENTUM_BUILDING', 'BREAKDOWN', 'INVALIDATED', 'EXPIRED'].map((s) => signalStage(s, 'SHORT'))),
+        h('div', { class: 'cluster' }, directionBadge('LONG'), directionBadge('SHORT'), patternBadge('SA'), patternBadge('PVA'), patternBadge('SD'), patternBadge('PVD'), patternBadge('BOTH', 'SHORT')),
         h('div', { class: 'cluster' }, badge('SA', 'bull'), badge('PVA', 'accent'), badge('BOTH', 'bull'), badge('Wide spread', 'warn'), badge('Countertrend', 'bear'), badge('Netral')),
         h('div', { class: 'cluster' }, statusPill('ok', 'Terhubung', { live: true }), statusPill('warn', 'Lag 2 candle'), statusPill('error', 'Terputus'), statusPill('idle', 'Idle')),
-        h('div', { class: 'cluster' }, score(84, 'bull'), score(61), score(35, 'warn')),
+        h('div', { class: 'cluster' }, score(84, 'bull'), score(61), score(35, 'warn'), score(72, 'bear')),
         h('div', { class: 'cluster' }, h('span', { class: 'delta delta--up' }, '+3,12%'), h('span', { class: 'delta delta--down' }, '−1,04%'), h('span', { class: 'delta delta--flat' }, '0,00%'))))),
   h('div', { class: 'grid grid--kpi' },
     stat({ label: 'Stat tile', value: '42', hint: 'Dengan hint' }),

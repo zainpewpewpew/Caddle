@@ -2,13 +2,20 @@
 // analysis_cursors (migrasi 004: candle terakhir yang dievaluasi pipeline per seri).
 // Satu-satunya tempat SQL sinyal ditulis; semua query statis dengan parameter terikat.
 //
+// Arah (migrasi 005): setiap sinyal punya `direction` 'LONG' | 'SHORT' (baris lama = LONG). Satu sinyal
+// terbuka per simbol × timeframe × ARAH (indeks unik parsial idx_signals_one_open), dan kursor analisis
+// per simbol × timeframe × arah. Argumen `direction` yang tidak diberikan = 'LONG', sehingga pemanggil
+// lama tidak berubah perilakunya (termasuk history(); kedua arah hanya dengan `direction: null` eksplisit).
+//
 // Catatan skema: migrasi 002 belum memiliki kolom untuk lastCandleTime, lastEvaluatedAt,
 // barsInState, peakPrice, dan peakState yang dibutuhkan untuk melanjutkan state machine
 // setelah restart. Sampai migrasi baru menambah kolom tersebut, nilainya disimpan di
 // explanation_json sebagai { factors: [...penjelasan skor], tracking: {...} }.
 
-import { ALIGNMENTS, RISK_FLAGS, SIGNAL_STATES, TERMINAL_STATES, TIMEFRAMES, TIMEFRAME_MS } from '../market/contracts.js';
-import { MONITORING_STOP_REASONS, PATTERN_STATES } from './params.js';
+import {
+  ALIGNMENTS, DIRECTIONS, RISK_FLAGS, SIGNAL_STATES, TERMINAL_STATES, TIMEFRAMES, TIMEFRAME_MS, resolveDirection,
+} from '../market/contracts.js';
+import { MONITORING_STOP_REASONS, PATTERN_STATES, PATTERN_STATES_BY_DIRECTION } from './params.js';
 
 export class SignalRepositoryError extends Error {
   constructor(message, code) {
@@ -18,7 +25,13 @@ export class SignalRepositoryError extends Error {
   }
 }
 
-const SIGNAL_CLASSIFICATIONS = Object.freeze(['SA', 'PVA', 'BOTH']);
+/** Klasifikasi sinyal tersimpan per arah (NONE tidak pernah disimpan). */
+const SIGNAL_CLASSIFICATIONS_BY_DIRECTION = Object.freeze({
+  LONG: Object.freeze(['SA', 'PVA', 'BOTH']),
+  SHORT: Object.freeze(['SD', 'PVD', 'BOTH']),
+});
+/** Nilai filter klasifikasi yang diterima listActive (gabungan kedua arah). */
+const FILTER_CLASSIFICATIONS = Object.freeze(['SA', 'PVA', 'SD', 'PVD', 'BOTH']);
 const SYMBOL_RE = /^[A-Z0-9]{2,30}$/;
 const PATTERN_KEY_RE = /^[A-Z0-9_]{1,32}$/;
 const DEFINITION_STATUSES = Object.freeze(['draft', 'review', 'validated', 'active', 'retired']);
@@ -50,8 +63,19 @@ function assertScore(v, name) {
   if (v !== null && v !== undefined && !(isFiniteNumber(v) && v >= 0 && v <= 100)) throw new RangeError(`${name} harus 0..100`);
 }
 
+function assertDirection(direction) {
+  if (!DIRECTIONS.includes(direction)) throw new RangeError(`Arah tidak valid: ${String(direction)}`);
+}
+
+/** Validasi snapshot yang akan disimpan; mengembalikan arahnya (tanpa field `direction` = LONG). */
 function assertSnapshot(s) {
-  if (!SIGNAL_CLASSIFICATIONS.includes(s.classification)) throw new RangeError(`Klasifikasi sinyal tidak valid: ${s.classification}`);
+  const direction = resolveDirection(s.direction);
+  if (!SIGNAL_CLASSIFICATIONS_BY_DIRECTION[direction].includes(s.classification)) {
+    throw new RangeError(`Klasifikasi sinyal tidak valid: ${s.classification}`);
+  }
+  if (PATTERN_STATES.includes(s.state) && !PATTERN_STATES_BY_DIRECTION[direction].includes(s.state)) {
+    throw new RangeError(`State ${s.state} tidak berlaku untuk arah ${direction}`);
+  }
   if (!PATTERN_KEY_RE.test(String(s.patternKey))) throw new RangeError('snapshot.patternKey tidak valid');
   if (!Number.isInteger(s.patternVersion) || s.patternVersion < 1) throw new RangeError('snapshot.patternVersion tidak valid');
   if (!Number.isInteger(s.firstDetectedAt)) throw new TypeError('snapshot.firstDetectedAt harus bilangan bulat');
@@ -62,6 +86,7 @@ function assertSnapshot(s) {
   if (s.alignment !== null && s.alignment !== undefined && !ALIGNMENTS.includes(s.alignment)) throw new RangeError('snapshot.alignment tidak valid');
   if (!Array.isArray(s.riskFlags) || s.riskFlags.some((f) => !RISK_FLAGS.includes(f))) throw new RangeError('snapshot.riskFlags harus subset RISK_FLAGS');
   if (!Number.isInteger(s.lastCandleTime)) throw new TypeError('snapshot.lastCandleTime harus bilangan bulat');
+  return direction;
 }
 
 function assertEvent(event, snapshot) {
@@ -95,6 +120,7 @@ function toSnapshot(row) {
   const fallbackLast = row.updated_at + 1 - TIMEFRAME_MS[row.timeframe];
   return {
     id: row.id,
+    direction: row.direction,
     state: row.state,
     classification: row.classification,
     patternKey: row.pattern_key,
@@ -120,6 +146,7 @@ function toView(row) {
     id: row.id,
     symbol: row.symbol,
     timeframe: row.timeframe,
+    direction: row.direction,
     classification: row.classification,
     state: row.state,
     patternKey: row.pattern_key,
@@ -157,13 +184,14 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       FROM signals s
       JOIN symbols sym ON sym.id = s.symbol_id
       JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
-      WHERE s.symbol_id = ? AND s.timeframe = ? AND s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT')
+      WHERE s.symbol_id = ? AND s.timeframe = ? AND s.direction = ?
+        AND s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'EARLY_BEARISH', 'BREAKDOWN')
       ORDER BY s.first_detected_at DESC, s.id DESC LIMIT 1`),
     insertSignal: db.prepare(`INSERT INTO signals
-      (symbol_id, timeframe, pattern_definition_id, classification, state, first_detected_at, first_detected_price,
+      (symbol_id, timeframe, direction, pattern_definition_id, classification, state, first_detected_at, first_detected_price,
        invalidation_price, pattern_score, early_score, alignment, risk_flags_json, explanation_json, final_outcome,
        updated_at, closed_at)
-      VALUES (@symbolId, @timeframe, @definitionId, @classification, @state, @firstDetectedAt, @firstDetectedPrice,
+      VALUES (@symbolId, @timeframe, @direction, @definitionId, @classification, @state, @firstDetectedAt, @firstDetectedPrice,
        @invalidationPrice, @patternScore, @earlyScore, @alignment, @riskFlagsJson, @explanationJson, @finalOutcome,
        @updatedAt, @closedAt)`),
     updateSignal: db.prepare(`UPDATE signals SET
@@ -179,7 +207,8 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       FROM signals s
       JOIN symbols sym ON sym.id = s.symbol_id
       JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
-      WHERE s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT')
+      WHERE s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'EARLY_BEARISH', 'BREAKDOWN')
+        AND s.direction = @direction
         AND (@timeframe IS NULL OR s.timeframe = @timeframe)
         AND (@classification IS NULL OR s.classification = @classification)
         AND (@state IS NULL OR s.state = @state)
@@ -202,18 +231,50 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       WHERE s.symbol_id = (SELECT id FROM symbols WHERE symbol = @symbol)
       ORDER BY s.first_detected_at DESC, s.id DESC
       LIMIT @limit`),
+    // Riwayat satu arah (migrasi 005). Arah ditulis sebagai literal di SQL statis (bukan interpolasi, bukan
+    // parameter) agar bentuk parameter tetap { limit } / { symbol, limit }. INDEXED BY + CROSS JOIN mengunci
+    // rencana yang sama dengan statement tanpa arah: indeks urut first_detected_at dipindai (tanpa sort
+    // sementara) dan arah hanya disaring per baris — tanpa indeks arah yang dapat menggeser pilihan planner.
+    historyAllLong: db.prepare(`SELECT s.*, sym.symbol, pd.pattern_key, pd.version AS pattern_version
+      FROM signals s INDEXED BY idx_signals_first_detected
+      CROSS JOIN symbols sym ON sym.id = s.symbol_id
+      CROSS JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
+      WHERE s.direction = 'LONG'
+      ORDER BY s.first_detected_at DESC, s.id DESC
+      LIMIT @limit`),
+    historyAllShort: db.prepare(`SELECT s.*, sym.symbol, pd.pattern_key, pd.version AS pattern_version
+      FROM signals s INDEXED BY idx_signals_first_detected
+      CROSS JOIN symbols sym ON sym.id = s.symbol_id
+      CROSS JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
+      WHERE s.direction = 'SHORT'
+      ORDER BY s.first_detected_at DESC, s.id DESC
+      LIMIT @limit`),
+    historyBySymbolLong: db.prepare(`SELECT s.*, sym.symbol, pd.pattern_key, pd.version AS pattern_version
+      FROM signals s INDEXED BY idx_signals_symbol_first_detected
+      CROSS JOIN symbols sym ON sym.id = s.symbol_id
+      CROSS JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
+      WHERE s.symbol_id = (SELECT id FROM symbols WHERE symbol = @symbol) AND s.direction = 'LONG'
+      ORDER BY s.first_detected_at DESC, s.id DESC
+      LIMIT @limit`),
+    historyBySymbolShort: db.prepare(`SELECT s.*, sym.symbol, pd.pattern_key, pd.version AS pattern_version
+      FROM signals s INDEXED BY idx_signals_symbol_first_detected
+      CROSS JOIN symbols sym ON sym.id = s.symbol_id
+      CROSS JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
+      WHERE s.symbol_id = (SELECT id FROM symbols WHERE symbol = @symbol) AND s.direction = 'SHORT'
+      ORDER BY s.first_detected_at DESC, s.id DESC
+      LIMIT @limit`),
     events: db.prepare(`SELECT id, occurred_at, candle_time, from_state, to_state, price, detail_json
       FROM signal_events WHERE signal_id = ? ORDER BY candle_time, id`),
     openForSymbol: db.prepare(`SELECT s.*, sym.symbol, pd.pattern_key, pd.version AS pattern_version
       FROM signals s
       JOIN symbols sym ON sym.id = s.symbol_id
       JOIN pattern_definitions pd ON pd.id = s.pattern_definition_id
-      WHERE s.symbol_id = @symbolId AND s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT')
+      WHERE s.symbol_id = @symbolId AND s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'EARLY_BEARISH', 'BREAKDOWN')
         AND s.timeframe IN (SELECT value FROM json_each(@timeframes))
       ORDER BY s.timeframe, s.id`),
     openSeries: db.prepare(`SELECT DISTINCT sym.symbol, s.timeframe
       FROM signals s JOIN symbols sym ON sym.id = s.symbol_id
-      WHERE s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT')
+      WHERE s.state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'EARLY_BEARISH', 'BREAKDOWN')
       ORDER BY sym.symbol, s.timeframe`),
     lastStoredClose: db.prepare(`SELECT open_time, close FROM candles
       WHERE symbol_id = ? AND timeframe = ? ORDER BY open_time DESC LIMIT 1`),
@@ -222,16 +283,18 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       WHERE id = @id AND closed_at IS NULL`),
     lastEventCandle: db.prepare(`SELECT MAX(e.candle_time) AS candle_time
       FROM signal_events e JOIN signals s ON s.id = e.signal_id
-      WHERE s.symbol_id = ? AND s.timeframe = ?`),
-    // Kursor analisis lebih diutamakan; event tetap ikut (DB sebelum migrasi 004 belum punya kursor).
+      WHERE s.symbol_id = ? AND s.timeframe = ? AND s.direction = ?`),
+    // Kursor analisis (per arah, migrasi 005) lebih diutamakan; event arah yang sama tetap ikut (DB sebelum
+    // migrasi 004 belum punya kursor).
     lastEvaluated: db.prepare(`SELECT MAX(t) AS t FROM (
-        SELECT last_open_time AS t FROM analysis_cursors WHERE symbol_id = @symbolId AND timeframe = @timeframe
+        SELECT last_open_time AS t FROM analysis_cursors
+        WHERE symbol_id = @symbolId AND timeframe = @timeframe AND direction = @direction
         UNION ALL
         SELECT MAX(e.candle_time) FROM signal_events e JOIN signals s ON s.id = e.signal_id
-        WHERE s.symbol_id = @symbolId AND s.timeframe = @timeframe)`),
-    advanceCursor: db.prepare(`INSERT INTO analysis_cursors (symbol_id, timeframe, last_open_time, updated_at)
-      VALUES (@symbolId, @timeframe, @openTime, @at)
-      ON CONFLICT (symbol_id, timeframe) DO UPDATE SET last_open_time = excluded.last_open_time, updated_at = excluded.updated_at
+        WHERE s.symbol_id = @symbolId AND s.timeframe = @timeframe AND s.direction = @direction)`),
+    advanceCursor: db.prepare(`INSERT INTO analysis_cursors (symbol_id, timeframe, direction, last_open_time, updated_at)
+      VALUES (@symbolId, @timeframe, @direction, @openTime, @at)
+      ON CONFLICT (symbol_id, timeframe, direction) DO UPDATE SET last_open_time = excluded.last_open_time, updated_at = excluded.updated_at
       WHERE excluded.last_open_time > analysis_cursors.last_open_time`),
   };
 
@@ -246,10 +309,15 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
     return Number(stmt.insertDefinition.run({ ...row, definitionJson }).lastInsertRowid);
   });
 
-  const saveTx = db.transaction(({ symbol, timeframe, snapshot, event, explanation, updatedAt }) => {
+  const historyByDirection = {
+    LONG: { all: stmt.historyAllLong, bySymbol: stmt.historyBySymbolLong },
+    SHORT: { all: stmt.historyAllShort, bySymbol: stmt.historyBySymbolShort },
+  };
+
+  const saveTx = db.transaction(({ symbol, timeframe, direction, snapshot, event, explanation, updatedAt }) => {
     const sym = stmt.symbolId.get(symbol);
     if (!sym) throw new SignalRepositoryError(`Simbol ${symbol} belum terdaftar`, 'UNKNOWN_SYMBOL');
-    const open = stmt.openFor.get(sym.id, timeframe);
+    const open = stmt.openFor.get(sym.id, timeframe, direction);
     const opening = event !== null && (event.fromState === 'NO_PATTERN' || event.fromState === null);
     const terminal = TERMINAL_STATES.includes(snapshot.state);
     const common = {
@@ -267,7 +335,7 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
 
     let id;
     if (opening) {
-      if (open) throw new SignalRepositoryError('Masih ada sinyal terbuka untuk simbol & timeframe ini', 'OPEN_SIGNAL_EXISTS');
+      if (open) throw new SignalRepositoryError('Masih ada sinyal terbuka untuk simbol & timeframe ini (arah yang sama)', 'OPEN_SIGNAL_EXISTS');
       if (terminal) throw new SignalRepositoryError('Sinyal baru tidak dapat langsung terminal', 'INVALID_TRANSITION');
       const def = stmt.definition.get(snapshot.patternKey, snapshot.patternVersion);
       if (!def) {
@@ -275,7 +343,7 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       }
       id = Number(stmt.insertSignal.run({
         ...common,
-        symbolId: sym.id, timeframe, definitionId: def.id,
+        symbolId: sym.id, timeframe, direction, definitionId: def.id,
         firstDetectedAt: snapshot.firstDetectedAt, firstDetectedPrice: snapshot.firstDetectedPrice,
         explanationJson: JSON.stringify({ factors: explanation ?? [], tracking: trackingOf(snapshot) }),
       }).lastInsertRowid);
@@ -304,7 +372,7 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
 
     // Candle snapshot ini sudah dievaluasi: kursor analisis maju dalam transaksi yang sama dengan
     // sinyal + event, sehingga restart tidak pernah mengevaluasi ulang candle yang menutup sinyal.
-    stmt.advanceCursor.run({ symbolId: sym.id, timeframe, openTime: snapshot.lastCandleTime, at: updatedAt });
+    stmt.advanceCursor.run({ symbolId: sym.id, timeframe, direction, openTime: snapshot.lastCandleTime, at: updatedAt });
 
     if (event) {
       const { reason = null, detail = {} } = event;
@@ -369,13 +437,17 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       );
     },
 
-    /** Sinyal non-terminal terbaru untuk simbol + timeframe sebagai SignalSnapshot (atau null). */
-    async getOpen({ symbol, timeframe } = {}) {
+    /**
+     * Sinyal non-terminal terbaru untuk simbol + timeframe + arah sebagai SignalSnapshot (atau null).
+     * `direction` default 'LONG' (pemanggil lama).
+     */
+    async getOpen({ symbol, timeframe, direction = 'LONG' } = {}) {
       assertSymbol(symbol);
       assertTimeframe(timeframe);
+      assertDirection(direction);
       const sym = stmt.symbolId.get(symbol);
       if (!sym) return null;
-      const row = stmt.openFor.get(sym.id, timeframe);
+      const row = stmt.openFor.get(sym.id, timeframe, direction);
       return row ? toSnapshot(row) : null;
     },
 
@@ -385,6 +457,8 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
      * - selain itu → UPDATE snapshot sinyal terbuka (closed_at & final_outcome diisi saat terminal);
      *   snapshot dengan state berbeda dari yang tersimpan wajib disertai event (STATE_CHANGE_WITHOUT_EVENT);
      * - setiap event → INSERT signal_events.
+     * Arah diambil dari snapshot.direction (tidak ada = LONG); sinyal terbuka dicari per arah, sehingga sinyal
+     * LONG dan SHORT pada seri yang sama tidak saling mengganggu.
      * Snapshot NO_PATTERN/NONE, atau snapshot terminal tanpa event, tidak disimpan (no-op).
      * @returns {Promise<{ id: number|null, opened: boolean, closed: boolean, saved: boolean }>}
      */
@@ -400,17 +474,17 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
       }
       if (TERMINAL_STATES.includes(snapshot.state) && !event) return noop;
       if (!PATTERN_STATES.includes(snapshot.state) && !TERMINAL_STATES.includes(snapshot.state)) throw new RangeError('State tidak dapat disimpan');
-      assertSnapshot(snapshot);
+      const direction = assertSnapshot(snapshot);
       if (event) assertEvent(event, snapshot);
       if (explanation !== undefined && !Array.isArray(explanation)) throw new TypeError('explanation harus array');
       const updatedAt = now ?? snapshot.lastEvaluatedAt ?? event?.occurredAt;
       if (!Number.isInteger(updatedAt)) throw new TypeError('Waktu pembaruan (now / snapshot.lastEvaluatedAt) wajib bilangan bulat');
-      return saveTx({ symbol, timeframe, snapshot, event, explanation, updatedAt });
+      return saveTx({ symbol, timeframe, direction, snapshot, event, explanation, updatedAt });
     },
 
     /**
-     * Menutup semua sinyal terbuka sebuah simbol (opsional hanya timeframe tertentu) karena simbol berhenti
-     * dipantau: state → EXPIRED, closed_at = updated_at = `at`, final_outcome `EXPIRED:<peakState>`, dan satu
+     * Menutup semua sinyal terbuka sebuah simbol — LONG dan SHORT (opsional hanya timeframe tertentu) karena simbol
+     * berhenti dipantau: state → EXPIRED, closed_at = updated_at = `at`, final_outcome `EXPIRED:<peakState>`, dan satu
      * baris signal_events per sinyal (reason, price = close candle tersimpan terakhir atau null) — semuanya
      * dalam satu transaksi. Tanpa alert. Simbol tak dikenal / tanpa sinyal terbuka → { closed: [] }.
      * @param {{ symbol: string, timeframes?: string[]|null, reason: 'SYMBOL_DELISTED'|'MONITORING_STOPPED', at: number }} input
@@ -430,9 +504,10 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
     },
 
     /**
-     * Pasangan simbol × timeframe yang masih punya sinyal terbuka (QUIET/EARLY_BULLISH/MOMENTUM_BUILDING/BREAKOUT),
-     * tanpa duplikat, urut simbol lalu timeframe. Dipakai scanner untuk menutup sinyal seri yang tidak lagi
-     * dipantau secara level-triggered (lihat createScanner `listOpenSeries`).
+     * Pasangan simbol × timeframe yang masih punya sinyal terbuka (state pola mana pun: QUIET/EARLY_BULLISH/
+     * MOMENTUM_BUILDING/BREAKOUT untuk LONG, QUIET/EARLY_BEARISH/MOMENTUM_BUILDING/BREAKDOWN untuk SHORT),
+     * tanpa duplikat (kedua arah digabung), urut simbol lalu timeframe. Dipakai scanner untuk menutup sinyal
+     * seri yang tidak lagi dipantau secara level-triggered (lihat createScanner `listOpenSeries`).
      * @returns {Promise<Array<{ symbol: string, timeframe: string }>>}
      */
     async listOpenSeries() {
@@ -440,67 +515,88 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
     },
 
     /**
-     * openTime candle terakhir yang menghasilkan event sinyal untuk simbol + timeframe (atau null).
-     * Pipeline memakai lastEvaluatedCandleTime (kursor analisis, mencakup nilai ini) sebagai titik awal replay.
+     * openTime candle terakhir yang menghasilkan event sinyal untuk simbol + timeframe + arah (atau null;
+     * `direction` default 'LONG'). Pipeline memakai lastEvaluatedCandleTime (kursor analisis, mencakup nilai
+     * ini) sebagai titik awal replay.
      */
-    async lastEventCandleTime({ symbol, timeframe } = {}) {
+    async lastEventCandleTime({ symbol, timeframe, direction = 'LONG' } = {}) {
       assertSymbol(symbol);
       assertTimeframe(timeframe);
+      assertDirection(direction);
       const sym = stmt.symbolId.get(symbol);
       if (!sym) return null;
-      return stmt.lastEventCandle.get(sym.id, timeframe)?.candle_time ?? null;
+      return stmt.lastEventCandle.get(sym.id, timeframe, direction)?.candle_time ?? null;
     },
 
     /**
-     * openTime candle dasar terakhir yang sudah dievaluasi pipeline untuk simbol + timeframe (atau null):
-     * maksimum dari kursor analisis (markEvaluated / save) dan candle event terakhir. Titik awal replay
-     * pipeline setelah restart — candle dengan openTime ≤ nilai ini tidak dievaluasi ulang.
+     * openTime candle dasar terakhir yang sudah dievaluasi pipeline untuk simbol + timeframe + arah (atau null;
+     * `direction` default 'LONG'): maksimum dari kursor analisis arah itu (markEvaluated / save) dan candle
+     * event terakhir arah itu. Titik awal replay pipeline setelah restart — candle dengan openTime ≤ nilai ini
+     * tidak dievaluasi ulang untuk arah tersebut.
      */
-    async lastEvaluatedCandleTime({ symbol, timeframe } = {}) {
+    async lastEvaluatedCandleTime({ symbol, timeframe, direction = 'LONG' } = {}) {
       assertSymbol(symbol);
       assertTimeframe(timeframe);
+      assertDirection(direction);
       const sym = stmt.symbolId.get(symbol);
       if (!sym) return null;
-      return stmt.lastEvaluated.get({ symbolId: sym.id, timeframe })?.t ?? null;
+      return stmt.lastEvaluated.get({ symbolId: sym.id, timeframe, direction })?.t ?? null;
     },
 
     /**
-     * Mencatat bahwa candle `openTime` sudah dievaluasi (candle tanpa sinyal tersimpan, mis. NO_PATTERN).
-     * Kursor hanya maju; nilai yang lebih lama/sama diabaikan (idempoten). save() memajukan kursor sendiri.
+     * Mencatat bahwa candle `openTime` sudah dievaluasi untuk satu arah (`direction` default 'LONG'; candle
+     * tanpa sinyal tersimpan, mis. NO_PATTERN). Kursor hanya maju; nilai yang lebih lama/sama diabaikan
+     * (idempoten). save() memajukan kursor arah snapshot sendiri.
      * @returns {Promise<{ advanced: boolean }>}
      */
-    async markEvaluated({ symbol, timeframe, openTime, now } = {}) {
+    async markEvaluated({ symbol, timeframe, openTime, now, direction = 'LONG' } = {}) {
       assertSymbol(symbol);
       assertTimeframe(timeframe);
+      assertDirection(direction);
       if (!Number.isSafeInteger(openTime) || openTime < 0) throw new TypeError('openTime wajib epoch ms bilangan bulat');
       const at = now ?? clock();
       if (!Number.isInteger(at)) throw new TypeError('now harus epoch ms');
       const sym = stmt.symbolId.get(symbol);
       if (!sym) throw new SignalRepositoryError(`Simbol ${symbol} belum terdaftar`, 'UNKNOWN_SYMBOL');
-      return { advanced: stmt.advanceCursor.run({ symbolId: sym.id, timeframe, openTime, at }).changes > 0 };
+      return { advanced: stmt.advanceCursor.run({ symbolId: sym.id, timeframe, direction, openTime, at }).changes > 0 };
     },
 
-    /** Sinyal aktif (non-terminal), urut patternScore tertinggi; semua filter diterapkan sebelum limit. */
+    /**
+     * Sinyal aktif (non-terminal) SATU arah (`direction` default 'LONG'), urut patternScore tertinggi; semua
+     * filter diterapkan sebelum limit. Filter klasifikasi/state yang hanya berlaku untuk arah lain menghasilkan
+     * daftar kosong (bukan error), agar filter UI dapat dipakai lintas arah.
+     */
     async listActive(filters = {}) {
       if (filters === null || typeof filters !== 'object') throw new TypeError('filter harus objek');
-      const allowed = ['timeframe', 'classification', 'state', 'alignment', 'minScore', 'limit'];
+      const allowed = ['direction', 'timeframe', 'classification', 'state', 'alignment', 'minScore', 'limit'];
       for (const key of Object.keys(filters)) if (!allowed.includes(key)) throw new TypeError(`Filter tidak dikenal: ${key}`);
-      const { timeframe = null, classification = null, state = null, alignment = null, minScore = null, limit = 200 } = filters;
+      const {
+        direction = 'LONG', timeframe = null, classification = null, state = null, alignment = null, minScore = null, limit = 200,
+      } = filters;
+      assertDirection(direction);
       if (timeframe !== null) assertTimeframe(timeframe);
-      if (classification !== null && !SIGNAL_CLASSIFICATIONS.includes(classification)) throw new RangeError('Filter klasifikasi tidak valid');
+      if (classification !== null && !FILTER_CLASSIFICATIONS.includes(classification)) throw new RangeError('Filter klasifikasi tidak valid');
       if (state !== null && !PATTERN_STATES.includes(state)) throw new RangeError('Filter state harus state aktif');
       // Alignment null (konteks HTF tidak diketahui) tidak dapat dipilih sebagai filter; tanpa filter tetap tampil.
       if (alignment !== null && !ALIGNMENTS.includes(alignment)) throw new RangeError('Filter alignment tidak valid');
       if (minScore !== null && !(isFiniteNumber(minScore) && minScore >= 0 && minScore <= 100)) throw new RangeError('minScore harus 0..100');
       assertLimit(limit, ACTIVE_MAX);
-      return stmt.listActive.all({ timeframe, classification, state, alignment, minScore, limit }).map(toView);
+      return stmt.listActive.all({ direction, timeframe, classification, state, alignment, minScore, limit }).map(toView);
     },
 
-    /** Riwayat sinyal (terbuka & tertutup) terbaru dulu, lengkap dengan event transisinya. */
-    async history({ symbol = null, limit = 50 } = {}) {
+    /**
+     * Riwayat sinyal (terbuka & tertutup) terbaru dulu, lengkap dengan event transisinya.
+     * `direction` tidak diberikan = 'LONG' (pemanggil lama); 'LONG' / 'SHORT' = satu arah saja; null eksplisit =
+     * kedua arah (dipakai GET /api/signals/history tanpa direction).
+     */
+    async history({ symbol = null, limit = 50, direction = 'LONG' } = {}) {
       if (symbol !== null) assertSymbol(symbol);
       assertLimit(limit, HISTORY_MAX);
-      const rows = symbol === null ? stmt.historyAll.all({ limit }) : stmt.historyBySymbol.all({ symbol, limit });
+      if (direction !== null) assertDirection(direction);
+      const statements = direction === null
+        ? { all: stmt.historyAll, bySymbol: stmt.historyBySymbol }
+        : historyByDirection[direction];
+      const rows = symbol === null ? statements.all.all({ limit }) : statements.bySymbol.all({ symbol, limit });
       return rows.map((row) => ({
         ...toView(row),
         events: stmt.events.all(row.id).map((e) => ({

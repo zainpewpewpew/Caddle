@@ -13,8 +13,11 @@ Prinsip: dependensi sesedikit mungkin, terpelihara, berlisensi permisif, dipin v
 | @fastify/static | 10.1.7 | MIT | Menyajikan frontend | Plugin resmi; proteksi traversal bawaan, diuji `SEC-PATH-001`. |
 | argon2 | 0.45.1 | MIT | Hash kata sandi Argon2id (disyaratkan) | Binding referensi C `phc-winner-argon2`; **prebuilt binary disertakan di tarball npm** (tanpa unduhan saat install). 1 maintainer — risiko bus factor dicatat; alternatif: `@node-rs/argon2`. |
 | better-sqlite3 | 13.0.3 | MIT | Driver SQLite sinkron, cepat, prepared statement | Prebuilt disertakan di tarball. Paket memiliki `binding.gyp`, sehingga npm secara default menjalankan `node-gyp rebuild` saat `npm ci` (gagal bila header Node tidak dapat diunduh) — dinonaktifkan lewat `.npmrc` (lihat bawah). 1 maintainer — alternatif jangka panjang: `node:sqlite` bawaan Node setelah stabil, atau PostgreSQL. |
+| lightweight-charts | 5.2.1 | Apache-2.0 | Grafik candlestick + volume + EMA (side panel scanner & Symbol Intelligence) | TradingView, Inc. Dirilis 2026-08-12 (lebih dari 2 bulan sebelum dipasang 2026-10-26). Satu dependensi transitif: `fancy-canvas` 2.1.0 (MIT, TradingView). Hanya build standalone produksi yang disajikan ke browser, di path tetap `/vendor/lightweight-charts.js` (bukan CDN, CSP tetap `'self'`). Atribusi wajib: logo TradingView bawaan tetap aktif + teks atribusi di footer panel; lihat `THIRD_PARTY_NOTICES.md` dan `docs/08-grafik-simbol.md`. |
 
 `npm audit`: **0 kerentanan** (prod + dev, 218 paket).
+
+Penambahan 2026-10-26: `lightweight-charts` + `fancy-canvas` (2 paket runtime baru; `npm ls --omit=dev --all` kini 89 paket unik). `npm audit` belum dijalankan ulang setelah penambahan ini.
 
 ### `.npmrc`: `ignore-scripts=true`
 
@@ -39,7 +42,6 @@ Install/postinstall script dari dependensi **tidak dijalankan** — menutup vekt
 | `dotenv` | Diganti `node --env-file-if-exists` bawaan Node 22 |
 | `@fastify/cors` | Aplikasi same-origin; tanpa CORS = tanpa permukaan salah konfigurasi |
 | Font CDN / Google Fonts | Privasi & CSP `'self'` |
-| TradingView Lightweight Charts | Akan dipasang di M4 (Apache-2.0, perlu atribusi TradingView sesuai lisensinya) sebagai file vendor lokal |
 
 ## Alat keamanan
 

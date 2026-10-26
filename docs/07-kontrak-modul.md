@@ -1,4 +1,4 @@
-# 07 — Kontrak Antarmodul (Milestone 2–3)
+# 07 — Kontrak Antarmodul (Milestone 2–3 + Short Scanner)
 
 Dokumen ini mengikat modul yang dikembangkan paralel dan sudah **disesuaikan dengan implementasi** (bukan lagi draf). Konstanta & typedef ada di `backend/market/contracts.js`. Semua waktu epoch ms UTC. Semua angka harga/volume `number` (float64). Bagian terakhir mencatat penyimpangan dari draf awal beserta alasannya.
 
@@ -11,6 +11,7 @@ Dokumen ini mengikat modul yang dikembangkan paralel dan sudah **disesuaikan den
 - Tidak ada lookahead: pada waktu evaluasi `t`, hanya data dengan `closeTime <= t` yang boleh dipakai — termasuk candle timeframe lebih tinggi dan swing (`confirmedIndex`). Ukuran likuiditas 24 jam saat ini hanya dipakai untuk candle terbaru (§8).
 - Host jaringan yang diizinkan: `fapi.binance.com` (REST) dan `fstream.binance.com` (WebSocket), ditegakkan oleh allowlist di klien. WebSocket kline wajib memakai rute kategori `/market` (`wss://fstream.binance.com/market/stream?streams=…`, §4). Tidak ada URL dari input pengguna.
 - Fixture Binance di `tests/fixtures/binance/` adalah **sintetis** mengikuti format dokumentasi resmi, bukan rekaman pasar nyata.
+- **Arah sinyal** (`direction`): `'LONG'` (struktur bullish, pola SA/PVA) atau `'SHORT'` (struktur bearish, pola SD/PVD — Short Scanner). Argumen, snapshot, dan baris database tanpa arah (data/pemanggil lama) = `'LONG'`; parameter arah baru selalu opsional sehingga perilaku lama tidak berubah. Sinyal SHORT adalah **kandidat riset**, bukan rekomendasi jual/short; aplikasi tidak pernah mengeksekusi order di arah mana pun. Semua harga yang disimpan/ditampilkan adalah harga nyata (bukan harga cermin, §6).
 
 ## Konstanta (`backend/market/contracts.js`)
 
@@ -18,7 +19,10 @@ Dokumen ini mengikat modul yang dikembangkan paralel dan sudah **disesuaikan den
 |---|---|
 | `TIMEFRAMES` | `5m`, `15m`, `1h` |
 | `HIGHER_TIMEFRAMES` | `5m → [15m, 1h]`, `15m → [1h]`, `1h → []` |
-| `SIGNAL_STATES` | `NO_PATTERN`, `QUIET`, `EARLY_BULLISH`, `MOMENTUM_BUILDING`, `BREAKOUT`, `INVALIDATED`, `EXPIRED` |
+| `SIGNAL_STATES` | `NO_PATTERN`, `QUIET`, `EARLY_BULLISH`, `MOMENTUM_BUILDING`, `BREAKOUT`, `INVALIDATED`, `EXPIRED`, `EARLY_BEARISH`, `BREAKDOWN` (dua terakhir khusus SHORT; `EARLY_BULLISH`/`BREAKOUT` khusus LONG) |
+| `DIRECTIONS` / `DEFAULT_DIRECTION` | `LONG`, `SHORT` / `LONG` — `resolveDirection(d)`: `undefined`/`null` → `'LONG'`, nilai lain di luar daftar → `RangeError` |
+| `PATTERN_KEYS` / `SHORT_PATTERN_KEYS` | `SA`, `PVA` (LONG) / `SD`, `PVD` (SHORT); `PATTERN_KEYS_BY_DIRECTION = { LONG, SHORT }` |
+| `CLASSIFICATIONS` / `SHORT_CLASSIFICATIONS` | `SA`, `PVA`, `BOTH`, `NONE` / `SD`, `PVD`, `BOTH`, `NONE`; `CLASSIFICATIONS_BY_DIRECTION = { LONG, SHORT }` |
 | `TERMINAL_STATES` | `INVALIDATED`, `EXPIRED` |
 | `ALIGNMENTS` | `ALIGNED`, `PARTIALLY_CONFIRMED`, `UNCONFIRMED`, `COUNTERTREND` |
 | `RISK_FLAGS` | `POOR_LIQUIDITY`, `WIDE_SPREAD`, `EXCESSIVE_VOLATILITY`, `COUNTERTREND_HTF`, `EXTENDED_PRICE`, `DATA_QUALITY` |
@@ -215,8 +219,12 @@ Entry point `worker/index.js` (`npm run worker`) membuka SQLite + migrasi, lalu 
 ```text
 assembleWorker({ db, logger, clock = Date.now /* jam lokal */, fetch?, restSleep?, restRandom?, streamFactory?,
   setTimer?, clearTimer?, scannerOptions?, settleMs = WORKER_SETTLE_MS (3000), pipelineSleep?,
-  onAlert?, onAnalysed?, onMonitoringStopped?, heartbeatOwner? = null /* diteruskan ke createScanner */ })
+  onAlert?, onAnalysed?, onMonitoringStopped?, heartbeatOwner? = null /* diteruskan ke createScanner */,
+  directions = DIRECTIONS /* ['LONG', 'SHORT'] — diteruskan ke createAnalysisPipeline */ })
   → { serverClock, repos, rest, pipeline, scanner, getSettings }
+  // Satu worker memindai KEDUA arah: setiap candle tertutup dievaluasi untuk LONG dan SHORT dengan candle & fitur
+  // bersama (§8). onAlert menerima { symbol, timeframe, direction, state, event, view }; worker/index.js
+  // mencatatnya ke log ('sinyal baru / naik tahap', termasuk field direction).
   // Tanpa efek samping (tidak membuka DB, tidak memasang handler sinyal, tidak memulai timer/jaringan).
   // Merakit jam server, klien REST, repositori, pipeline analisis, dan scanner (onMonitoringStopped →
   // pipeline.closeSymbol, listOpenSeries → repos.signals.listOpenSeries); serverClock.now menjadi clock klien REST, repositori (createRepositories(db, { clock })
@@ -264,6 +272,38 @@ PatternResult = {
 
 `earlyScore` = `distanceWeight` (0,6) × komponen jarak + `ageWeight` (0,4) × komponen umur, dengan jarak = (close − low pertama rantai higher low) / ATR, bernilai 0 pada ≥ `EARLY_SCORE.maxRunAtr` (6) ATR, dan umur = bar sejak awal struktur, 0 pada ≥ `maxAgeBars` (60). Keduanya diukur dari **awal struktur** sehingga skor tidak naik lagi setelah pullback. `invalidationPrice` tetap dari swing low terbaru dikurangi `invalidationBufferAtr` × ATR.
 
+### Pola SHORT — Silent Distribution (SD, #003) & Progressive Volume Distribution (PVD, #004)
+
+```
+SHORT_PATTERN_VERSION = 1    // v1 = cermin SA/PVA PATTERN_VERSION 2 (MIRRORED_LONG_VERSION); setiap kenaikan
+                             // PATTERN_VERSION WAJIB ikut menaikkan versi ini
+DEFAULT_SD_PARAMS, DEFAULT_PVD_PARAMS, PARAM_SPECS.SD, PARAM_SPECS.PVD
+  // = parameter & rentang SA/PVA; minHigherLows bernama minLowerHighs (higher low cermin = lower high nyata)
+MIRROR_BASE = { SD: 'SA', PVD: 'PVA' }, toMirrorBaseParams(params)   // parameter SHORT → parameter detektor cermin
+validateParams / resolveParams / requiredCandles menerima 'SD'|'PVD' (warm-up = formula pola cerminnya: SD 63, PVD 70)
+mirrorCandles(candles) → candle cermin (harga p → 1/p, high ↔ low; volume & waktu tetap)
+unmirrorPrice(p) → 1/p | null,  realChangeOf(m) → 1/(1+m) − 1 | null
+detectSilentDistribution(candles, params?)      → PatternResult (pattern 'SD',  version SHORT_PATTERN_VERSION)
+detectProgressiveDistribution(candles, params?) → PatternResult (pattern 'PVD', version SHORT_PATTERN_VERSION)
+evaluateShortPatterns(candles, { sd?, pvd? }) → { direction: 'SHORT', classification: 'SD'|'PVD'|'BOTH'|'NONE', sd, pvd }
+evaluatePatternsFor(direction, candles, options)   // LONG → evaluatePatterns, SHORT → evaluateShortPatterns; lainnya → RangeError
+classifyShort(sdDetected, pvdDetected), SD_CONDITIONS, PVD_CONDITIONS
+```
+
+Metode: candle dicerminkan (harga p → 1/p, high ↔ low), lalu detektor SA/PVA yang **sama** dijalankan pada cermin — higher low cermin = lower high nyata, EMA naik pada cermin = EMA nyata turun, harga naik pada cermin = harga nyata turun. Logika SA/PVA tidak diduplikasi, sehingga gerbang, bobot, `minScore`, `detected`, dan `insufficientData` berperilaku persis sama. Hasil cermin dipetakan kembali ke harga nyata:
+
+- **Eksak:** perubahan harga (`priceFalling`, `priceGradual`) — nilai & ambang = 1/(1+m) − 1. Ambang parameter `maxPriceChange` berlaku pada skala cermin: penurunan nyata d setara kenaikan cermin d / (1 − d). `invalidationPrice` = 1 / level cermin → harga nyata **di atas** harga, yaitu di atas swing high terkonfirmasi terakhir (buffer `invalidationBufferAtr` × ATR dihitung pada skala cermin).
+- **Aproksimasi orde pertama:** slope EMA (`ema7Falling`, `ema25NotRising`) = slope cermin dengan tanda dibalik; ATR%, rasio berbasis ATR (mis. `notExtended`), dan porsi penurunan satu candle (`dropNotSingleCandle`) diteruskan dari cermin (≈ nilai nyata untuk pergerakan kecil). Volume, RVOL, dan porsi volume identik.
+- Status lulus/gagal tiap kondisi, `patternScore`, `earlyScore`, dan risk flag diambil apa adanya dari evaluasi cermin. `EXTENDED_PRICE` pada cermin = harga nyata jauh **di bawah** EMA25. `earlyScore` = jarak close dari high pertama rantai lower high (dalam ATR) + umur struktur.
+
+Kondisi (bobot; * = wajib) — id kondisi LONG diganti padanan SHORT:
+
+| SD (cermin SA) | PVD (cermin PVA) |
+|---|---|
+| `rvolLow`* 20, `priceFalling`* 10 (perubahan < 0), `priceGradual`* 10 (perubahan ≥ −ambang), `lowerHighs`* 20, `ema7Falling`* 10, `atrPercentLow`* 5, `ema25NotRising` 10, `atrNotExpanding` 5, `notExtended` 5 ((EMA25 − close) / ATR ≤ ambang), `liquidity` 5 | `volumeRising`* 15, `volumeGrowth`* 10, `noSpikeDominance`* 10, `volumeGrowthBroad`* 5, `priceFalling`* 10, `dropNotSingleCandle`* 10 (porsi penurunan dari satu candle ≤ ambang), `lowerHighs`* 10, `atrPercentLow`* 5, `priorQuiet` 15, `ema7Falling` 5, `atrNotExpanding` 5 |
+
+Default SD/PVD = default SA/PVA: titik awal, **bukan** hasil optimasi; wajib divalidasi backtest out-of-sample seperti pola LONG. Definisi tersimpan (`pattern_definitions`, §8) memuat `direction: 'SHORT'` dan `mirrorOf: { pattern, version }`, sehingga perubahan SA/PVA tanpa menaikkan `SHORT_PATTERN_VERSION` ditolak `DEFINITION_CONFLICT` saat start. Skor SHORT tetap skor aturan yang dapat dijelaskan — bukan probabilitas, bukan rekomendasi jual/short.
+
 ## 7. Timeframe, sinyal, skor — `backend/timeframe/`, `backend/signals/`, `backend/scoring/`
 
 ```
@@ -272,65 +312,115 @@ classifyTrend(candles, params?) → { trend: 'BULLISH'|'NEUTRAL'|'BEARISH', reas
   // score 0. Pemetaan ke null dilakukan pemanggil (buildTimeframeContext, buildMarketContext §9).
 closedAsOf(candles, t) → Candle[]                         // closeTime <= t, tanpa candle isClosed false
 lastClosedCloseTime(t, timeframe) → number
-resolveAlignment({ baseTrendOk: boolean, higherTrends: Array<'BULLISH'|'NEUTRAL'|'BEARISH'|null> })
+resolveAlignment({ baseTrendOk: boolean, higherTrends: Array<'BULLISH'|'NEUTRAL'|'BEARISH'|null>, direction? = 'LONG' })
   → 'ALIGNED'|'PARTIALLY_CONFIRMED'|'UNCONFIRMED'|'COUNTERTREND'
+  // SHORT: BULLISH ↔ BEARISH ditukar sebelum tabel keputusan (ALIGNED = semua HTF BEARISH, COUNTERTREND = ada HTF BULLISH)
+orientTrend(trend, direction? = 'LONG') → trend dari sudut arah (SHORT: BULLISH ↔ BEARISH; null/NEUTRAL tetap)
 buildTimeframeContext({ baseTimeframe, evaluationTime, candlesByTimeframe,
-  params: { maxStaleBars = 1, settleWindowMs = 60_000, trend } })
+  params: { maxStaleBars = 1, settleWindowMs = 60_000, trend }, direction? = 'LONG' })
   → { alignment, trends: { [tf]: { trend: 'BULLISH'|'NEUTRAL'|'BEARISH'|null, reasons, score?, asOf, candleCount } } }
   // trend null (tidak tersedia, tanpa score) dengan reason 'NO_DATA' (tanpa candle tertutup; asOf null, candleCount 0),
   // 'STALE_DATA' (candle HTF tertinggal), atau 'INSUFFICIENT_DATA' (candle kurang dari warm-up trend).
   // STALE_DATA: HTF boleh tertinggal maxStaleBars bar hanya dalam settleWindowMs setelah closeTime candle HTF yang
   // seharusnya sudah tutup (race ingesti di batas bersama); di luar jendela itu toleransinya max(0, maxStaleBars − 1).
-  // Hanya trend dasar BEARISH yang membuat baseTrendOk false; HTF tidak pernah membuang pola dasar.
+  // Hanya trend dasar yang BERLAWANAN arah (LONG: BEARISH, SHORT: BULLISH) yang membuat baseTrendOk false; HTF tidak
+  // pernah membuang pola dasar. `trends` tidak bergantung arah; `alignment` relatif terhadap arah.
+contextForDirection(context, baseTimeframe, direction) → { alignment, trends }
+  // alignment arah lain dari trend yang sudah dihitung (tanpa menghitung ulang EMA/swing HTF); `trends` dibagi
 
 transition(prev: SignalSnapshot|null, input, params?) → { next: SignalSnapshot, event: SignalEvent|null, alert: boolean }
-  input = { candle, patterns, context: { alignment }, market: { atr, rvol, resistance }, view }
-deriveMarketInputs(candles, params?) → { atr, rvol, resistance }   // resistance = swing high terkonfirmasi
+  input = { candle, patterns, direction?, context: { alignment }, market: { atr, rvol, resistance, support }, view }
+  // direction default = arah `patterns` (evaluateShortPatterns → 'SHORT'; tanpa keduanya LONG). direction yang
+  // berbeda dari arah pola, atau prev arah lain → RangeError. LONG memakai market.resistance; SHORT memakai
+  // market.support dan candle.low (wajib angka).
+deriveMarketInputs(candles, params?) → { atr, rvol, resistance }   // resistance = swing high terkonfirmasi (LONG)
+deriveDirectionalMarketInputs(candles, params?) → { LONG: { atr, rvol, resistance }, SHORT: { atr, rvol, support } }
+  // satu perhitungan indikator untuk kedua arah; support = swing low terkonfirmasi terakhir (tanpa lookahead)
 isTerminal(state) → boolean
 DEFAULT_SIGNAL_PARAMS = { earlyMinScore: 60, momentumAtrMultiple: 1, momentumRvol: 1.5, breakoutRvol: 2,
-  expiryBars: { QUIET: 48, EARLY_BULLISH: 36, MOMENTUM_BUILDING: 24, BREAKOUT: 12 } }
+  expiryBars: { QUIET: 48, EARLY_BULLISH: 36, MOMENTUM_BUILDING: 24, BREAKOUT: 12, EARLY_BEARISH: 36, BREAKDOWN: 12 } }
+  // expiryBars.EARLY_BEARISH / BREAKDOWN yang tidak di-override eksplisit mengikuti EARLY_BULLISH / BREAKOUT hasil
+  // resolveSignalParams (termasuk override-nya), sehingga LONG & SHORT kedaluwarsa sama; kunci SHORT eksplisit dihormati.
+LONG_PATTERN_STATES  = QUIET, EARLY_BULLISH, MOMENTUM_BUILDING, BREAKOUT
+SHORT_PATTERN_STATES = QUIET, EARLY_BEARISH, MOMENTUM_BUILDING, BREAKDOWN
+PATTERN_STATES = gabungan state terbuka kedua arah (urutan LONG dulu); PATTERN_STATES_BY_DIRECTION = { LONG, SHORT }
+ALERT_STATES (LONG) / SHORT_ALERT_STATES = EARLY_BEARISH, MOMENTUM_BUILDING, BREAKDOWN; ALERT_STATES_BY_DIRECTION
+STATE_RANK: EARLY_BEARISH = EARLY_BULLISH (2), BREAKDOWN = BREAKOUT (4)
 
-SignalSnapshot = { state, classification, patternKey, patternVersion, firstDetectedAt, firstDetectedPrice,
+SignalSnapshot = { direction, state, classification, patternKey, patternVersion, firstDetectedAt, firstDetectedPrice,
   invalidationPrice, patternScore, earlyScore, alignment, riskFlags, lastCandleTime, barsInState,
   peakPrice, peakState }
+  // direction 'LONG'|'SHORT' (snapshot lama tanpa direction = LONG). SHORT: invalidationPrice di atas harga,
+  // peakPrice = harga terendah (ekskursi searah sinyal).
 SignalEvent = { fromState, toState, candleTime, price, reason }
 
 buildSignalView({ symbol, timeframe, patterns, context, liquidity, dataQuality, params })
-  → { symbol, timeframe, classification, alignment, patternScore, earlyScore, riskFlags,
+  → { symbol, timeframe, direction, classification, alignment, patternScore, earlyScore, riskFlags,
       explanation: [{ factor, contribution, detail }] }
+  // direction = arah `patterns`. SHORT: skor dari SD/PVD (aturan pemilihan sama dengan SA/PVA), baris penjelasan
+  // CONTEXT:DIRECTION (kontribusi 0), COUNTERTREND_HTF = HTF bullish. context.alignment wajib relatif terhadap arah.
 
 createSignalRepository(db, { clock }) → {
+  // `direction` opsional di setiap method per seri: tidak diberikan = 'LONG' (pemanggil lama); nilai lain → RangeError.
   ensurePatternDefinition({ key, version, name, definition, status = 'active', now }),
-  getOpen({ symbol, timeframe }): Promise<SignalSnapshot|null>,
+  getOpen({ symbol, timeframe, direction? }): Promise<SignalSnapshot|null>,
   save({ symbol, timeframe, snapshot, event, explanation, now }): Promise<{ id, opened, closed, saved }>,
-      // satu transaksi: sinyal + event + kursor analisis (analysis_cursors, migrasi 004) maju ke snapshot.lastCandleTime.
+      // arah = snapshot.direction (tidak ada = LONG); klasifikasi & state wajib milik arah itu (RangeError).
+      // OPEN_SIGNAL_EXISTS hanya untuk sinyal terbuka arah yang SAMA (LONG & SHORT satu seri boleh terbuka bersamaan).
+      // satu transaksi: sinyal + event + kursor analisis arah itu (analysis_cursors, migrasi 004/005) maju ke snapshot.lastCandleTime.
       // Snapshot dengan state berbeda dari sinyal terbuka tanpa event → SignalRepositoryError STATE_CHANGE_WITHOUT_EVENT.
       // Snapshot NO_PATTERN/NONE atau terminal tanpa event → no-op (saved: false).
-  lastEventCandleTime({ symbol, timeframe }): Promise<number|null>,      // MAX signal_events.candle_time seri
-  lastEvaluatedCandleTime({ symbol, timeframe }): Promise<number|null>,
+  lastEventCandleTime({ symbol, timeframe, direction? }): Promise<number|null>,   // MAX signal_events.candle_time seri × arah
+  lastEvaluatedCandleTime({ symbol, timeframe, direction? }): Promise<number|null>,
       // openTime candle terakhir yang sudah dievaluasi = max(kursor analisis, candle event terakhir) — fallback event
       // agar DB sebelum migrasi 004 tetap bekerja. Titik awal replay pipeline (§8).
-  markEvaluated({ symbol, timeframe, openTime, now? = clock() }): Promise<{ advanced: boolean }>,
+  markEvaluated({ symbol, timeframe, openTime, now? = clock(), direction? }): Promise<{ advanced: boolean }>,
       // kursor untuk candle yang tidak menyimpan apa pun (mis. NO_PATTERN); hanya maju (nilai lama/sama diabaikan);
       // simbol belum terdaftar → UNKNOWN_SYMBOL
   closeOpenForSymbol({ symbol, timeframes? = null /* semua */, reason, at })
     : Promise<{ closed: [{ id, timeframe, fromState, price }] }>,
+      // Menutup sinyal terbuka KEDUA arah (LONG & SHORT); bentuk hasil tidak berubah (tanpa field direction).
       // reason ∈ MONITORING_STOP_REASONS = ['SYMBOL_DELISTED', 'MONITORING_STOPPED'] (signals/params.js).
       // Satu transaksi: state → EXPIRED, closed_at = updated_at = at, final_outcome 'EXPIRED:<peakState>',
       // event { occurredAt: at, candleTime: candle terakhir yang dievaluasi, price: close candle tersimpan
       // terakhir | null, detail: { reason, barsInPrevState, firstDetectedPrice, invalidationPrice, priceCandleTime } }.
   listOpenSeries(): Promise<Array<{ symbol, timeframe }>>,
-      // pasangan simbol × timeframe yang masih punya sinyal terbuka, tanpa duplikat, urut simbol lalu timeframe
+      // pasangan simbol × timeframe yang masih punya sinyal terbuka (arah apa pun), tanpa duplikat, urut simbol lalu timeframe
       // (rekonsiliasi level-triggered scanner)
-  listActive({ timeframe?, classification?, state?, alignment?, minScore?, limit = 200 (1..500) }),
+  listActive({ direction = 'LONG', timeframe?, classification?, state?, alignment?, minScore?, limit = 200 (1..500) }),
+      // SATU arah (default LONG = perilaku lama); classification ∈ SA/PVA/SD/PVD/BOTH dan state ∈ PATTERN_STATES —
+      // nilai milik arah lain menghasilkan [] (bukan error). Setiap baris memuat `direction`.
       // hanya state aktif; alignment ∈ ALIGNMENTS (alignment null tidak dapat dipilih sebagai filter, tetapi tampil
       // tanpa filter); semua filter diterapkan SEBELUM LIMIT; urut pattern_score DESC, updated_at DESC, id DESC.
       // Nilai tidak valid / limit > 500 → RangeError (tidak dipotong); kunci filter tak dikenal → TypeError.
-  history({ symbol?, limit = 50 (1..500) }),                          // termasuk events[]; urut first_detected_at DESC, id DESC
+  history({ symbol?, limit = 50 (1..500), direction? = 'LONG' }),     // termasuk events[]; urut first_detected_at DESC, id DESC
+      // direction tidak diberikan = 'LONG' (pemanggil lama); 'LONG'/'SHORT' = satu arah; null eksplisit = kedua arah
+      // (GET /api/signals/history tanpa direction meneruskan null). Setiap baris memuat `direction`.
 }
 ```
 
 Tabel transisi lengkap (kondisi, reason, kapan alert) didokumentasikan di kepala `backend/signals/stateMachine.js` dan diuji di `tests/unit/signals/`. Satu-satunya transisi di luar `transition()` adalah penutupan sinyal simbol yang berhenti dipantau (`EXPIRED` dengan reason `SYMBOL_DELISTED`/`MONITORING_STOPPED`, tanpa alert) lewat `closeOpenForSymbol`, karena simbol tersebut tidak lagi menerima candle sehingga `NO_PROGRESS` tidak akan pernah tercapai. Ringkasnya: transisi maju hanya ke peringkat lebih tinggi (tanpa downgrade, sehingga alert untuk state yang sama tidak berulang), satu transisi per candle baru, candle duplikat/lama idempoten, `INVALIDATED` bila close < harga invalidasi, `EXPIRED` bila tidak ada kemajuan selama `expiryBars[state]` bar. Setelah gap data, sinyal yang sudah jatuh tempo **di dalam gap** (`barsInState − 1 ≥ expiryBars[state]`) di-`EXPIRED` (`NO_PROGRESS`, tanpa alert) lebih dulu — sebelum pemeriksaan invalidasi dan kemajuan — dan setiap event pada candle pasca-gap memuat `detail.gapBars` (jumlah candle yang hilang).
+
+**Arah SHORT** (Short Scanner) — cermin LONG; parameter, urutan pemeriksaan, aturan gap, expiry, dan tanpa-downgrade sama. Kandidat riset, bukan rekomendasi jual/short:
+
+| State SHORT | Kondisi masuk | reason |
+|---|---|---|
+| `NO_PATTERN` | tidak ada sinyal SHORT terbuka (tidak dipersistensi); juga bila SD/PVD terdeteksi tetapi close ≥ `invalidationPrice` pola | (tanpa event) |
+| `QUIET` | SD/PVD terdeteksi, `earlyScore` < `earlyMinScore` | `PATTERN_DETECTED` |
+| `EARLY_BEARISH` | SD/PVD terdeteksi dengan `earlyScore` ≥ `earlyMinScore` (langsung, atau naik dari `QUIET`) | `PATTERN_DETECTED_EARLY` / `EARLY_SCORE_THRESHOLD` |
+| `MOMENTUM_BUILDING` | dari `QUIET`/`EARLY_BEARISH`: close ≤ `firstDetectedPrice` − `momentumAtrMultiple` × ATR, atau RVOL ≥ `momentumRvol` dengan close < `firstDetectedPrice` | `PRICE_ATR_DECLINE` / `RVOL_EXPANSION` |
+| `BREAKDOWN` | dari `QUIET`/`EARLY_BEARISH`/`MOMENTUM_BUILDING`: close < support **dan** < `firstDetectedPrice` (close < min(support, `firstDetectedPrice`)) dengan RVOL ≥ `breakoutRvol`; support = swing low terkonfirmasi terakhir | `BREAKDOWN_CONFIRMED` |
+| `INVALIDATED` | terminal: close > `invalidationPrice` (level di atas harga) | `CLOSE_ABOVE_INVALIDATION` |
+| `EXPIRED` | terminal: tanpa kemajuan selama `expiryBars[state]` bar (`EARLY_BEARISH` 36, `BREAKDOWN` 12), jatuh tempo di dalam gap, atau simbol berhenti dipantau | `NO_PROGRESS` / `SYMBOL_DELISTED` / `MONITORING_STOPPED` |
+
+Alert SHORT saat masuk `EARLY_BEARISH`, `MOMENTUM_BUILDING`, atau `BREAKDOWN`, dan saat `INVALIDATED` bila state sebelumnya state alert SHORT. `invalidationPrice` SHORT hanya boleh **turun** (dari pola utama versi sama yang masih terdeteksi dan masih di atas close); `peakPrice` = harga terendah; pola utama seri → SD. Event SHORT memuat `detail.support` (LONG tetap `detail.resistance`). Sinyal LONG dan SHORT pada simbol × timeframe yang sama independen — masing-masing punya state, event, dan kursor analisis sendiri. Alignment selalu relatif terhadap arah sinyal.
+
+**Migrasi 005** (`backend/database/migrations/005_signal_direction.sql`; diterapkan `npm run migrate`, server, dan worker saat start):
+
+- `signals.direction` TEXT NOT NULL DEFAULT `'LONG'` CHECK `('LONG', 'SHORT')`; **semua baris lama menjadi `LONG`** (id dipertahankan). CHECK klasifikasi diperluas dengan `SD`/`PVD`, CHECK state dengan `EARLY_BEARISH`/`BREAKDOWN`, plus CHECK lintas kolom: LONG hanya `SA`/`PVA`/`BOTH` tanpa state khusus SHORT; SHORT hanya `SD`/`PVD`/`BOTH` tanpa state khusus LONG.
+- `idx_signals_one_open` UNIQUE `(symbol_id, timeframe, direction) WHERE closed_at IS NULL`: paling banyak satu sinyal terbuka per simbol × timeframe × arah (penjaga terakhir di bawah `OPEN_SIGNAL_EXISTS` repositori). Database yang melanggar invarian itu (dua sinyal terbuka pada seri yang sama) membuat migrasi gagal dan di-rollback seluruhnya, bukan diperbaiki diam-diam.
+- `analysis_cursors` berkunci `(symbol_id, timeframe, direction)`; kursor lama menjadi kursor LONG. Arah SHORT belum punya kursor, sehingga evaluasi SHORT pertama setelah upgrade hanya memakai candle terakhir (bootstrap, tanpa replay histori).
+- `signals`, `signal_events`, dan `analysis_cursors` dibangun ulang (CHECK tidak dapat diubah lewat ALTER TABLE) dalam satu transaksi dengan foreign key aktif: `signal_events` disalin lalu dihapus **sebelum** `signals`, agar `ON DELETE CASCADE` dari DELETE implisit DROP TABLE tidak menghapus event. Indeks 002/004 dibuat ulang dengan nama yang sama (riwayat satu arah memakai `INDEXED BY idx_signals_first_detected` / `idx_signals_symbol_first_detected`).
 
 Skor **bukan probabilitas**. `patternScore` = jumlah bobot kondisi yang lulus (§6); `earlyScore` = seberapa dini posisi harga (jarak dari awal struktur dalam ATR dan umur struktur, §6). Konteks HTF, likuiditas 24 jam (ticker), dan kualitas data seri hanya menambah risk flag dan baris penjelasan di `buildSignalView` — tidak mengubah skor. Pengecualian yang disengaja: kondisi pola SA `liquidity` (quote volume rata-rata per candle di jendela pola) adalah kondisi berbobot 5 di `patternScore`.
 
@@ -340,32 +430,46 @@ Skor **bukan probabilitas**. `patternScore` = jumlah bobot kondisi yang lulus (�
 ANALYSIS_LOOKBACK = 300
 REPLAY_LIQUIDITY_DETAIL = 'Data likuiditas tidak tersedia untuk candle historis (replay): …'   // teks penjelasan
 assessSeriesQuality(candles, timeframe) → { ok, issues: ['UNCLOSED_CANDLE'|'MIXED_SERIES'|'GAP:n', …] }
-analyzeAt({ symbol, timeframe, candlesByTimeframe, prev, liquidity, dataQuality, params })   // MURNI
-  → { evaluationTime, patterns, context, view, market, next, event, alert } | null (tanpa candle dasar)
-  // params = { sa?, pva?, signals?, view?: { minQuoteVolume24h?, maxSpreadBps? } }
+analyzeAt({ symbol, timeframe, candlesByTimeframe, prev, liquidity, dataQuality, params, direction? = 'LONG' })   // MURNI
+  → { direction, evaluationTime, patterns, context, view, market, next, event, alert } | null (tanpa candle dasar)
+  // params = { sa?, pva?, sd?, pvd?, signals?, view?: { minQuoteVolume24h?, maxSpreadBps? } }
+  // direction SHORT: pola SD/PVD (params.sd/pvd), alignment relatif SHORT, market { atr, rvol, support };
+  // prev wajib sinyal SHORT. Tanpa direction = LONG (perilaku lama).
   // params.view diteruskan ke buildSignalView (ambang risk flag likuiditas; default DEFAULT_VIEW_PARAMS)
   // konteks HTF memakai default buildTimeframeContext (maxStaleBars 1, settleWindowMs 60 000)
-patternDefinitions(params, { maxWarmup? }) → [{ key: 'SA'|'PVA', version, name, definition: { params, conditions, requiredCandles } }]
+analyzeDirectionsAt({ symbol, timeframe, candlesByTimeframe, prevByDirection = {}, liquidity, dataQuality, params,
+  directions = DIRECTIONS })   // MURNI
+  → { LONG?: hasil analyzeAt, SHORT?: hasil analyzeAt } | null (tanpa candle dasar)
+  // kualitas seri, trend per timeframe, dan input pasar dihitung SEKALI untuk semua arah; hasil tiap arah identik
+  // dengan analyzeAt({ ..., direction }). directions: array tidak kosong (TypeError), tanpa arah ganda/asing (RangeError).
+patternDefinitions(params, { maxWarmup?, directions? = ['LONG'] })
+  → [{ key: 'SA'|'PVA'|'SD'|'PVD', version, name, definition: { params, conditions, requiredCandles } }]
   // maxWarmup diteruskan ke resolveParams: parameter dengan warm-up > min(maxWarmup, 300) → PatternParamsError
+  // LONG: bentuk definisi tidak berubah. SHORT: version = SHORT_PATTERN_VERSION; definition + { direction: 'SHORT',
+  // mirrorOf: { pattern: 'SA'|'PVA', version: PATTERN_VERSION } }.
 createAnalysisPipeline({ repos, signals, getLiquidity, logger, params, lookback = 300 (100..1500),
   maxReplay = 288 (1..5000), settleMs = 0 (0..30000), sleep, onAlert,
-  yieldEvery = 25 (1..5000), yieldToEventLoop = setImmediate (node:timers/promises) })
+  yieldEvery = 25 (1..5000), yieldToEventLoop = setImmediate (node:timers/promises), directions = ['LONG'] })
   → { ensureDefinitions(), onClosedCandles({ symbol, timeframe, candles, reason }),
-      closeSymbol({ symbol, timeframes? = null, reason, at }) → signals.closeOpenForSymbol(...) }
-  // Saat konstruksi: patternDefinitions(params, { maxWarmup: lookback }) — parameter pola yang warm-up-nya melebihi
-  // lookback ditolak PatternParamsError (bukan pola yang diam-diam selalu insufficientData).
-  // onClosedCandles → { symbol, timeframe, evaluationTime, state, evaluated, classification, event, alert }
-  //   atau { symbol, timeframe, skipped: 'NO_DATA' | 'ALREADY_EVALUATED' }.
-  // closeSymbol diserialkan dengan evaluasi yang masih berjalan untuk seri yang sama; tanpa alert.
+      closeSymbol({ symbol, timeframes? = null, reason, at }) → signals.closeOpenForSymbol(...), directions }
+  // Saat konstruksi: patternDefinitions(params, { maxWarmup: lookback, directions }) — parameter pola yang warm-up-nya
+  // melebihi lookback ditolak PatternParamsError (bukan pola yang diam-diam selalu insufficientData).
+  // directions: default ['LONG'] (perilaku lama); worker (assembleWorker, §4) memakai ['LONG', 'SHORT'].
+  // onClosedCandles → { symbol, timeframe, direction, evaluationTime, state, evaluated, classification, event, alert,
+  //     directions: { [arah]: { state, classification, event, alert, evaluated } } }
+  //   (field tingkat atas = arah utama, LONG bila ikut dievaluasi; evaluated tingkat atas = jumlah candle yang dievaluasi)
+  //   atau { symbol, timeframe, skipped: 'NO_DATA' | 'ALREADY_EVALUATED' } (ALREADY_EVALUATED = semua arah sudah).
+  // onAlert({ symbol, timeframe, direction, state, event, view }) — per arah, hanya untuk candle terbaru.
+  // closeSymbol diserialkan dengan evaluasi yang masih berjalan untuk seri yang sama; menutup kedua arah; tanpa alert.
 ```
 
-`analyzeAt` dipakai bersama oleh worker live dan (nanti) backtest M6, sehingga hasil keduanya identik untuk data yang sama. `onClosedCandles`:
+`analyzeAt` / `analyzeDirectionsAt` dipakai bersama oleh worker live dan (nanti) backtest M6, sehingga hasil keduanya identik untuk data yang sama (per arah). `onClosedCandles`:
 
-1. Evaluasi diserialisasi per simbol×timeframe.
-2. Memuat `lookback + maxReplay` candle terakhir; titik awal = `signals.lastEvaluatedCandleTime` — kursor analisis persisten (`analysis_cursors`, migrasi 004; fallback candle event terakhir), di-cache di memori. Candle terbaru ≤ kursor → `ALREADY_EVALUATED`. Karena kursor juga maju untuk candle tanpa event, restart hanya mengevaluasi candle setelah kursor (DB yang dimigrasi dari sebelum 004 dapat me-replay sekali dari event terakhir per seri).
-3. Candle baru diputar ulang berurutan (maks `maxReplay`; pemotongan dicatat di log). Seri tanpa kursor → hanya candle terakhir (bootstrap = histori).
+1. Evaluasi diserialisasi per simbol×timeframe (semua arah dalam satu evaluasi).
+2. Memuat `lookback + maxReplay` candle terakhir; titik awal **per arah** = `signals.lastEvaluatedCandleTime` — kursor analisis persisten (`analysis_cursors`, migrasi 004, per arah sejak migrasi 005; fallback candle event terakhir arah itu), di-cache di memori. Candle terbaru ≤ kursor semua arah → `ALREADY_EVALUATED`. Karena kursor juga maju untuk candle tanpa event, restart hanya mengevaluasi candle setelah kursor (DB yang dimigrasi dari sebelum 004 dapat me-replay sekali dari event terakhir per seri).
+3. Candle baru diputar ulang berurutan (maks `maxReplay` per arah; pemotongan dicatat sekali di log). Seri/arah tanpa kursor → hanya candle terakhir (bootstrap = histori) — termasuk SHORT pertama kali setelah migrasi 005. Candle yang belum dievaluasi digabung lintas arah: setiap candle dievaluasi sekali untuk arah yang belum mengevaluasinya.
 4. Bila `settleMs > 0`, menunggu sekali agar candle HTF yang tutup pada waktu yang sama sempat tersimpan (worker memakai 3 detik).
-5. Setiap candle: `getOpen` → `analyzeAt` → `save` bila ada event atau sinyal terbuka yang snapshot-nya diperbarui (memajukan kursor dalam transaksi yang sama); candle yang tidak menyimpan apa pun → `markEvaluated`. **Alert hanya untuk candle terakhir** batch, sehingga backfill tidak membanjiri alert historis. Sebelum setiap candle diambil satu slot dari anggaran `yieldEvery` yang **dibagi seluruh pipeline** (bukan per seri): bila habis, satu `yieldToEventLoop()` dijadwalkan dan semua seri yang kehabisan menunggu jeda yang sama, sehingga timer/heartbeat/WS mendapat giliran setelah ±`yieldEvery` candle total. Anggaran di-reset saat jeda berjalan atau saat tidak ada evaluasi yang berjalan.
+5. Setiap candle: `getOpen` per arah → `analyzeDirectionsAt` → per arah (LONG dulu) `save` bila ada event atau sinyal terbuka yang snapshot-nya diperbarui (memajukan kursor arah itu dalam transaksi yang sama); arah yang tidak menyimpan apa pun → `markEvaluated` arah itu. Panggilan repositori LONG tidak membawa `direction` (bentuk lama); SHORT membawa `direction: 'SHORT'`. Satu candle = satu slot `yieldEvery`, berapa pun arahnya. **Alert hanya untuk candle terakhir** batch, sehingga backfill tidak membanjiri alert historis. Sebelum setiap candle diambil satu slot dari anggaran `yieldEvery` yang **dibagi seluruh pipeline** (bukan per seri): bila habis, satu `yieldToEventLoop()` dijadwalkan dan semua seri yang kehabisan menunggu jeda yang sama, sehingga timer/heartbeat/WS mendapat giliran setelah ±`yieldEvery` candle total. Anggaran di-reset saat jeda berjalan atau saat tidak ada evaluasi yang berjalan.
 6. `getLiquidity(symbol)` (worker: `scanner.liquidityOf`) memberi ukuran likuiditas; bila menyertakan `thresholds`, ambang itu menggantikan `params.view`, sehingga `POOR_LIQUIDITY`/`WIDE_SPREAD` dan baris penjelasan `CONTEXT:LIQUIDITY` memakai batas pengaturan pengguna (penting di mode manual, yang tidak memfilter likuiditas saat discovery). Ukuran itu menggambarkan pasar saat ini, jadi **hanya candle terbaru** batch yang memakainya; candle historis hasil replay dievaluasi dengan likuiditas tidak diketahui (tanpa `POOR_LIQUIDITY`/`WIDE_SPREAD`) dan detail `CONTEXT:LIQUIDITY` = `REPLAY_LIQUIDITY_DETAIL`.
 
 ## 9. API — `backend/api/signalRoutes.js`, `backend/api/systemRoutes.js`
@@ -374,12 +478,12 @@ Semua route di bawah `/api/` melewati gerbang autentikasi berbasis route (lihat 
 
 | Endpoint | Query | Respons |
 |---|---|---|
-| `GET /api/signals/active` | `timeframe`, `classification` (SA/PVA/BOTH), `state` (state aktif), `alignment` (ALIGNED/PARTIALLY_CONFIRMED/UNCONFIRMED/COUNTERTREND), `minScore` (bilangan bulat 0–100, `pattern_score ≥`), `limit` (1–500, default 200; > 500 → 400, tidak dipotong) | `{ items: [...], count }` — `items` = `listActive` + `lastPrice`, `lastCandleAt` (null bila belum ada candle) per baris; `count` = `items.length` (bukan total) |
-| `GET /api/signals/history` | `symbol` (`^[A-Z0-9]{2,30}$`), `limit` (1–500, default 100) | `{ items: [...], count }` dengan `events[]` per sinyal |
+| `GET /api/signals/active` | `direction` (LONG/SHORT, default LONG), `timeframe`, `classification` (SA/PVA/SD/PVD/BOTH; klasifikasi arah lain → daftar kosong), `state` (state aktif kedua arah: QUIET, EARLY_BULLISH, MOMENTUM_BUILDING, BREAKOUT, EARLY_BEARISH, BREAKDOWN; state arah lain → daftar kosong), `alignment` (ALIGNED/PARTIALLY_CONFIRMED/UNCONFIRMED/COUNTERTREND), `minScore` (bilangan bulat 0–100, `pattern_score ≥`), `limit` (1–500, default 200; > 500 → 400, tidak dipotong) | `{ items: [...], count }` — `items` = `listActive` satu arah (setiap baris memuat `direction`) + `lastPrice`, `lastCandleAt` (null bila belum ada candle) per baris; `count` = `items.length` (bukan total) |
+| `GET /api/signals/history` | `symbol` (`^[A-Z0-9]{2,30}$`), `direction` (LONG/SHORT; tanpa = kedua arah), `limit` (1–500, default 100) | `{ items: [...], count }` dengan `direction` dan `events[]` per sinyal |
 | `GET /api/system/status` | — | status proses API + `scanner`, `binance`, `ingestion` dari `summarizeWorker` |
-| `GET /api/overview` | — | ringkasan + `alignedSignals`, `scanner`, `binance`, `marketContext` (BTC/ETH 1h) |
+| `GET /api/overview` | — | ringkasan (`monitoredSymbols`; `activeSignals`/`earlySignals`/`alignedSignals` tetap bermakna LONG; `activeByDirection`/`earlyByDirection`/`alignedByDirection` = `{ LONG, SHORT }`; `recentDetections` kedua arah dengan `direction`) + `scanner`, `binance`, `marketContext` (BTC/ETH 1h) |
 
-Filter `alignment` diterapkan di server sebelum `LIMIT`. Screener mengirim semua filter ke server dengan `limit=500`; karena API tidak memberi total, `count` = 500 hanya berarti batas tercapai — UI menampilkan `≥ 500 hasil` dan callout "hasil mungkin terpotong", bukan klaim ada sisa.
+Nilai `direction` di luar LONG/SHORT → 400. Sinyal SHORT adalah kandidat riset (struktur bearish), bukan rekomendasi jual/short; API tidak pernah mengeksekusi order. Filter `alignment` diterapkan di server sebelum `LIMIT`. Frontend: LONG Scanner (`#/screener`) tidak mengirim `direction` (request sama seperti sebelum SHORT ada), SHORT Scanner (`#/short-scanner`) mengirim `direction=SHORT` dengan filter `SD`/`PVD`/`BOTH` dan `QUIET`/`EARLY_BEARISH`/`MOMENTUM_BUILDING`/`BREAKDOWN`; Signal History memanggil `/api/signals/history` tanpa `direction` (kedua arah); Overview memakai `activeByDirection` untuk KPI SHORT. Kedua halaman Scanner mengirim semua filter ke server dengan `limit=500`; karena API tidak memberi total, `count` = 500 hanya berarti batas tercapai — UI menampilkan `≥ 500 hasil` dan callout "hasil mungkin terpotong", bukan klaim ada sisa.
 
 `backend/system/workerStatus.js` — `summarizeWorker(ingestion, now)` membaca heartbeat di database; `now` = `Date.now()` proses API, sehingga `heartbeat.at` (dan `lastIngestionAt`, `lastRun`, `recentErrors[].at`) wajib distempel jam lokal host oleh worker (`localClock` scanner), bukan waktu server Binance. Heartbeat lebih tua dari 90 detik → `stale`; tanpa heartbeat → `not_running` (tidak pernah angka palsu). `scanner.clockOffsetMs` (angka atau null) dan `scanner.clockFault` (hanya `'OFFSET_OUT_OF_RANGE'` atau null) diteruskan dari heartbeat; System Health menampilkan offset atau peringatan NTP; `streams` termasuk seri konteks HTF.
 
@@ -545,7 +649,7 @@ Penutupan server (`backend/app/server.js`): SIGINT/SIGTERM/SIGHUP (jendela termi
 
 Konfigurasi (`loadConfig`): `WORKER_CONTROL` kosong → `nodeEnv === 'development'`; `WORKER_AUTOSTART` kosong → `false`; nilai selain `'true'`/`'false'` → `ConfigError` (`"<NAMA> harus 'true' atau 'false'"`).
 
-Frontend: `frontend/js/views/workerControl.js` — kartu **Kontrol scanner** (System Health; dibuat sekali, auto-refresh 10 detik hanya memanggil `update()`) dan callout ringkas Overview (`canStartWorker`: kontrol aktif & state `stopped`/`crashed`). Label di `workerFormat.js` (`workerControlLabel`): Berjalan / Berhenti / Memulai… / Menghentikan… / Gagal (kode keluar N | sinyal X) / Berjalan di luar website. Tombol hanya untuk admin, nonaktif selama request; stop butuh konfirmasi; state diumumkan lewat `aria-live="polite"`; saat starting/stopping — dan selama `SETTLE_MS` (10 detik) setelah start berhasil, karena 'running' hanya berarti proses sudah di-spawn — UI memantau `GET /api/system/worker` tiap 2 detik dengan `X-LR-Background: 1`, sehingga worker yang crash sesaat setelah start tampil *Gagal* dalam beberapa detik. Callout Overview dirender dari status: setelah start berhasil pesan berganti "Scanner berjalan." (`aria-live`), tombol dilepas dan fokus keyboard dipindah ke pesan (`tabindex="-1"`, tidak jatuh ke `<body>`); callout memantau dengan cara yang sama dan menampilkan pesan crash + tombol lagi bila worker crash.
+Frontend: `frontend/js/views/workerControl.js` — kartu **Kontrol scanner** (System Health; dibuat sekali, auto-refresh 10 detik hanya memanggil `update()`) dan kontrol persisten ringkas `workerControlBar` di Overview, LONG Scanner, dan SHORT Scanner (`data-testid="worker-callout"`; `null` hanya bila `enabled` false atau status gagal dibaca; `workerStartCallout` = alias lama). Label di `workerFormat.js` (`workerControlLabel`): Berjalan / Berhenti / Memulai… / Menghentikan… / Gagal (kode keluar N | sinyal X) / Berjalan di luar website. Tombol hanya untuk admin, nonaktif selama request; stop butuh konfirmasi; state diumumkan lewat `aria-live="polite"`; saat starting/stopping — dan selama `SETTLE_MS` (10 detik) setelah start berhasil, karena 'running' hanya berarti proses sudah di-spawn — UI memantau `GET /api/system/worker` tiap 2 detik dengan `X-LR-Background: 1`, sehingga worker yang crash sesaat setelah start tampil *Gagal* dalam beberapa detik. Kontrol persisten tidak pernah dilepas dari halaman: pill state + pesan (`aria-live`) + satu tombol toggle (admin) berlabel **Hentikan scanner** saat `running`/`starting`/`external` (aktif hanya saat `running`, dengan konfirmasi inline seperti kartu System Health) dan **Jalankan scanner** selain itu (aktif saat `stopped`/`crashed`). Tombol nonaktif memakai `aria-disabled="true"` — bukan atribut `disabled` — selama request, transisi, `SETTLE_MS`, konfirmasi terbuka, dan state `external`/tidak diketahui, sehingga fokus keyboard tetap di tombol saat labelnya berganti (tidak jatuh ke `<body>`). Di luar transisi kontrol membaca ulang status tiap 30 detik (latar); polling berhenti saat elemen tidak lagi terpasang, dan respons polling yang dimulai sebelum perintah baru dibuang. Snapshot supervisor dari umpan sync (`GET /api/system/sync`, dipantau baris sync ringkas `worker-callout-sync` tiap 2–10 detik lewat `onData` `syncProgressInline`, docs/09 §8) diadopsi bila state-nya berbeda dan request-nya lebih baru daripada status kontrol, sehingga crash tampil dalam ≤10 detik; baris sync ringkas tampil hanya saat scanner tidak dapat dijalankan dan umpan sync melaporkan state yang sama dengan kontrol. Satu kontrol mencakup LONG dan SHORT (satu worker memindai kedua arah).
 
 ## 12. Penyimpangan dari draf awal
 
@@ -570,10 +674,14 @@ Frontend: `frontend/js/views/workerControl.js` — kartu **Kontrol scanner** (Sy
 | Replay berjalan sinkron tanpa jeda | `yieldEvery`/`yieldToEventLoop`, anggaran bersama seluruh pipeline | Replay banyak seri setelah outage menahan timer heartbeat/WS hingga beberapa detik |
 | `save()` menerima perubahan state tanpa event | Ditolak `STATE_CHANGE_WITHOUT_EVENT` | `signal_events` tidak boleh tertinggal dari state tersimpan |
 | Expiry dinilai setelah kondisi invalidasi/kemajuan | Sinyal yang jatuh tempo di dalam gap `EXPIRED` lebih dulu; event pasca-gap memuat `detail.gapBars` | Setelah outage, sinyal basi dapat dipromosikan/di-alert berdasarkan `firstDetectedPrice` lama |
-| Kolom tracking (`barsInState`, `peakPrice`, `lastCandleTime`) di tabel `signals` | Disimpan di `explanation_json.tracking` | Menghindari migrasi skema saat M3; kandidat migrasi `005` (lihat `docs/05-database.md` §6) |
+| Kolom tracking (`barsInState`, `peakPrice`, `lastCandleTime`) di tabel `signals` | Disimpan di `explanation_json.tracking` | Menghindari migrasi skema saat M3; kandidat migrasi `006` (`004` dipakai kursor analisis, `005` arah sinyal; usulan di `docs/05-database.md` §6) |
 | `classifyTrend` selalu mengembalikan trend | `classifyTrend` tetap memberi `NEUTRAL` + `INSUFFICIENT_DATA` di bawah warm-up; `buildTimeframeContext` & `buildMarketContext` memetakan tanpa data/HTF basi/data kurang → `trend: null` | Tidak memalsukan konteks (NEUTRAL tampak nyata) saat data tidak cukup |
 | HTF tertinggal ≤ `maxStaleBars` bar selalu ditoleransi | Toleransi 1 bar hanya dalam `settleWindowMs` (60 detik) setelah close HTF yang diharapkan | Candle 1h yang hilang sejak lama tetap dibaca sebagai trend dari data yang lebih tua |
 | Screener memfilter alignment di klien setelah potongan top-200; `limit` > 500 dipotong diam-diam | Filter `alignment` di server sebelum `LIMIT`; `limit` 1–500 (lebih → 400); screener meminta `limit=500` dan menandai batas tercapai (`≥ 500 hasil`) | Hasil screener diam-diam tidak lengkap |
 | `createUser`: hitung → Argon2 → insert; seed default: "tabel kosong" → Argon2 → insert | Argon2 → `users.createWithLimit` (COUNT + INSERT satu transaksi IMMEDIATE, `requireEmpty` untuk seed, UNIQUE → `username_taken`/`users_exist`) | `user:create` bersamaan / seed vs `user:create` melewati `MAX_USERS` atau membuat `admin` padahal pengguna lain sudah ada; seed ganda crash dengan SqliteError UNIQUE |
 | Login: verify → rehash tanpa syarat → `sessionService.create` | Rehash compare-and-swap; sesi dibuat hanya bila `password_hash` masih yang diverifikasi (`sessions.createIfPasswordUnchanged`, atomik) | `npm run user:password` selama verifikasi Argon2 login: sesi baru berkata sandi lama lolos dari `revokeAllForUser`, dan rehash dapat menimpa hash baru dengan kata sandi lama |
 | Batas simbol 2–30 karakter di semua tempat | Discovery: basis 1–20 + `USDT`; API riwayat: 2–30 | Discovery mengikuti format USDT-M; API menerima simbol lama yang masih tersimpan |
+| Pola SHORT dengan detektor & logika sendiri | SD/PVD = detektor SA/PVA atas candle cermin (p → 1/p, high ↔ low), hasil dipetakan ke harga nyata (§6) | Satu sumber logika: perbaikan SA/PVA otomatis berlaku untuk SHORT (wajib menaikkan `SHORT_PATTERN_VERSION`, dijaga `mirrorOf`); konversi perubahan harga & invalidasi eksak, slope EMA/ATR% aproksimasi orde pertama |
+| Satu sinyal terbuka per simbol × timeframe | Satu per simbol × timeframe × arah (`idx_signals_one_open`, migrasi 005) | Kandidat LONG dan SHORT adalah hipotesis riset berbeda yang dapat muncul bersamaan pada seri yang sama |
+| Kursor analisis per simbol × timeframe | Per simbol × timeframe × arah | `save()`/`markEvaluated()` per arah: crash di antara simpan LONG dan SHORT tidak membuat satu arah melompati candle |
+| Field ringkasan overview menghitung semua sinyal | `activeSignals`/`earlySignals`/`alignedSignals` tetap LONG; rincian `*ByDirection` ditambahkan | Klien lama (label "Kandidat LONG aktif") tidak berubah makna; kedua arah tersedia tanpa memecah kontrak |

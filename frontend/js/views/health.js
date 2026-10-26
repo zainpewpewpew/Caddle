@@ -2,6 +2,7 @@ import { api } from '../lib/api.js';
 import { dataTable, page, panel, stat, statusPill } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { EMPTY, formatBytes, formatDuration, formatInteger, formatRelative, formatUtc } from '../lib/format.js';
+import { requestSyncRefresh, syncProgressPanel } from './syncProgress.js';
 import { workerControlCard } from './workerControl.js';
 import { binancePill, scannerPill } from './workerFormat.js';
 
@@ -35,10 +36,11 @@ function render(data) {
           h('dt', null, 'Simbol / stream'), h('dd', { class: 'mono' }, running ? `${formatInteger(sc.symbols)} / ${formatInteger(sc.streams)} (basi ${formatInteger(sc.staleStreams)})` : EMPTY),
           h('dt', null, 'Reconnect / gap / duplikat'), h('dd', { class: 'mono' }, running ? `${formatInteger(sc.reconnects)} / ${formatInteger(sc.gaps)} / ${formatInteger(sc.duplicates)}` : EMPTY),
           h('dt', null, 'Error tercatat'), h('dd', null, formatInteger(sc.errors)),
+          // clockSynced false: belum ada sync jam yang berhasil — offset masih nilai awal, bukan pengukuran → '—'.
           h('dt', null, 'Offset jam Binance'), h('dd', { class: 'mono', 'data-testid': 'health-clock' },
             sc.clockFault === 'OFFSET_OUT_OF_RANGE'
               ? 'Jam host menyimpang > 10 menit dari Binance — periksa NTP'
-              : (running && typeof sc.clockOffsetMs === 'number' ? `${formatInteger(sc.clockOffsetMs)} ms` : EMPTY)),
+              : (running && typeof sc.clockOffsetMs === 'number' && sc.sync?.clockSynced !== false ? `${formatInteger(sc.clockOffsetMs)} ms` : EMPTY)),
           h('dt', null, 'Waktu server'), h('dd', { class: 'mono' }, formatUtc(data.serverTime))))),
     panel({ title: 'Error ingesti terbaru', flush: true },
       dataTable({
@@ -60,6 +62,13 @@ export async function healthView(ctx) {
   const initial = await api('/api/system/status');
   // Kartu kontrol dibuat sekali (state konfirmasi/request tetap utuh); metrik di bawahnya dirender ulang.
   const control = workerControlCard({ user: ctx?.user, status: initial.workerControl });
+  // Proses sync scanner tepat di bawah kartu kontrol; panel memantau GET /api/system/sync sendiri (2 detik selama
+  // memulai/backfill, 10 detik saat live) dan berhenti saat halaman ditinggalkan. Tombol kontrol ditekan → panel
+  // langsung memantau cepat, sehingga langkah pertama terlihat tanpa menunggu putaran 10 detik.
+  const sync = syncProgressPanel({ initial });
+  control.el.addEventListener('click', (e) => {
+    if (e.target instanceof Element && e.target.closest('button')) requestSyncRefresh();
+  });
   const metrics = h('div', { class: 'stack' }, render(initial));
   const timer = setInterval(async () => {
     try {
@@ -74,7 +83,7 @@ export async function healthView(ctx) {
 
   return {
     el: page({ title: 'System Health', subtitle: 'Metrik nyata dari proses server dan heartbeat worker, diperbarui setiap 10 detik.' },
-      h('div', { class: 'stack' }, control.el, metrics)),
+      h('div', { class: 'stack' }, control.el, sync, metrics)),
     cleanup: () => {
       clearInterval(timer);
       control.cleanup();

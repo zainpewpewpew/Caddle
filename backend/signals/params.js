@@ -1,10 +1,22 @@
 // Parameter state machine sinyal (konfigurabel, divalidasi). Satuan bar = candle timeframe dasar.
 
-/** State "pola" yang berarti sinyal sedang terbuka (non-terminal, bukan NO_PATTERN). */
-export const PATTERN_STATES = Object.freeze(['QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT']);
+/** State terbuka sinyal LONG (urutan kemajuan). */
+export const LONG_PATTERN_STATES = Object.freeze(['QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT']);
+/** State terbuka sinyal SHORT (cermin LONG: EARLY_BEARISH ↔ EARLY_BULLISH, BREAKDOWN ↔ BREAKOUT). */
+export const SHORT_PATTERN_STATES = Object.freeze(['QUIET', 'EARLY_BEARISH', 'MOMENTUM_BUILDING', 'BREAKDOWN']);
+export const PATTERN_STATES_BY_DIRECTION = Object.freeze({ LONG: LONG_PATTERN_STATES, SHORT: SHORT_PATTERN_STATES });
 
-/** State yang memicu alert saat dimasuki (selaras dengan ALERT_STAGES pengaturan scanner). */
+/**
+ * State "pola" yang berarti sinyal sedang terbuka (non-terminal, bukan NO_PATTERN) — gabungan kedua arah.
+ * Urutan LONG dipertahankan di depan; EARLY_BEARISH & BREAKDOWN (khusus SHORT) di belakang.
+ */
+export const PATTERN_STATES = Object.freeze(['QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'EARLY_BEARISH', 'BREAKDOWN']);
+
+/** State LONG yang memicu alert saat dimasuki (selaras dengan ALERT_STAGES pengaturan scanner). */
 export const ALERT_STATES = Object.freeze(['EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT']);
+/** State SHORT yang memicu alert saat dimasuki (cermin ALERT_STATES). */
+export const SHORT_ALERT_STATES = Object.freeze(['EARLY_BEARISH', 'MOMENTUM_BUILDING', 'BREAKDOWN']);
+export const ALERT_STATES_BY_DIRECTION = Object.freeze({ LONG: ALERT_STATES, SHORT: SHORT_ALERT_STATES });
 
 /**
  * Reason event EXPIRED di luar candle: simbol berhenti dipantau scanner sehingga sinyal terbuka tidak akan
@@ -15,23 +27,38 @@ export const ALERT_STATES = Object.freeze(['EARLY_BULLISH', 'MOMENTUM_BUILDING',
  */
 export const MONITORING_STOP_REASONS = Object.freeze(['SYMBOL_DELISTED', 'MONITORING_STOPPED']);
 
-/** Peringkat kemajuan; transisi maju hanya ke peringkat lebih tinggi (tidak ada downgrade). */
-export const STATE_RANK = Object.freeze({ NO_PATTERN: 0, QUIET: 1, EARLY_BULLISH: 2, MOMENTUM_BUILDING: 3, BREAKOUT: 4 });
-
-export const DEFAULT_SIGNAL_PARAMS = Object.freeze({
-  /** earlyScore minimum agar pola terdeteksi langsung/naik menjadi EARLY_BULLISH (di bawahnya QUIET). */
-  earlyMinScore: 60,
-  /** MOMENTUM_BUILDING bila close ≥ firstDetectedPrice + k × ATR. */
-  momentumAtrMultiple: 1,
-  /** …atau RVOL ≥ ambang ini dengan close > firstDetectedPrice. */
-  momentumRvol: 1.5,
-  /** BREAKOUT bila close > max(resistance, firstDetectedPrice) dengan RVOL ≥ ambang ini. */
-  breakoutRvol: 2,
-  /** Batas bar tanpa kemajuan (tanpa perpindahan state) per state sebelum EXPIRED. */
-  expiryBars: Object.freeze({ QUIET: 48, EARLY_BULLISH: 36, MOMENTUM_BUILDING: 24, BREAKOUT: 12 }),
+/**
+ * Peringkat kemajuan; transisi maju hanya ke peringkat lebih tinggi (tidak ada downgrade).
+ * State SHORT setara peringkat cerminnya (EARLY_BEARISH = EARLY_BULLISH, BREAKDOWN = BREAKOUT).
+ */
+export const STATE_RANK = Object.freeze({
+  NO_PATTERN: 0, QUIET: 1, EARLY_BULLISH: 2, MOMENTUM_BUILDING: 3, BREAKOUT: 4, EARLY_BEARISH: 2, BREAKDOWN: 4,
 });
 
-/** Parameter turunan indikator untuk deriveMarketInputs (ATR, RVOL, swing high terkonfirmasi). */
+export const DEFAULT_SIGNAL_PARAMS = Object.freeze({
+  /** earlyScore minimum agar pola terdeteksi langsung/naik menjadi EARLY_BULLISH/EARLY_BEARISH (di bawahnya QUIET). */
+  earlyMinScore: 60,
+  /** MOMENTUM_BUILDING bila close ≥ firstDetectedPrice + k × ATR (SHORT: close ≤ firstDetectedPrice − k × ATR). */
+  momentumAtrMultiple: 1,
+  /** …atau RVOL ≥ ambang ini dengan close > firstDetectedPrice (SHORT: close < firstDetectedPrice). */
+  momentumRvol: 1.5,
+  /**
+   * BREAKOUT bila close > max(resistance, firstDetectedPrice) dengan RVOL ≥ ambang ini
+   * (SHORT/BREAKDOWN: close < min(support, firstDetectedPrice)).
+   */
+  breakoutRvol: 2,
+  /**
+   * Batas bar tanpa kemajuan (tanpa perpindahan state) per state sebelum EXPIRED. State SHORT memakai
+   * nilai yang sama dengan state cerminnya (EARLY_BEARISH = EARLY_BULLISH, BREAKDOWN = BREAKOUT): bila tidak
+   * di-override eksplisit, resolveSignalParams menyalin nilai cermin hasil resolve (termasuk override-nya).
+   */
+  expiryBars: Object.freeze({ QUIET: 48, EARLY_BULLISH: 36, MOMENTUM_BUILDING: 24, BREAKOUT: 12, EARLY_BEARISH: 36, BREAKDOWN: 12 }),
+});
+
+/** State khusus SHORT → state LONG cerminnya, untuk expiryBars SHORT yang tidak di-override eksplisit. */
+const EXPIRY_MIRROR_STATE = Object.freeze({ EARLY_BEARISH: 'EARLY_BULLISH', BREAKDOWN: 'BREAKOUT' });
+
+/** Parameter turunan indikator untuk deriveMarketInputs (ATR, RVOL, swing high/low terkonfirmasi). */
 export const DEFAULT_MARKET_PARAMS = Object.freeze({ atrPeriod: 14, rvolPeriod: 20, swingLeft: 2, swingRight: 2 });
 
 const isPositive = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
@@ -52,7 +79,13 @@ export function resolveSignalParams(overrides = {}) {
   for (const key of Object.keys(expiryOverrides)) {
     if (!PATTERN_STATES.includes(key)) throw new TypeError(`expiryBars untuk state tidak dikenal: ${key}`);
   }
-  const p = { ...DEFAULT_SIGNAL_PARAMS, ...overrides, expiryBars: { ...DEFAULT_SIGNAL_PARAMS.expiryBars, ...expiryOverrides } };
+  const expiryBars = { ...DEFAULT_SIGNAL_PARAMS.expiryBars, ...expiryOverrides };
+  // Override expiry LONG (mis. backtest/sweep parameter) ikut berlaku untuk state SHORT cerminnya, agar kedua
+  // arah tetap kedaluwarsa dengan cara yang sama; kunci SHORT yang diberikan eksplisit tetap dihormati.
+  for (const [shortState, longState] of Object.entries(EXPIRY_MIRROR_STATE)) {
+    if (!Object.hasOwn(expiryOverrides, shortState)) expiryBars[shortState] = expiryBars[longState];
+  }
+  const p = { ...DEFAULT_SIGNAL_PARAMS, ...overrides, expiryBars };
 
   if (typeof p.earlyMinScore !== 'number' || !(p.earlyMinScore >= 0 && p.earlyMinScore <= 100)) {
     throw new RangeError('earlyMinScore harus 0..100');

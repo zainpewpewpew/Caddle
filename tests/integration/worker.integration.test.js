@@ -48,6 +48,11 @@ const at5m = (i) => T0 + i * M5;
 const range = (from, to) => Array.from({ length: to - from + 1 }, (_, k) => from + k);
 const seriesKey = (symbol, timeframe) => `${symbol}:${timeframe}`;
 const count = (db, table) => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+// Worker memindai LONG & SHORT (Short Scanner). Skenario di sini memverifikasi arah LONG terhadap acuan replay
+// `analyzeAt` (default LONG), jadi hitungan sinyal/event, riwayat, alert, dan snapshot dibatasi arah LONG.
+const longSignals = (db) => db.prepare("SELECT COUNT(*) AS n FROM signals WHERE direction = 'LONG'").get().n;
+const longSignalEvents = (db) => db.prepare(`SELECT COUNT(*) AS n FROM signal_events e
+  JOIN signals s ON s.id = e.signal_id WHERE s.direction = 'LONG'`).get().n;
 
 const flush = async () => {
   for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve));
@@ -123,7 +128,7 @@ function preHistory(symbol, bars) {
 }
 
 /**
- * Dataset SINTETIS: SYNUSDT = akumulasi senyap (SA), DWNUSDT = downtrend (tanpa sinyal); 5m + agregasi 15m/1h.
+ * Dataset SINTETIS: SYNUSDT = akumulasi senyap (SA), DWNUSDT = downtrend (tanpa sinyal LONG); 5m + agregasi 15m/1h.
  * `preBars` > 0 menambahkan histori sebelum T0 untuk SYNUSDT (konteks HTF dengan trend nyata).
  */
 function buildMarket({ preBars = 0 } = {}) {
@@ -473,7 +478,7 @@ async function createWorker({ timers, db, binance, settings, settleMs = 0, restS
       settles.push({ at: timers.clock(), ms });
       timers.setTimer(resolve, ms);
     }),
-    onAlert: (alert) => alerts.push(alert),
+    onAlert: (alert) => { if (alert.direction === 'LONG') alerts.push(alert); },
     onAnalysed: ({ result, ...series }) => analysed.push({ ...series, result }),
     onMonitoringStopped: (e) => stopped.push(e),
   });
@@ -559,7 +564,7 @@ function expectedHistory(symbol, steps, timeframe = '5m') {
     const n = last.next;
     const terminal = !OPEN_STATES.includes(n.state);
     return {
-      symbol, timeframe, classification: n.classification, state: n.state, patternKey: n.patternKey,
+      symbol, timeframe, direction: 'LONG', classification: n.classification, state: n.state, patternKey: n.patternKey,
       patternVersion: n.patternVersion, firstDetectedAt: n.firstDetectedAt, firstDetectedPrice: n.firstDetectedPrice,
       invalidationPrice: n.invalidationPrice, patternScore: n.patternScore, earlyScore: n.earlyScore, alignment: n.alignment,
       riskFlags: n.riskFlags, explanation: last.view.explanation, peakPrice: n.peakPrice, peakState: n.peakState,
@@ -599,7 +604,8 @@ const referenceSaves = (steps) => steps.filter((s) => s.saved).map((s) => ({
   candleTime: s.next.lastCandleTime, state: s.next.state, alignment: s.next.alignment, riskFlags: s.next.riskFlags,
   explanation: s.view.explanation,
 }));
-const savesOf = (saves, symbol, timeframe = '5m') => saves.filter((s) => s.symbol === symbol && s.timeframe === timeframe).map(savedView);
+const savesOf = (saves, symbol, timeframe = '5m') => saves
+  .filter((s) => s.symbol === symbol && s.timeframe === timeframe && (s.snapshot.direction ?? 'LONG') === 'LONG').map(savedView);
 // Kline final 15m/1h tiba 1 detik SETELAH kline 5m pada batas yang sama (urutan antar-stream tidak dijamin Binance).
 const htfLate = (c) => (c.timeframe === '5m' ? CLOSE_DELAY_MS : CLOSE_DELAY_MS + 1_000);
 
@@ -662,6 +668,11 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       state: {
         state: 'running', lastIngestionAt: START, candleLagMs: 7_001, reconnects: 0, errors: 0, scanDurationMs: 0, queue: 0,
         symbols: 2, streams: 6, staleStreams: 0, ws: 'open', gaps: 0, duplicates: 0, clockOffsetMs: 0, clockFault: null,
+        // Progres sync siklus start: 6 seri di-backfill, candle tersimpan = candles recordRun; bootstrap tidak dianalisis.
+        sync: expect.objectContaining({
+          step: 'live', cycle: 'initial', streamsTotal: 6, streamsDone: 6, streamsFailed: 0, candlesStored: 136,
+          symbolsDiscovered: 2, lastCandleAt: START - 7_001, lastAnalysisAt: null,
+        }),
       },
     });
 
@@ -681,7 +692,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     // Bootstrap = histori murni: tidak dianalisis; definisi pola sudah terdaftar.
     expect(analysed).toEqual([]);
     expect(count(db, 'signals')).toBe(0);
-    expect(count(db, 'pattern_definitions')).toBe(2);
+    expect(count(db, 'pattern_definitions')).toBe(4); // SA & PVA (LONG) + SD & PVD (SHORT)
     expect(await rest.getServerTime()).toBe(START);
     expect(problems(logs)).toEqual([]);
   });
@@ -725,7 +736,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const reference = referenceReplay(SA, LIQ_SA);
     const expected = expectedHistory(SA, reference);
     assertReferenceShape(expected);
-    const history = await repos.signals.history({ symbol: SA, limit: 10 });
+    const history = await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' });
     expect(withoutIds(history)).toEqual(expected);
     const [signal] = history;
     expect(signal.riskFlags).toEqual([]); // likuiditas baik → tanpa flag
@@ -733,8 +744,8 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       expect.objectContaining({ factor: 'PATTERN:SELECTION' }),
       expect.objectContaining({ factor: 'CONTEXT:LIQUIDITY', detail: expect.stringContaining('Quote volume 24 jam 900000000') }),
     ]));
-    expect(await repos.signals.history({ symbol: DOWN, limit: 10 })).toEqual([]);
-    expect(count(db, 'signals')).toBe(1); // tidak ada sinyal di 15m/1h (data kurang dari warm-up)
+    expect(await repos.signals.history({ symbol: DOWN, limit: 10, direction: 'LONG' })).toEqual([]);
+    expect(longSignals(db)).toBe(1); // tidak ada sinyal LONG di 15m/1h (data kurang dari warm-up)
 
     // Alert: satu per transisi alert, pada candle yang sama dengan replay.
     expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
@@ -782,15 +793,15 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const reference = referenceReplay(SA, LIQ_SA);
     const expected = expectedHistory(SA, reference);
     assertReferenceShape(expected);
-    const history = await repos.signals.history({ symbol: SA, limit: 10 });
+    const history = await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' });
     expect(withoutIds(history)).toEqual(expected);
     const times = history[0].events.map((e) => e.candleTime);
     expect(times).toEqual([...times].sort((a, b) => a - b));
     expect(new Set(times).size).toBe(times.length);
     expect(times[0]).toBeGreaterThanOrEqual(at5m(60));
     expect(times[0]).toBeLessThan(at5m(64));
-    expect(count(db, 'signals')).toBe(1);
-    expect(count(db, 'signal_events')).toBe(expected[0].events.length);
+    expect(longSignals(db)).toBe(1);
+    expect(longSignalEvents(db)).toBe(expected[0].events.length);
 
     // Transisi historis di dalam replay disimpan tanpa alert; hanya candle terbaru per batch yang boleh alert.
     expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).filter((a) => a.index < 60 || a.index > 63).map(dropIndex));
@@ -847,7 +858,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const reference = referenceReplay(SA, liquidity);
     const expected = expectedHistory(SA, reference);
     assertReferenceShape(expected);
-    const history = await repos.signals.history({ symbol: SA, limit: 10 });
+    const history = await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' });
     expect(withoutIds(history)).toEqual(expected);
     const [signal] = history;
     expect(signal.riskFlags).toEqual(['POOR_LIQUIDITY', 'WIDE_SPREAD']);
@@ -879,7 +890,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const expected = expectedHistory(SA, reference);
     assertReferenceShape(expected);
     expect(expectedHistory(SA, referenceReplay(SA, liquidity))[0].riskFlags).toEqual(['POOR_LIQUIDITY', 'WIDE_SPREAD']);
-    const history = await repos.signals.history({ symbol: SA, limit: 10 });
+    const history = await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' });
     expect(withoutIds(history)).toEqual(expected);
     const [signal] = history;
     expect(signal.riskFlags).toEqual(['POOR_LIQUIDITY']);
@@ -903,7 +914,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     binance.listing.get(DOWN).status = 'SETTLING';
     await driver.runUntil(START + H1 + 1_000);
     expect(symbolRow(DOWN)).toEqual({ status: 'SETTLING', is_monitored: 0, monitored_since: null, delisted_at: START + H1 });
-    // Pelepasan pantauan dilaporkan sekali (penutupan sinyal terbuka: lihat INT-WRK-016; DWNUSDT tanpa sinyal).
+    // Pelepasan pantauan dilaporkan sekali (penutupan sinyal terbuka: lihat INT-WRK-016; DWNUSDT tanpa sinyal LONG).
     expect(stopped).toEqual([{ symbol: DOWN, timeframes: null, reason: 'SYMBOL_DELISTED', at: START + H1 }]);
     expect(symbolRow(SA)).toMatchObject({ is_monitored: 1, monitored_since: START, delisted_at: null });
     expect(await repos.symbols.listMonitored()).toEqual([SA]);
@@ -949,8 +960,8 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       .toEqual([{ symbols: 2, candles: 136 }, { symbols: 1, candles: 0 }, { symbols: 2, candles: 17 }]);
 
     // Sinyal simbol lain tidak terganggu oleh pergantian stream.
-    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, referenceReplay(SA, LIQ_SA)));
-    expect(await repos.signals.history({ symbol: DOWN, limit: 10 })).toEqual([]);
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }))).toEqual(expectedHistory(SA, referenceReplay(SA, LIQ_SA)));
+    expect(await repos.signals.history({ symbol: DOWN, limit: 10, direction: 'LONG' })).toEqual([]);
     expect(stopped).toHaveLength(1); // listing ulang tidak melaporkan pelepasan
     expect(problems(logs)).toEqual(['simbol delisted, stream dihentikan', 'galat scanner']);
   });
@@ -961,7 +972,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     await scanner.start();
     const delistAt = START + 4 * REDISCOVERY; // = candle 64 + 7 dtk; candle 63 sudah tertutup & dianalisis
     await driver.runUntil(delistAt - 1_000);
-    const [opened] = await repos.signals.history({ symbol: SA, limit: 10 });
+    const [opened] = await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' });
     expect(opened).toMatchObject({ state: 'EARLY_BULLISH', closedAt: null });
     expect((await repos.signals.listActive()).map((s) => s.symbol)).toEqual([SA]);
     const alertsBefore = alerts.length;
@@ -977,7 +988,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const first = expectedHistory(SA, referenceReplay(SA, LIQ_SA, { to: 63 }));
     expect(first).toHaveLength(1);
     const last63 = MARKET.get(seriesKey(SA, '5m'))[63];
-    const [closed] = withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }));
+    const [closed] = withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }));
     expect(closed).toEqual({
       ...first[0], state: 'EXPIRED', finalOutcome: 'EXPIRED:EARLY_BULLISH', updatedAt: delistAt, closedAt: delistAt,
       events: [...first[0].events, {
@@ -1002,9 +1013,9 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const expectedSecond = expectedHistory(SA, second);
     expect(expectedSecond).toHaveLength(1);
     expect(expectedSecond[0].events[0]).toMatchObject({ fromState: 'NO_PATTERN', candleTime: at5m(66) });
-    const history = withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }));
+    const history = withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }));
     expect(history).toEqual([...expectedSecond, closed]);
-    expect(count(db, 'signals')).toBe(2);
+    expect(longSignals(db)).toBe(2);
     expect((await repos.signals.listActive()).map((s) => s.firstDetectedAt)).toEqual([at5m(67) - 1]);
     // Alert sinyal baru hanya untuk candle terbaru per batch (candle 64..67 di-replay tanpa alert).
     expect(alerts.slice(alertsBefore).map(alertView)).toEqual(referenceAlerts(SA, second).filter((a) => a.index >= 68).map(dropIndex));
@@ -1047,7 +1058,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
 
     await driver.runUntil(END); // percobaan ulang discovery 60 dtk kemudian berhasil
     const reference = referenceReplay(SA, LIQ_SA);
-    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }))).toEqual(expectedHistory(SA, reference));
     expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
     expect(stopped).toEqual([]);
     expect((await repos.ingestion.getStatus()).recentErrors).toHaveLength(1);
@@ -1070,7 +1081,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     await driver.runUntil(delistAt + 1_000);
     expect(stopped).toEqual([{ symbol: SA, timeframes: null, reason: 'SYMBOL_DELISTED', at: delistAt }]);
     expect(await repos.signals.listActive()).toEqual([]);
-    const [closed] = await repos.signals.history({ symbol: SA, limit: 10 });
+    const [closed] = await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' });
     expect(closed).toMatchObject({ state: 'EXPIRED', closedAt: delistAt });
     expect(closed.events.at(-1)).toMatchObject({ toState: 'EXPIRED', occurredAt: delistAt, detail: expect.objectContaining({ reason: 'SYMBOL_DELISTED' }) });
     expect(await repos.symbols.listMonitored()).toEqual([]);
@@ -1115,7 +1126,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       { symbol: SA, timeframes: null, reason: 'SYMBOL_DELISTED', at: delistAt + REDISCOVERY },
     ]);
     expect(await repos.signals.listActive()).toEqual([]);
-    const [closed] = await repos.signals.history({ symbol: SA, limit: 10 });
+    const [closed] = await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' });
     expect(closed).toMatchObject({ state: 'EXPIRED', finalOutcome: 'EXPIRED:EARLY_BULLISH', closedAt: delistAt + REDISCOVERY });
     expect(closed.events.at(-1)).toMatchObject({ toState: 'EXPIRED', candleTime: at5m(63), detail: { reason: 'SYMBOL_DELISTED' } });
     expect(alerts.length).toBe(alertsBefore);
@@ -1142,7 +1153,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     await b.scanner.start();
     expect(b.stopped).toEqual([{ symbol: SA, timeframes: null, reason: 'SYMBOL_DELISTED', at: restartAt }]);
     expect(await b.repos.signals.listActive()).toEqual([]);
-    const [closed] = await b.repos.signals.history({ symbol: SA, limit: 10 });
+    const [closed] = await b.repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' });
     expect(closed).toMatchObject({ state: 'EXPIRED', closedAt: restartAt });
     expect(closed.events.at(-1).detail.reason).toBe('SYMBOL_DELISTED');
     expect(b.scanner.status()).toMatchObject({ symbols: 1, streams: 3 });
@@ -1154,7 +1165,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const { timers, db, binance } = ctx;
     await ctx.scanner.start();
     await ctx.driver.runUntil(at5m(65) + 1_000); // candle 64 sudah tertutup & dianalisis
-    const [opened] = await ctx.repos.signals.history({ symbol: SA, limit: 10 });
+    const [opened] = await ctx.repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' });
     expect(opened.events).toHaveLength(1);
     await ctx.scanner.stop();
 
@@ -1189,9 +1200,9 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const reference = referenceReplay(SA, LIQ_SA);
     const expected = expectedHistory(SA, reference);
     assertReferenceShape(expected);
-    expect(withoutIds(await b.repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expected);
-    expect(count(db, 'signals')).toBe(1);
-    expect(count(db, 'signal_events')).toBe(expected[0].events.length);
+    expect(withoutIds(await b.repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }))).toEqual(expected);
+    expect(longSignals(db)).toBe(1);
+    expect(longSignalEvents(db)).toBe(expected[0].events.length);
 
     // Alert hanya untuk candle terbaru: transisi yang terjadi selama worker mati di-replay dan disimpan tanpa alert.
     const refAlerts = referenceAlerts(SA, reference);
@@ -1216,7 +1227,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(await storedSeries(repos, SA, '5m')).toEqual(expectedSeries(SA, '5m', [[0, BOOT - 1, 'rest'], [BOOT, LAST, 'ws']]));
 
     const reference = referenceReplay(SA, LIQ_SA);
-    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }))).toEqual(expectedHistory(SA, reference));
     expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
     expect(scanner.status()).toMatchObject({ gaps: 0, errors: 0 });
     expect(problems(logs)).toEqual([]);
@@ -1247,7 +1258,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     ]));
 
     const reference = referenceReplay(SA, LIQ_SA);
-    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }))).toEqual(expectedHistory(SA, reference));
     // Candle deteksi (62) adalah candle terbaru di batch → alert tetap terkirim.
     expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
     expect(scanner.status()).toMatchObject({ gaps: 1, errors: 1 });
@@ -1281,7 +1292,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     }
 
     const reference = referenceReplay(SA, LIQ_SA);
-    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }))).toEqual(expectedHistory(SA, reference));
     expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
     expect(scanner.status()).toMatchObject({ gaps: 0, errors: 0, clockOffsetMs: SKEW, state: 'running' });
     expect((await repos.ingestion.getStatus()).heartbeat.state.clockOffsetMs).toBe(SKEW);
@@ -1490,7 +1501,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const expected15 = expectedHistory(SA, reference15, '15m');
     expect(expected15.length).toBeGreaterThan(0);
 
-    const history = withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }));
+    const history = withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }));
     expect(history.filter((s) => s.timeframe === '5m')).toEqual(expected);
     expect(history.filter((s) => s.timeframe === '15m')).toEqual(expected15);
     expect(history.filter((s) => s.timeframe === '1h')).toEqual([]); // 1h masih di bawah warm-up pola
@@ -1517,7 +1528,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     const reference = referenceReplay(SA, LIQ_SA, { market: LONG_MARKET });
     expect(new Set(referenceSaves(reference).map((s) => s.alignment)).size).toBeGreaterThan(1);
     expect(savesOf(saves, SA)).toEqual(referenceSaves(reference));
-    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }))).toEqual(expectedHistory(SA, reference));
     expect(new Set(analysed.map((a) => a.timeframe))).toEqual(new Set(['5m']));
     expect(saves.filter((s) => s.timeframe !== '5m')).toEqual([]);
     // HTF tersimpan tepat waktu → settle hanya sekali per batas 15m per simbol, sama seperti semua timeframe dipilih.
@@ -1567,7 +1578,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     expect(await storedSeries(repos, SA, '5m')).toEqual(expect.arrayContaining(expectedSeries(SA, '5m', [[60, 63, 'rest']])));
 
     const reference = referenceReplay(SA, LIQ_SA);
-    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }))).toEqual(expectedHistory(SA, reference));
     const latest = new Set(series.map((a) => a.candles.at(-1).openTime));
     expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).filter((a) => latest.has(a.candleTime)).map(dropIndex));
 
@@ -1622,7 +1633,7 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
       [0, BOOT - 1, 'rest'], [BOOT, 59, 'ws'], [60, 60, 'rest'], [61, LAST, 'ws'],
     ]));
     const reference = referenceReplay(SA, LIQ_SA);
-    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10 }))).toEqual(expectedHistory(SA, reference));
+    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }))).toEqual(expectedHistory(SA, reference));
     expect(alerts.map(alertView)).toEqual(referenceAlerts(SA, reference).map(dropIndex));
     expect(scanner.status()).toMatchObject({ gaps: 2, errors: 1, state: 'running' });
     expect(problems(logs)).toEqual([...Array.from({ length: 3 }, () => 'Request Binance gagal, diulang'), 'galat scanner']);
