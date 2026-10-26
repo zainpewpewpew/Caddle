@@ -18,11 +18,11 @@
 import { PATTERN_VERSION } from './conditions.js';
 
 /**
- * Versi metodologi pola SHORT (SD & PVD). v1 = cermin SA/PVA PATTERN_VERSION 2. Karena SD/PVD
+ * Versi metodologi pola SHORT (SD & PVD). v1 = cermin SA/PVA PATTERN_VERSION 2; v2 = cermin PATTERN_VERSION 3. Karena SD/PVD
  * menjalankan detektor SA/PVA, setiap kenaikan PATTERN_VERSION WAJIB ikut menaikkan versi ini
  * (definisi tersimpan memuat `mirrorOf`, sehingga lupa menaikkan → DEFINITION_CONFLICT saat start).
  */
-export const SHORT_PATTERN_VERSION = 1;
+export const SHORT_PATTERN_VERSION = 2;
 
 /** Versi pola LONG yang dicerminkan oleh SHORT_PATTERN_VERSION saat ini. */
 export const MIRRORED_LONG_VERSION = PATTERN_VERSION;

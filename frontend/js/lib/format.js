@@ -58,16 +58,23 @@ export function formatDuration(seconds) {
 
 const pad = (n) => String(n).padStart(2, '0');
 
-/** Waktu UTC kanonik, contoh 2026-10-25 13:05:00 UTC. */
-export function formatUtc(ms) {
+/**
+ * Zona waktu tampilan: WIB (Asia/Jakarta, UTC+7, tanpa daylight saving) — sama dengan jam yang dilihat pengguna di
+ * aplikasi/situs Binance di Indonesia. Data & API tetap epoch ms UTC; hanya tampilan yang digeser.
+ */
+export const DISPLAY_TZ_OFFSET_MS = 7 * 3_600_000;
+export const DISPLAY_TZ_LABEL = 'WIB';
+
+/** Waktu tampilan kanonik (WIB), contoh 2026-10-25 20:05:00 WIB untuk 13:05:00 UTC. */
+export function formatTime(ms) {
   if (!isNum(ms)) return EMPTY;
-  const d = new Date(ms);
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
+  const d = new Date(ms + DISPLAY_TZ_OFFSET_MS);
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} ${DISPLAY_TZ_LABEL}`;
 }
 
-export function formatClockUtc(ms) {
-  const d = new Date(ms);
-  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
+export function formatClock(ms) {
+  const d = new Date(ms + DISPLAY_TZ_OFFSET_MS);
+  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} ${DISPLAY_TZ_LABEL}`;
 }
 
 export function formatRelative(ms, now = Date.now()) {

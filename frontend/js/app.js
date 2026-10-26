@@ -1,7 +1,7 @@
 import { ApiError, api, setCsrfToken } from './lib/api.js';
 import { toast } from './lib/components.js';
 import { h, icon } from './lib/dom.js';
-import { formatClockUtc } from './lib/format.js';
+import { formatClock } from './lib/format.js';
 import { createRouter } from './lib/router.js';
 import { backtestView } from './views/backtest.js';
 import { designSystemView } from './views/designSystem.js';
@@ -278,7 +278,7 @@ async function show(route) {
 
 function startClock() {
   const el = document.getElementById('clock');
-  const tick = () => { el.textContent = formatClockUtc(Date.now()); };
+  const tick = () => { el.textContent = formatClock(Date.now()); };
   tick();
   setInterval(tick, 1000);
 }

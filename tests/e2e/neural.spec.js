@@ -86,7 +86,7 @@ test('E2E-NEU-003 data seeded: halaman utama (termasuk grafik Symbol) tanpa erro
   await signIn(page, { base: SEEDED });
   for (const route of ROUTES) await gotoRoute(page, SEEDED, route);
   // Symbol Intelligence dengan simbol nyata dari database seeded → grafik lightweight-charts benar-benar dipasang.
-  await page.goto(`${SEEDED}/#/symbol?s=SYNUSDT&tf=5m&dir=LONG`);
+  await page.goto(`${SEEDED}/#/symbol?s=SYNUSDT&tf=15m&dir=LONG`);
   await expect(page.locator('.page h1')).toBeVisible();
   await expect(page.getByText('SYNUSDT').first()).toBeVisible();
   // Grafik benar-benar dirender (lightweight-charts menyisipkan kanvas) — tempat peringatan CSP inline style bisa muncul.

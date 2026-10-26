@@ -24,6 +24,21 @@ export const HIGHER_TIMEFRAMES = Object.freeze({
 export const DIRECTIONS = Object.freeze(['LONG', 'SHORT']);
 export const DEFAULT_DIRECTION = 'LONG';
 
+/**
+ * Timeframe yang dipindai per arah (keputusan pengguna 2026-10-26): LONG Scanner hanya 15m (konteks HTF 1h),
+ * SHORT Scanner hanya 1h (tanpa HTF di sistem). Worker live hanya mengevaluasi arah pada timeframe-nya, API
+ * daftar sinyal per arah hanya mengembalikan timeframe ini, dan UI menampilkan timeframe tetap.
+ */
+export const DIRECTION_TIMEFRAMES = Object.freeze({
+  LONG: Object.freeze(['15m']),
+  SHORT: Object.freeze(['1h']),
+});
+
+/** Timeframe yang dianalisis untuk daftar arah (gabungan DIRECTION_TIMEFRAMES, urut TIMEFRAMES). */
+export function scannedTimeframes(directions = DIRECTIONS) {
+  return TIMEFRAMES.filter((tf) => directions.some((d) => DIRECTION_TIMEFRAMES[d]?.includes(tf)));
+}
+
 /** Kunci pola LONG (nama lama dipertahankan untuk kompatibilitas). */
 export const PATTERN_KEYS = Object.freeze(['SA', 'PVA']);
 /** Kunci pola SHORT: Silent Distribution (#003) & Progressive Volume Distribution (#004). */

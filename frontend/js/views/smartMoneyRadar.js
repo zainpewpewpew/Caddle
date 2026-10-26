@@ -9,7 +9,7 @@
 import { api } from '../lib/api.js';
 import { badge, dataTable, emptyState, page, panel, segmented, selectField, toggle } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
-import { formatRelative, formatUtc } from '../lib/format.js';
+import { formatRelative, formatTime } from '../lib/format.js';
 import { hashQuery } from '../lib/router.js';
 import {
   addressLink, binanceBadge, chainBadge, componentBars, disclaimerBox, externalLink, labelChips, loadable, meter,
@@ -87,7 +87,7 @@ function buyersTable(item) {
       { key: 'buys', label: 'Beli/Jual', numeric: true, render: (b) => `${b.buys ?? 0} / ${b.sells ?? 0}` },
       {
         key: 'txs', label: 'Transaksi', sortable: false, render: (b) => h('ul', { class: 'sm-txs' }, (b.txs ?? []).slice(0, 8).map((t) => h('li', null,
-          typeBadge(t.type), ' ', usdText(t.usd), ' ', h('span', { class: 'muted', title: formatUtc(t.at) }, formatRelative(t.at)), ' ',
+          typeBadge(t.type), ' ', usdText(t.usd), ' ', h('span', { class: 'muted', title: formatTime(t.at) }, formatRelative(t.at)), ' ',
           txLink(t.explorerUrl ?? explorerTxUrl(item.chain, t.txHash), t.txHash), simBadge(t.isSimulated)))),
       },
     ],
@@ -146,7 +146,7 @@ function radarCard(item, meta, index) {
           { label: `Kontrak ${sym} ${contract} di explorer (tab baru)` }),
         item.isSimulated ? badge('SIMULASI', 'warn') : null),
       h('div', { class: 'cluster' }, stateBadge(item.state),
-        h('span', { class: 'muted sm-card__time', title: formatUtc(item.lastActivityAt) }, `aktivitas ${formatRelative(item.lastActivityAt)}`))),
+        h('span', { class: 'muted sm-card__time', title: formatTime(item.lastActivityAt) }, `aktivitas ${formatRelative(item.lastActivityAt)}`))),
     h('div', { class: 'sm-card__body' },
       meter(item.conviction, { label: 'Skor keyakinan (bukan probabilitas)' }),
       h('dl', { class: 'sm-facts' },
@@ -178,11 +178,11 @@ export function evaluationContent(data) {
       text: 'Skor keyakinan radar belum diuji pada data historis di server ini. Setelah data tersinkron cukup lama (± 45 hari), admin dapat menjalankan `npm run smart-money:evaluate`; laporannya tampil di sini. Sampai saat itu perlakukan skor keyakinan sebagai ringkasan bukti — bukan peluang profit.',
     });
   }
-  const range = ev.start !== null && ev.end !== null ? `${formatUtc(ev.start)} → ${formatUtc(ev.end)}` : EMPTY;
+  const range = ev.start !== null && ev.end !== null ? `${formatTime(ev.start)} → ${formatTime(ev.end)}` : EMPTY;
   return h('div', { class: 'stack sm-eval', 'data-testid': 'sm-evaluation' },
     h('p', { class: 'cluster sm-eval__meta' },
       simBadge(ev.simulated),
-      h('span', null, `Dihitung ${ev.computedAt ? formatUtc(ev.computedAt) : EMPTY}`),
+      h('span', null, `Dihitung ${ev.computedAt ? formatTime(ev.computedAt) : EMPTY}`),
       h('span', { class: 'muted' }, `rentang ${range} · ${ev.steps ?? EMPTY} titik setiap ${ev.stepLabel} · jendela radar ${ev.windowLabel}`),
       h('span', { class: 'muted' }, `syarat sinyal ≥ ${ev.minIndependentBuyers ?? EMPTY} pembeli independen · ${ev.signals} sinyal dari ${ev.candidates} kandidat`)),
     dataTable({
@@ -312,7 +312,7 @@ export async function smartMoneyView(ctx) {
         });
       }
       return [
-        data.computedAt ? h('p', { class: 'muted sm-computed' }, `Dihitung ${formatRelative(data.computedAt, now)} · ${formatUtc(data.computedAt)} · jendela ${data.window ?? EMPTY}`) : null,
+        data.computedAt ? h('p', { class: 'muted sm-computed' }, `Dihitung ${formatRelative(data.computedAt, now)} · ${formatTime(data.computedAt)} · jendela ${data.window ?? EMPTY}`) : null,
         ...results.show({
           items,
           meta: data.meta,

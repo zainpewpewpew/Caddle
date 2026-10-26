@@ -11,7 +11,7 @@
 // - EMA7/EMA25 dihitung di klien dengan rumus yang sama dengan backend/indicators/ema.js.
 // - Tidak ada data contoh: tanpa candle, grafik kosong dan pemanggil menampilkan empty state.
 import { h } from './dom.js';
-import { formatCompact, formatPrice, formatUtc } from './format.js';
+import { DISPLAY_TZ_OFFSET_MS, formatCompact, formatPrice, formatTime } from './format.js';
 
 export const CHART_VENDOR_SRC = '/vendor/lightweight-charts.js';
 export const EMA_PERIODS = Object.freeze([7, 25]);
@@ -41,7 +41,9 @@ const MARKER_STYLES = Object.freeze({
 });
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
-const toTime = (ms) => Math.floor(ms / 1000);
+// Lightweight Charts menampilkan `time` apa adanya sebagai UTC. Waktu digeser ke WIB (DISPLAY_TZ_OFFSET_MS) agar sumbu
+// waktu & crosshair sama dengan tabel dan dengan grafik Binance pengguna; pemetaan balik memakai peta byTime yang sama.
+const toTime = (ms) => Math.floor((ms + DISPLAY_TZ_OFFSET_MS) / 1000);
 
 let libraryPromise = null;
 
@@ -300,11 +302,11 @@ export async function createCandleChart(container, { candles = [], timeframe, sy
       return;
     }
     canvasHost.setAttribute('aria-label',
-      `Grafik candlestick ${name}, ${data.length} candle tertutup, close terakhir ${formatPrice(last.close)} (${formatUtc(last.openTime)})`);
+      `Grafik candlestick ${name}, ${data.length} candle tertutup, close terakhir ${formatPrice(last.close)} (${formatTime(last.openTime)})`);
     const levelText = levelList.length
       ? `Level: ${levelList.map((l) => `${l.label} ${formatPrice(l.price)}`).join('; ')}.`
       : 'Tidak ada level sinyal.';
-    summary.textContent = `Candle tertutup terakhir dibuka ${formatUtc(last.openTime)}: open ${formatPrice(last.open)}, `
+    summary.textContent = `Candle tertutup terakhir dibuka ${formatTime(last.openTime)}: open ${formatPrice(last.open)}, `
       + `high ${formatPrice(last.high)}, low ${formatPrice(last.low)}, close ${formatPrice(last.close)}, volume ${formatCompact(last.volume)}. `
       + `EMA7 ${formatPrice(emaLast(emaValues[0]))}, EMA25 ${formatPrice(emaLast(emaValues[1]))}. ${levelText}`;
   }

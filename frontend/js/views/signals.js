@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { dataTable, emptyState, page, panel } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { formatPercent, formatPrice, formatUtc } from '../lib/format.js';
+import { formatPercent, formatPrice, formatTime } from '../lib/format.js';
 import { directionBadge, directionOf, patternBadge, signalStage } from './signalFormat.js';
 
 const firstEventAt = (signal, states) => signal.events.find((e) => states.includes(e.toState))?.occurredAt ?? null;
@@ -42,16 +42,16 @@ export async function signalsView() {
     caption: 'Riwayat sinyal',
     initialSort: { key: 'firstDetectedAt', dir: 'desc' },
     columns: [
-      { key: 'firstDetectedAt', label: 'Deteksi pertama', render: (r) => formatUtc(r.firstDetectedAt) },
+      { key: 'firstDetectedAt', label: 'Deteksi pertama', render: (r) => formatTime(r.firstDetectedAt) },
       { key: 'symbol', label: 'Symbol', render: (r) => h('span', { class: 'mono' }, r.symbol) },
       { key: 'direction', label: 'Arah', render: (r) => directionBadge(r.direction) },
       { key: 'classification', label: 'Pola', render: (r) => patternBadge(r.classification, r.direction) },
       { key: 'timeframe', label: 'TF', render: (r) => h('span', { class: 'mono' }, r.timeframe) },
       { key: 'firstDetectedPrice', label: 'Harga deteksi', numeric: true, render: (r) => formatPrice(r.firstDetectedPrice) },
       { key: 'state', label: 'Tahap terakhir', render: (r) => signalStage(r.state, r.direction) },
-      { key: 'confirmedAt', label: 'Breakout/Breakdown', render: (r) => formatUtc(r.confirmedAt) },
-      { key: 'invalidatedAt', label: 'Invalidasi', render: (r) => formatUtc(r.invalidatedAt) },
-      { key: 'expiredAt', label: 'Kedaluwarsa', render: (r) => formatUtc(r.expiredAt) },
+      { key: 'confirmedAt', label: 'Breakout/Breakdown', render: (r) => formatTime(r.confirmedAt) },
+      { key: 'invalidatedAt', label: 'Invalidasi', render: (r) => formatTime(r.invalidatedAt) },
+      { key: 'expiredAt', label: 'Kedaluwarsa', render: (r) => formatTime(r.expiredAt) },
       { key: 'move', label: 'Pergerakan', numeric: true, render: (r) => h('span', { class: 'signal-move', 'data-direction': r.direction }, formatPercent(r.move)) },
     ],
     rows,

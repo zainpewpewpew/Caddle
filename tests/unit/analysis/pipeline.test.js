@@ -192,7 +192,7 @@ describe('analyzeAt (murni)', () => {
 
   it('UNIT-PIPE-004 definisi pola berversi memuat parameter efektif & kondisi', () => {
     const defs = patternDefinitions();
-    expect(defs.map((d) => [d.key, d.version])).toEqual([['SA', 2], ['PVA', 2]]);
+    expect(defs.map((d) => [d.key, d.version])).toEqual([['SA', 3], ['PVA', 3]]);
     expect(defs[0].definition.params.minScore).toBe(85);
     expect(defs[0].definition.requiredCandles).toBe(63);
     expect(defs[1].definition.conditions.some((c) => c.id === 'noSpikeDominance')).toBe(true);
@@ -569,5 +569,66 @@ describe('createAnalysisPipeline (SQLite)', () => {
       { factor: 'CONTEXT:LIQUIDITY', contribution: 0, detail: 'Quote volume 24 jam 2500000 (batas 5000000), spread 40 bps (batas 50)' },
     ]));
     expect(user.alerts[0].view.riskFlags).not.toContain('WIDE_SPREAD');
+  });
+});
+
+describe('timeframe tetap per arah (LONG 15m, SHORT 1h)', () => {
+  const FIXED = Object.freeze({ LONG: ['15m'], SHORT: ['1h'] });
+
+  it('UNIT-PIPE-TF-001 DIRECTION_TIMEFRAMES = LONG 15m, SHORT 1h; scannedTimeframes → [15m, 1h]', async () => {
+    const { DIRECTION_TIMEFRAMES, scannedTimeframes } = await import('../../../backend/market/contracts.js');
+    expect(DIRECTION_TIMEFRAMES).toEqual({ LONG: ['15m'], SHORT: ['1h'] });
+    expect(scannedTimeframes()).toEqual(['15m', '1h']);
+    expect(scannedTimeframes(['LONG'])).toEqual(['15m']);
+    expect(scannedTimeframes(['SHORT'])).toEqual(['1h']);
+  });
+
+  it('UNIT-PIPE-TF-002 seri 5m tidak dievaluasi arah mana pun (NO_DIRECTION), tanpa sinyal & tanpa kursor', async () => {
+    const ctx = await setup();
+    const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, directions: ['LONG', 'SHORT'], directionTimeframes: FIXED, params: MECHANICS });
+    const all = silentAccumulationCandles(1);
+    let last;
+    for (let k = 1; k <= all.length; k += 1) last = await feed({ ...ctx, pipeline }, all, k);
+    expect(last.skipped).toBe('NO_DIRECTION');
+    expect(count(ctx.db, 'signals')).toBe(0);
+    expect(await ctx.signals.lastEvaluatedCandleTime({ symbol: SYMBOL, timeframe: '5m' })).toBeNull();
+  });
+
+  it('UNIT-PIPE-TF-003 seri 1h hanya dievaluasi SHORT (LONG tidak), seri 15m hanya LONG', async () => {
+    const ctx = await setup();
+    const pipeline = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, directions: ['LONG', 'SHORT'], directionTimeframes: FIXED });
+    const h1 = aggregate(silentAccumulationCandles(1), '1h');
+    const m15 = aggregate(silentAccumulationCandles(1), '15m');
+    await ctx.repos.candles.upsertClosed([...h1, ...m15], { now: NOW });
+    const r1h = await pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '1h' });
+    expect(Object.keys(r1h.directions)).toEqual(['SHORT']);
+    expect(await ctx.signals.lastEvaluatedCandleTime({ symbol: SYMBOL, timeframe: '1h', direction: 'LONG' })).toBeNull();
+    const r15 = await pipeline.onClosedCandles({ symbol: SYMBOL, timeframe: '15m' });
+    expect(Object.keys(r15.directions)).toEqual(['LONG']);
+    expect(await ctx.signals.lastEvaluatedCandleTime({ symbol: SYMBOL, timeframe: '15m', direction: 'SHORT' })).toBeNull();
+  });
+
+  it('UNIT-PIPE-TF-004 sinyal LONG 5m terbuka dari versi lama → ditutup EXPIRED (MONITORING_STOPPED) saat seri dievaluasi ulang', async () => {
+    const ctx = await setup();
+    const legacy = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, params: MECHANICS });
+    const all = silentAccumulationCandles(1);
+    for (let k = 1; k <= 63; k += 1) await feed({ ...ctx, pipeline: legacy }, all, k);
+    expect(await ctx.signals.getOpen({ symbol: SYMBOL, timeframe: '5m' })).not.toBeNull();
+
+    const fixed = createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, directions: ['LONG', 'SHORT'], directionTimeframes: FIXED, params: MECHANICS });
+    const r = await feed({ ...ctx, pipeline: fixed }, all, 64);
+    expect(r.skipped).toBe('NO_DIRECTION');
+    expect(await ctx.signals.getOpen({ symbol: SYMBOL, timeframe: '5m' })).toBeNull();
+    const [signal] = await ctx.signals.history({ symbol: SYMBOL, limit: 5 });
+    expect(signal.state).toBe('EXPIRED');
+    const detail = JSON.parse(ctx.db.prepare('SELECT detail_json FROM signal_events ORDER BY id DESC LIMIT 1').get().detail_json);
+    expect(detail.reason).toBe('MONITORING_STOPPED');
+  });
+
+  it('NEG-PIPE-TF-001 directionTimeframes tidak valid ditolak', async () => {
+    const ctx = await setup();
+    expect(() => createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, directionTimeframes: { LONG: ['4h'] } })).toThrow(RangeError);
+    expect(() => createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, directionTimeframes: { LONG: [] } })).toThrow(RangeError);
+    expect(() => createAnalysisPipeline({ repos: ctx.repos, signals: ctx.signals, directionTimeframes: [] })).toThrow(TypeError);
   });
 });

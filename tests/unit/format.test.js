@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY, formatBytes, formatDuration, formatPrice, formatRelative, formatUtc } from '../../frontend/js/lib/format.js';
+import { EMPTY, formatBytes, formatDuration, formatPrice, formatRelative, formatClock, formatTime } from '../../frontend/js/lib/format.js';
 
 describe('format data finansial', () => {
-  it('UNIT-FMT-001 waktu UTC kanonik', () => {
-    expect(formatUtc(Date.UTC(2026, 9, 25, 13, 5, 9))).toBe('2026-10-25 13:05:09 UTC');
+  it('UNIT-FMT-001 waktu tampilan WIB (UTC+7), termasuk lintas tanggal', () => {
+    expect(formatTime(Date.UTC(2026, 9, 25, 13, 5, 9))).toBe('2026-10-25 20:05:09 WIB');
+    expect(formatTime(Date.UTC(2026, 9, 25, 18, 0, 0))).toBe('2026-10-26 01:00:00 WIB');
+    expect(formatClock(Date.UTC(2026, 9, 25, 23, 59, 1))).toBe('06:59:01 WIB');
   });
 
   it('EDGE-FMT-001 nilai non-finite ditampilkan sebagai tanda kosong, bukan angka palsu', () => {
     for (const v of [null, undefined, Number.NaN, Number.POSITIVE_INFINITY, '12']) {
       expect(formatPrice(v)).toBe(EMPTY);
-      expect(formatUtc(v)).toBe(EMPTY);
+      expect(formatTime(v)).toBe(EMPTY);
     }
   });
 

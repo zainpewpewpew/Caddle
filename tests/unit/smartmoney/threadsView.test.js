@@ -124,7 +124,7 @@ describe('Peta Benang — renderer', () => {
     expect(t).toContain('+$5.000');
     expect(t).toContain('Fund A');
     expect(t).toContain('K1: 2 wallet terkait — dihitung 1 pembeli independen');
-    expect(t).toContain('2026-10-01 11:10:00 UTC'); // beli pertama (NOW − 50 menit)
+    expect(t).toContain('2026-10-01 18:10:00 WIB'); // beli pertama (NOW − 50 menit)
     expect(t).toContain('5 terbaru dari 7');
     const links = panel.querySelectorAll('a[target="_blank"]');
     expect(links).toHaveLength(5);

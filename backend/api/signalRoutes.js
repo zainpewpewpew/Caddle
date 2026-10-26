@@ -3,7 +3,9 @@
 // Arah (Short Scanner): `direction` LONG | SHORT. /active tanpa direction = LONG (perilaku lama);
 // /history tanpa direction = kedua arah. Setiap item memuat field `direction`. Sinyal SHORT adalah
 // kandidat riset, bukan rekomendasi jual/short.
-import { ALIGNMENTS, CONFIDENCE_TIERS, DIRECTIONS, TIMEFRAMES } from '../market/contracts.js';
+// Timeframe per arah tetap (DIRECTION_TIMEFRAMES: LONG 15m, SHORT 1h): /active hanya mengembalikan sinyal arah itu
+// pada timeframe-nya — sinyal lama dari timeframe lain tidak ditampilkan; filter timeframe lain → daftar kosong.
+import { ALIGNMENTS, CONFIDENCE_TIERS, DIRECTIONS, DIRECTION_TIMEFRAMES, TIMEFRAMES } from '../market/contracts.js';
 import { PATTERN_STATES } from '../signals/index.js';
 
 // limit 1..500 (sama dengan batas listActive/history di repositori). Di luar rentang → 400, tidak dipotong diam-diam.
@@ -42,7 +44,11 @@ const historyQuerySchema = {
 
 const toInt = (value, fallback) => (value === undefined ? fallback : Number.parseInt(value, 10));
 
-export async function signalRoutes(app, { signals, candles }) {
+/**
+ * @param {{ signals: object, candles: object, directionTimeframes?: Record<string, string[]>|null }} deps
+ *   directionTimeframes: default DIRECTION_TIMEFRAMES; null = semua timeframe (tanpa pembatasan, dipakai tes mekanika).
+ */
+export async function signalRoutes(app, { signals, candles, directionTimeframes = DIRECTION_TIMEFRAMES }) {
   async function withLastPrice(rows) {
     const out = [];
     for (const row of rows) {
@@ -55,9 +61,12 @@ export async function signalRoutes(app, { signals, candles }) {
   app.get('/api/signals/active', { schema: { querystring: activeQuerySchema } }, async (request) => {
     const q = request.query;
     const limit = toInt(q.limit, 200);
+    const direction = q.direction ?? 'LONG';
+    const allowed = directionTimeframes?.[direction] ?? TIMEFRAMES;
+    if (q.timeframe !== undefined && !allowed.includes(q.timeframe)) return { items: [], count: 0 };
     const rows = await signals.listActive({
-      direction: q.direction ?? 'LONG',
-      timeframe: q.timeframe ?? null,
+      direction,
+      timeframe: q.timeframe ?? (allowed.length === 1 ? allowed[0] : null),
       classification: q.classification ?? null,
       state: q.state ?? null,
       alignment: q.alignment ?? null,

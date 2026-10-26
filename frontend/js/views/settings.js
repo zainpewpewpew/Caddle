@@ -2,10 +2,12 @@ import { ApiError, api } from '../lib/api.js';
 import { badge, callout, inputField, page, panel, segmented, selectField, toast, toggle } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { onDisconnect } from '../lib/chart.js';
-import { formatUtc } from '../lib/format.js';
+import { formatTime } from '../lib/format.js';
 import { parseNumberInput, validateSettings } from '../lib/settingsValidation.js';
 
-const TIMEFRAMES = ['5m', '15m', '1h'];
+// Timeframe tetap per arah (selaras DIRECTION_TIMEFRAMES backend): LONG 15m, SHORT 1h. Tidak dapat diubah dari form;
+// nilai ini tetap dikirim agar skema pengaturan lama (field `timeframes` wajib) tetap valid.
+const FIXED_TIMEFRAMES = Object.freeze(['15m', '1h']);
 
 /**
  * Membaca isi form pengaturan dari FormData. Field angka yang dikosongkan menjadi NaN
@@ -20,7 +22,7 @@ export function settingsFromFormData(fd) {
     .filter(Boolean);
   return {
     symbols: { mode: fd.get('mode'), maxAuto: num('maxAuto'), manual: [...new Set(manual)] },
-    timeframes: TIMEFRAMES.filter((tf) => fd.getAll('timeframes').includes(tf)),
+    timeframes: [...FIXED_TIMEFRAMES],
     liquidity: { minQuoteVolume24h: num('minQuoteVolume24h'), maxSpreadBps: num('maxSpreadBps') },
     refresh: { bootstrapCandles: num('bootstrapCandles'), restBackfillIntervalSec: num('restBackfillIntervalSec') },
     alerts: { enabled: fd.get('alertsEnabled') === 'on', minStage: fd.get('minStage') },
@@ -156,7 +158,7 @@ function sessionsPanel() {
     list.replaceChildren(...sessions.map((s) => h('div', { class: 'cluster', style: { 'justify-content': 'space-between' } },
       h('div', null,
         h('div', null, s.userAgent ? (s.userAgent.length > 60 ? `${s.userAgent.slice(0, 60)}…` : s.userAgent) : 'Perangkat tidak dikenal', ' ', s.current ? badge('Sesi ini', 'bull') : null),
-        h('div', { class: 'subtle' }, `${s.ipAddress ?? '—'} · aktif ${formatUtc(s.lastSeenAt)}`)),
+        h('div', { class: 'subtle' }, `${s.ipAddress ?? '—'} · aktif ${formatTime(s.lastSeenAt)}`)),
       s.current ? null : h('button', {
         class: 'btn btn--danger btn--sm',
         type: 'button',
@@ -187,10 +189,10 @@ export async function settingsView(ctx) {
           h('span', { class: 'field__label' }, 'Mode simbol'),
           segmented({ name: 'mode', label: 'Mode simbol', value: s.symbols.mode, options: [{ value: 'auto', label: 'Otomatis (likuiditas)' }, { value: 'manual', label: 'Manual' }] })),
         inputField({ label: 'Maks. simbol otomatis', name: 'maxAuto', type: 'number', value: s.symbols.maxAuto, hint: 'Target MVP 30–50 pasangan', attrs: { min: 10, max: 100, step: 1 } }),
-        h('div', { class: 'field' },
+        h('div', { class: 'field', 'data-testid': 'settings-timeframes' },
           h('span', { class: 'field__label' }, 'Timeframe'),
-          segmented({ name: 'timeframes', type: 'checkbox', label: 'Timeframe', value: s.timeframes, options: TIMEFRAMES.map((t) => ({ value: t, label: t })) }),
-          h('span', { class: 'field__error', 'data-error-for': 'timeframes', hidden: true }))),
+          h('div', { class: 'cluster' }, badge('LONG 15m', 'bull'), badge('SHORT 1h', 'bear')),
+          h('span', { class: 'field__hint' }, 'Tetap: LONG Scanner memakai 15m (konteks 1h), SHORT Scanner memakai 1h.'))),
       h('div', { class: 'field', style: { 'margin-top': 'var(--lr-space-4)' } },
         h('label', { class: 'field__label', for: 'f-manual' }, 'Simbol manual'),
         h('textarea', { class: 'input input--mono', id: 'f-manual', name: 'manual', rows: 3, spellcheck: 'false', placeholder: 'BTCUSDT, ETHUSDT' }, s.symbols.manual.join(', ')),
@@ -211,7 +213,7 @@ export async function settingsView(ctx) {
           { value: 'EARLY_BULLISH', label: 'Early bullish' }, { value: 'MOMENTUM_BUILDING', label: 'Momentum building' }, { value: 'BREAKOUT', label: 'Breakout' }] }))),
     h('div', { class: 'cluster' },
       h('button', { class: 'btn btn--primary', type: 'submit', disabled: !canEdit }, 'Simpan pengaturan'),
-      h('span', { class: 'subtle', 'data-testid': 'settings-meta' }, current.updatedAt ? `Terakhir diubah ${formatUtc(current.updatedAt)}` : 'Belum pernah diubah')));
+      h('span', { class: 'subtle', 'data-testid': 'settings-meta' }, current.updatedAt ? `Terakhir diubah ${formatTime(current.updatedAt)}` : 'Belum pernah diubah')));
 
   if (!canEdit) for (const el of form.querySelectorAll('input, select, textarea')) el.disabled = true;
 
@@ -225,7 +227,7 @@ export async function settingsView(ctx) {
       current = await api('/api/settings/scanner', { method: 'PUT', body: { version: current.version, settings } });
       versionBadge.textContent = `Versi ${current.version}`;
       versionBadge.className = 'badge badge--accent';
-      form.querySelector('[data-testid="settings-meta"]').textContent = `Terakhir diubah ${formatUtc(current.updatedAt)}`;
+      form.querySelector('[data-testid="settings-meta"]').textContent = `Terakhir diubah ${formatTime(current.updatedAt)}`;
       toast('Pengaturan disimpan', 'bull');
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) toast('Pengaturan diubah pengguna lain. Muat ulang halaman.', 'bear');

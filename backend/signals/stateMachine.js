@@ -8,7 +8,8 @@
 //   QUIET             pola terdeteksi (classification ≠ NONE), earlyScore < earlyMinScore — pasar masih diam
 //   EARLY_BULLISH     pola terdeteksi dengan earlyScore ≥ earlyMinScore
 //   MOMENTUM_BUILDING harga bergerak menjauh dari harga deteksi (ATR) atau volume relatif meningkat
-//   BREAKOUT          close menembus resistance (swing high terkonfirmasi terakhir) dengan RVOL tinggi
+//   BREAKOUT          close menembus resistance (swing high terkonfirmasi terakhir, digeser ke high tertinggi
+//                     sesudahnya — lihat runningLevel) dengan RVOL tinggi
 //   INVALIDATED       terminal: close < invalidationPrice
 //   EXPIRED           terminal: tidak ada kemajuan (perpindahan state) dalam expiryBars[state] bar,
 //                     atau simbol berhenti dipantau (lihat baris terakhir tabel; di luar fungsi ini)
@@ -77,7 +78,8 @@
 // Baris EXPIRED (NO_PROGRESS, termasuk jatuh tempo di dalam gap) dan penutupan simbol berhenti dipantau
 // sama dengan LONG.
 //
-// - support = swing low terkonfirmasi terakhir (deriveDirectionalMarketInputs → market.support).
+// - support = swing low terkonfirmasi terakhir, digeser ke low terendah sesudahnya (runningLevel;
+//   deriveDirectionalMarketInputs → market.support).
 // - Alert untuk EARLY_BEARISH, MOMENTUM_BUILDING, BREAKDOWN; INVALIDATED di-alert bila dari state alert SHORT.
 // - invalidationPrice SHORT berada DI ATAS harga dan hanya boleh TURUN (dari pola utama versi sama yang
 //   masih terdeteksi dan masih di atas close); peakPrice = harga TERENDAH (min(peak, low)), yaitu
@@ -437,7 +439,26 @@ export function isTerminal(state) {
   return TERMINAL_STATES.includes(state);
 }
 
-/** ATR, RVOL, dan swing terkonfirmasi terakhir pada candle terakhir (dihitung sekali untuk kedua arah). */
+/**
+ * Level breakout/breakdown yang masih berlaku: harga swing terkonfirmasi terakhir, digeser ke high tertinggi
+ * (resistance) / low terendah (support) candle SETELAH swing itu sampai candle SEBELUM candle evaluasi.
+ * Tanpa pergeseran ini, swing yang sudah lama ditembus (mis. reli/penurunan tanpa pullback yang mengonfirmasi swing
+ * baru) tetap menjadi "resistance/support" basi di bawah/di atas harga, sehingga candle ber-RVOL tinggi mana pun di
+ * atas/di bawah firstDetectedPrice — termasuk candle merah saat LONG atau candle hijau memantul saat SHORT —
+ * langsung dianggap BREAKOUT/BREAKDOWN. Dengan level berjalan, BREAKOUT berarti close di atas semua high sejak
+ * swing high terakhir (BREAKDOWN: di bawah semua low sejak swing low terakhir). Candle evaluasi tidak ikut
+ * (close-nya tidak mungkin melewati high/low-nya sendiri); semua candle yang dipakai sudah tertutup — tanpa lookahead.
+ */
+function runningLevel(candles, swing, last, side) {
+  if (!swing) return null;
+  let level = swing.price;
+  for (let i = swing.index + 1; i < last; i += 1) {
+    level = side === 'high' ? Math.max(level, candles[i].high) : Math.min(level, candles[i].low);
+  }
+  return level;
+}
+
+/** ATR, RVOL, dan level swing terkonfirmasi (berjalan) pada candle terakhir (dihitung sekali untuk kedua arah). */
 function marketFeatures(candles, params) {
   const p = resolveMarketParams(params);
   if (!Array.isArray(candles)) throw new TypeError('candles harus array');
@@ -449,15 +470,16 @@ function marketFeatures(candles, params) {
   return {
     atr: atr ?? null,
     rvol: rvol ?? null,
-    resistance: highs.length ? highs[highs.length - 1].price : null,
-    support: lows.length ? lows[lows.length - 1].price : null,
+    resistance: runningLevel(candles, highs.at(-1), last, 'high'),
+    support: runningLevel(candles, lows.at(-1), last, 'low'),
   };
 }
 
 /**
  * Menurunkan input pasar untuk transisi dari candle dasar tertutup (urut naik), dievaluasi
  * di candle terakhir: ATR, RVOL (volume base, baseline candle sebelumnya), dan swing high
- * terkonfirmasi terakhir sebagai resistance (confirmedIndex ≤ indeks evaluasi — tanpa lookahead).
+ * terkonfirmasi terakhir sebagai resistance (confirmedIndex ≤ indeks evaluasi — tanpa lookahead), digeser ke high
+ * tertinggi candle sesudahnya sebelum candle evaluasi (runningLevel) agar level yang sudah ditembus tidak basi.
  * Untuk arah LONG; deriveDirectionalMarketInputs memberi kedua arah dari satu perhitungan.
  * @returns {{ atr: number|null, rvol: number|null, resistance: number|null }}
  */
@@ -469,7 +491,8 @@ export function deriveMarketInputs(candles, params = {}) {
 
 /**
  * Input pasar kedua arah dari satu perhitungan indikator: LONG { atr, rvol, resistance } (identik dengan
- * deriveMarketInputs) dan SHORT { atr, rvol, support } — support = swing low terkonfirmasi terakhir
+ * deriveMarketInputs) dan SHORT { atr, rvol, support } — support = swing low terkonfirmasi terakhir (digeser ke low
+ * terendah candle sesudahnya sebelum candle evaluasi, lihat runningLevel)
  * (confirmedIndex ≤ indeks evaluasi — tanpa lookahead).
  * @returns {{ LONG: { atr: number|null, rvol: number|null, resistance: number|null },
  *   SHORT: { atr: number|null, rvol: number|null, support: number|null } }}

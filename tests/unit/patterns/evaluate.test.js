@@ -111,7 +111,9 @@ describe('evaluatePatterns', () => {
       const close = prefix[last].close;
       const from = Math.max(0, last - window + 1);
       const lastLow = lows.at(-1);
-      if (lastLow && lastLow.index >= from && close > lastLow.price) return { anchor: lastLow.price, higherLows: trailingHigherLows(lows) };
+      // Struktur utuh: close di atas swing low DAN tidak ada low sesudahnya yang menembusnya.
+      const unbroken = lastLow && prefix.slice(lastLow.index + 1).every((c) => c.low >= lastLow.price);
+      if (lastLow && lastLow.index >= from && unbroken && close > lastLow.price) return { anchor: lastLow.price, higherLows: trailingHigherLows(lows) };
       let idx = from;
       for (let i = from + 1; i <= last; i += 1) if (prefix[i].low < prefix[idx].low) idx = i;
       return { anchor: prefix[idx].low, higherLows: 0 };

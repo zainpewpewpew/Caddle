@@ -15,7 +15,7 @@
 import { ApiError, api } from '../lib/api.js';
 import { badge, callout } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
-import { formatDuration, formatInteger, formatRelative, formatUtc } from '../lib/format.js';
+import { formatDuration, formatInteger, formatRelative, formatTime } from '../lib/format.js';
 import {
   EMPTY, SM_API, SYNC_NOT_ADMIN, SYNC_NO_WALLETS_HINT, SYNC_POLL_CAP_MINUTES, isSyncResultOf, syncAutoHint, syncCooldownText,
   syncErrorText, syncProgressParts, syncProgressRatio, syncResultLines, syncRunnerLabel, syncStatusLabel,
@@ -149,7 +149,7 @@ function resultDetails(lastRun, { now, observed, onDismiss }) {
   const summary = h('summary', { class: 'sm-sync__summary' },
     h('span', { class: 'sm-sync__title' }, observed ? 'Sinkronisasi selesai' : 'Hasil sinkron terakhir'),
     badge(st.label, st.tone),
-    at !== null && h('span', { class: 'subtle', title: formatUtc(at) }, formatRelative(at, now)),
+    at !== null && h('span', { class: 'subtle', title: formatTime(at) }, formatRelative(at, now)),
     took && h('span', { class: 'subtle' }, `durasi ${took}`),
     runner && h('span', { class: 'subtle' }, runner));
   const body = h('div', { class: 'sm-sync__body' },

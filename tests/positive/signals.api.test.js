@@ -6,7 +6,8 @@ describe('API sinyal — alur positif', () => {
   let ctx;
   let auth;
   beforeEach(async () => {
-    ctx = await createTestApp();
+    // Mekanika filter diuji tanpa pembatasan timeframe per arah (DIRECTION_TIMEFRAMES diuji POS-SIG-TF-*).
+    ctx = await createTestApp({ appOptions: { directionTimeframes: null } });
     auth = await login(ctx.app);
   });
   afterEach(async () => { await ctx.app.close(); });
@@ -63,7 +64,8 @@ describe('API sinyal — filter & urutan atas matriks sinyal sintetis', () => {
   let ctx;
   let auth;
   beforeEach(async () => {
-    ctx = await createTestApp();
+    // Mekanika filter diuji tanpa pembatasan timeframe per arah (DIRECTION_TIMEFRAMES diuji POS-SIG-TF-*).
+    ctx = await createTestApp({ appOptions: { directionTimeframes: null } });
     auth = await login(ctx.app);
     await seedSignalMatrix(ctx.app.services.repos);
   });
@@ -166,5 +168,32 @@ describe('API sinyal — filter & urutan atas matriks sinyal sintetis', () => {
     const { items } = res.json();
     expect(items.map((s) => s.state)).toEqual(['INVALIDATED']);
     expect(items[0].events.map((e) => [e.fromState, e.toState])).toEqual([['NO_PATTERN', 'QUIET'], ['QUIET', 'INVALIDATED']]);
+  });
+});
+
+// Perilaku produksi: LONG Scanner hanya 15m, SHORT Scanner hanya 1h (DIRECTION_TIMEFRAMES).
+describe('API sinyal — timeframe tetap per arah (LONG 15m, SHORT 1h)', () => {
+  let ctx;
+  let auth;
+  beforeEach(async () => {
+    ctx = await createTestApp();
+    auth = await login(ctx.app);
+    await seedSignalMatrix(ctx.app.services.repos);
+  });
+  afterEach(async () => { await ctx.app.close(); });
+
+  const get = (url) => ctx.app.inject({ url, headers: { cookie: auth.cookie } }).then((r) => r.json());
+
+  it('POS-SIG-TF-001 LONG tanpa filter → hanya sinyal 15m; sinyal LONG 5m/1h lama tidak tampil', async () => {
+    const { items } = await get('/api/signals/active');
+    expect(items.map((r) => r.symbol).sort()).toEqual(['BBBUSDT', 'GGGUSDT']);
+    expect(new Set(items.map((r) => r.timeframe))).toEqual(new Set(['15m']));
+    expect((await get('/api/signals/active?direction=LONG&timeframe=15m')).count).toBe(2);
+  });
+
+  it('POS-SIG-TF-002 timeframe di luar arah (LONG 5m/1h, SHORT 15m) → daftar kosong, bukan 400', async () => {
+    expect(await get('/api/signals/active?timeframe=5m')).toEqual({ items: [], count: 0 });
+    expect(await get('/api/signals/active?timeframe=1h')).toEqual({ items: [], count: 0 });
+    expect(await get('/api/signals/active?direction=SHORT&timeframe=15m')).toEqual({ items: [], count: 0 });
   });
 });

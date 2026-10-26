@@ -54,6 +54,8 @@ export const SCANNER_DEFAULTS = Object.freeze({
   // tetap dievaluasi ulang sekali setelah bootstrap (reason 'resume', lihat resumeAnalysis) agar sinyal terbuka
   // tidak basi sampai candle live berikutnya tutup.
   emitBootstrap: false,
+  // Timeframe yang dianalisis (array) menggantikan pengaturan `timeframes`; null = ikuti pengaturan.
+  timeframes: null,
 });
 
 const MESSAGE_MAX = 500;
@@ -169,10 +171,14 @@ function assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, 
   }
 }
 
-/** Normalisasi pengaturan scanner (lihat backend/settings/scannerSettings.js). */
-function normalizeSettings(raw) {
+/**
+ * Normalisasi pengaturan scanner (lihat backend/settings/scannerSettings.js). `fixedTimeframes` (options.timeframes)
+ * menggantikan `raw.timeframes`: worker memakai timeframe tetap per arah (DIRECTION_TIMEFRAMES), bukan pilihan lama.
+ */
+function normalizeSettings(raw, fixedTimeframes = null) {
   if (raw === null || typeof raw !== 'object') throw new TypeError('pengaturan scanner tidak valid');
-  const timeframes = TIMEFRAMES.filter((tf) => Array.isArray(raw.timeframes) && raw.timeframes.includes(tf));
+  const chosen = fixedTimeframes ?? raw.timeframes;
+  const timeframes = TIMEFRAMES.filter((tf) => Array.isArray(chosen) && chosen.includes(tf));
   if (timeframes.length === 0) throw new RangeError('pengaturan scanner tanpa timeframe valid');
   // Seri yang diingesti = timeframe terpilih ∪ HTF konteksnya; hanya `timeframes` yang dianalisis.
   const ingestTimeframes = TIMEFRAMES.filter((tf) => timeframes.includes(tf)
@@ -268,6 +274,9 @@ export function createScanner({
   const cfg = { ...SCANNER_DEFAULTS, ...options };
   if (!Number.isInteger(cfg.closeMarginMs) || cfg.closeMarginMs < 0 || cfg.closeMarginMs > 60_000) {
     throw new RangeError('options.closeMarginMs harus bilangan bulat 0..60000');
+  }
+  if (cfg.timeframes !== null && (!Array.isArray(cfg.timeframes) || !cfg.timeframes.some((tf) => TIMEFRAMES.includes(tf)))) {
+    throw new RangeError('options.timeframes harus null atau array timeframe valid');
   }
   /** Acuan rencana REST: waktu server (jam acuan penutupan) dikurangi margin penutupan. */
   const settledNow = () => closureClock() - cfg.closeMarginMs;
@@ -752,7 +761,7 @@ export function createScanner({
 
   async function loadSettings() {
     try {
-      settings = normalizeSettings(await getSettings());
+      settings = normalizeSettings(await getSettings(), cfg.timeframes);
     } catch (err) {
       // Tanpa pengaturan valid terakhir, siklus tidak bisa jalan (dicatat oleh runCycle).
       if (!settings) throw err;
