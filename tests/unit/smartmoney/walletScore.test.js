@@ -3,6 +3,7 @@ import {
   DEFAULT_WALLET_SCORE_PARAMS, resolveWalletScoreParams, scoreWallet,
 } from '../../../backend/smartmoney/walletScore.js';
 import { TRADING_STYLES } from '../../../backend/smartmoney/contracts.js';
+import { computeWalletPnl } from '../../../backend/smartmoney/pnl.js';
 import { DAY, HOUR, T0, addr, makeActivity, makeClosedTrade, makePnl, tokenAddr, txh } from '../../helpers/smartMoneyBuilders.js';
 
 const NOW = T0 + 200 * DAY;
@@ -238,5 +239,98 @@ describe('walletScore — gaya, determinisme, tanpa look-ahead', () => {
     const best = score(cases[2]);
     expect(best.score).toBeLessThanOrEqual(100);
     expect(best.eligible).toBe(true);
+  });
+});
+
+describe('walletScore — round trip posisi, batas return, riwayat besar', () => {
+  /** 10 beli kecil (scale-in) + 1 jual penuh pada satu token → 10 potongan lot FIFO tetapi 1 round trip. */
+  function scaleIn(token, startAt, salt, sellUsd) {
+    const acts = [];
+    for (let i = 0; i < 10; i += 1) {
+      acts.push(makeActivity({
+        wallet: WALLET, type: 'SWAP_BUY', token, amount: 100, usdValue: 100, blockTime: startAt + i * 60_000, txHash: txh(salt + i),
+      }));
+    }
+    acts.push(makeActivity({ wallet: WALLET, type: 'SWAP_SELL', token, amount: 1000, usdValue: sellUsd, blockTime: startAt + 5 * DAY, txHash: txh(salt + 50) }));
+    return acts;
+  }
+  /** Satu beli + satu jual pada satu token (1 round trip). */
+  function single(token, startAt, salt, sellUsd) {
+    return [
+      makeActivity({ wallet: WALLET, type: 'SWAP_BUY', token, amount: 1000, usdValue: 1000, blockTime: startAt, txHash: txh(salt) }),
+      makeActivity({ wallet: WALLET, type: 'SWAP_SELL', token, amount: 1000, usdValue: sellUsd, blockTime: startAt + 2 * DAY, txHash: txh(salt + 1) }),
+    ];
+  }
+
+  it('UNIT-SM-WS-034 trade = round trip posisi, bukan potongan lot FIFO: n, kelayakan, dan meanExTop tidak menggelembung', () => {
+    // 3 token × (10 beli kecil + 1 jual) = 30 potongan lot, tetapi hanya 3 trade.
+    const acts = [
+      ...scaleIn(tokenAddr(1), T0, 1000, 1200),
+      ...scaleIn(tokenAddr(2), T0 + 20 * DAY, 2000, 1200),
+      ...scaleIn(tokenAddr(3), T0 + 40 * DAY, 3000, 1200),
+    ];
+    const pnl = computeWalletPnl(acts, { now: NOW });
+    expect(pnl.closedTrades).toHaveLength(30);
+    expect(pnl.roundTrips).toHaveLength(3);
+    const r = scoreWallet({ chain: 'ethereum', address: WALLET, pnl, activities: acts, flags: [], now: NOW });
+    expect(r.metrics.closedTrades).toBe(3);
+    expect(r.eligible).toBe(false);
+    expect(r.limitations.join(' | ')).toMatch(/Baru 3 trade tertutup \(minimal 10\)/);
+    expectBounded(r);
+
+    // Satu posisi +900 % yang dicicil 10 kali + 11 posisi impas: dulu 10 dari 21 "trade" bernilai +900 %
+    // sehingga meanExTop ≈ 405 %; sebagai round trip hanya 1 dari 12 → tanpa trade terbaik = 0 %.
+    const lucky = [...scaleIn(tokenAddr(1), T0, 1000, 10_000)];
+    for (let i = 0; i < 11; i += 1) lucky.push(...single(tokenAddr(10 + i), T0 + (i + 1) * 7 * DAY, 5000 + i * 10, 1000));
+    const luckyPnl = computeWalletPnl(lucky, { now: NOW });
+    expect(luckyPnl.closedTrades).toHaveLength(21);
+    expect(luckyPnl.roundTrips).toHaveLength(12);
+    const l = scoreWallet({ chain: 'ethereum', address: WALLET, pnl: luckyPnl, activities: lucky, flags: [], now: NOW });
+    expect(l.metrics.closedTrades).toBe(12);
+    expect(l.metrics.meanReturnExTopPct).toBe(0);
+    expect(l.components.profitability).toBe(0);
+    expect(l.limitations.join(' | ')).toMatch(/bergantung pada trade terbaik \(\+900/);
+  });
+
+  it('UNIT-SM-WS-035 PnlResult dengan roundTrips memakai roundTrips; tanpa roundTrips (masukan lama) memakai closedTrades', () => {
+    const trips = consistentTrades();
+    const fragments = trips.flatMap((t) => Array.from({ length: 3 }, () => ({ ...t, qty: t.qty / 3, costUsd: t.costUsd / 3, proceedsUsd: t.proceedsUsd / 3, pnlUsd: t.pnlUsd / 3 })));
+    const withTrips = { ...makePnl({ closedTrades: fragments }), roundTrips: trips };
+    const r = score(withTrips);
+    expect(r.metrics.closedTrades).toBe(40);
+    expect(r.components).toEqual(score(makePnl({ closedTrades: trips })).components);
+    expect(score(makePnl({ closedTrades: fragments })).metrics.closedTrades).toBe(120);
+  });
+
+  it('UNIT-SM-WS-036 return per trade dibatasi +200 % dalam skor: dua trade +900 % tidak mendominasi walau n besar', () => {
+    const trades = Array.from({ length: 20 }, (_, i) => makeClosedTrade({
+      token: tokenAddr(1 + (i % 5)), openAt: T0 + i * 7 * DAY, returnPct: i < 2 ? 900 : 0,
+    }));
+    const r = score(makePnl({ closedTrades: trades }));
+    expect(DEFAULT_WALLET_SCORE_PARAMS.returnCapPct).toBe(200);
+    // tanpa batas: min(90, 47,4) × 20/30 = 31,6 % → profitabilitas ≈ 0,78; dengan batas: min(20, 10,5) × 20/30 = 7,0 %
+    const effective = Math.min(400 / 20, 200 / 19) * (20 / 30);
+    expect(r.metrics.effectiveReturnPct).toBeCloseTo(effective, 3);
+    expect(r.components.profitability).toBeCloseTo(Math.tanh(effective / 30), 4);
+    expect(r.components.profitability).toBeLessThan(0.3);
+    expect(r.metrics.meanReturnExTopPct).toBeCloseTo(900 / 19, 3); // metrik mentah tetap informatif
+    expect(r.limitations.join(' | ')).toMatch(/2 trade dengan return di atas \+200% dibatasi \+200% dalam skor/);
+    expect(r.reasons.join(' | ')).toMatch(/return per trade maks \+200%/);
+
+    const loose = score(makePnl({ closedTrades: trades }), {}, { returnCapPct: 10_000 });
+    expect(loose.components.profitability).toBeCloseTo(Math.tanh(((900 / 19) * (20 / 30)) / 30), 4);
+    expect(() => resolveWalletScoreParams({ returnCapPct: 0 })).toThrow(RangeError);
+  });
+
+  it('UNIT-SM-WS-037 riwayat sangat besar (> 125 ribu aktivitas/trade) tidak melempar RangeError', () => {
+    const N = 130_000;
+    const activities = Array.from({ length: N }, (_, i) => ({ blockTime: T0 + i * 60_000 }));
+    const trades = Array.from({ length: N }, (_, i) => makeClosedTrade({
+      token: tokenAddr(1 + (i % 20)), openAt: T0 + i * 60_000, holdMs: HOUR, costUsd: 100 + (i % 7), returnPct: (i % 5) - 1,
+    }));
+    const r = scoreWallet({ pnl: makePnl({ closedTrades: trades }), activities, flags: [], now: T0 + 200 * DAY });
+    expectBounded(r);
+    expect(r.metrics.closedTrades).toBe(N);
+    expect(r.metrics.worstTradeReturnPct).toBe(-1);
   });
 });

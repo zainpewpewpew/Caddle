@@ -26,10 +26,11 @@ const KZ = tokenKey(CHAIN, Z);
 const PEPE = (address) => ({ address, symbol: 'PEPE', name: null, decimals: 18 }); // simbol sama, kontrak beda
 
 const smartHistory = () => SMART.flatMap((w, k) => tradeHistory({ wallet: w, salt: 0x100 + k, from: T0 + k * 10 * 60_000 }));
-const lateBuys = () => tradeHistory({ wallet: LATE, salt: 0x200, tokenBase: 200 }).filter((a) => a.type === 'SWAP_BUY');
+// LATE memegang 12 posisi pada 12 token berbeda (round trip dihitung per posisi, bukan per lot FIFO — pnl.roundTrips).
+const lateBuys = () => tradeHistory({ wallet: LATE, salt: 0x200, tokenBase: 200, tokens: 12 }).filter((a) => a.type === 'SWAP_BUY');
 /** LATE menjual 12 posisinya dengan +300 % pada C+1j … C+12j. */
 const lateSells = () => Array.from({ length: 12 }, (_, i) => swap({
-  wallet: LATE, token: tokenAddr(200 + (i % 4)), at: C + (i + 1) * HOUR, n: 100 + i, salt: 0x201, type: 'SWAP_SELL', usd: 4000,
+  wallet: LATE, token: tokenAddr(200 + i), at: C + (i + 1) * HOUR, n: 100 + i, salt: 0x201, type: 'SWAP_SELL', usd: 4000,
 }));
 
 function baseActivities() {

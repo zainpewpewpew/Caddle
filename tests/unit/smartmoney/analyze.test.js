@@ -149,7 +149,9 @@ describe('analyzeUniverse — kelayakan & pengecualian', () => {
   });
 
   it('UNIT-SM-ANL-008 kelayakan hanya dari trade yang tertutup ≤ now (wallet yang baru untung kemudian belum layak)', () => {
-    const buys = history(3).filter((a) => a.type === 'SWAP_BUY');
+    // 12 posisi pada 12 token berbeda: tiap posisi ditutup sekali → 12 round trip (beli bertahap pada token yang sama
+    // hanya menjadi SATU trade tingkat posisi — lihat pnl.roundTrips).
+    const buys = history(3, { tokens: 12 }).filter((a) => a.type === 'SWAP_BUY');
     const sells = buys.map((b, i) => swap({ wallet: W[3], token: b.token.address, at: NOW + (i + 1) * HOUR, n: 50 + i, type: 'SWAP_SELL', usd: 4000 }));
     const acts = [...buys, ...sells];
     const before = analyzeUniverse({ activities: acts, now: NOW }).wallets.get(key(W[3]));

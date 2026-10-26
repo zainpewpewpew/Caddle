@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_FLAG_PARAMS, detectWalletFlags, isExcluded } from '../../../backend/smartmoney/walletFlags.js';
 import { WALLET_FLAGS } from '../../../backend/smartmoney/contracts.js';
+import { computeWalletPnl } from '../../../backend/smartmoney/pnl.js';
 import {
   DAY, HOUR, T0, addr, labelMap, makeActivity, makeClosedTrade, makeLabel, makePnl, tokenAddr, txh,
 } from '../../helpers/smartMoneyBuilders.js';
@@ -212,6 +213,50 @@ describe('walletFlags — AIRDROP_FARMER, LOW_HISTORY, INCOMPLETE_PNL', () => {
     const future = Array.from({ length: 220 }, (_, i) => makeActivity({ wallet: W, blockTime: NOW + 1000 + i * 10_000, txHash: txh(i + 1000) }));
     const { acts, pnl } = normalTrader();
     expect(codes(detectWalletFlags({ chain: 'ethereum', address: W, activities: [...acts, ...future], pnl, now: NOW }))).not.toContain('BOT');
+  });
+});
+
+describe('walletFlags — round trip posisi, basis kelengkapan, riwayat besar', () => {
+  it('UNIT-SM-WF-037 LOW_HISTORY menghitung round trip posisi, bukan potongan lot FIFO (10 beli kecil + 1 jual = 1 trade)', () => {
+    const acts = [];
+    let n = 1;
+    for (let t = 0; t < 4; t += 1) {
+      const tok = tokenAddr(1 + t);
+      const start = T0 + t * 25 * DAY + 9 * HOUR;
+      for (let i = 0; i < 10; i += 1) {
+        acts.push(makeActivity({ wallet: W, type: 'SWAP_BUY', token: tok, amount: 100, usdValue: 100, blockTime: start + i * HOUR, txHash: txh(n++) }));
+      }
+      acts.push(makeActivity({ wallet: W, type: 'SWAP_SELL', token: tok, amount: 1000, usdValue: 1100, blockTime: start + 3 * DAY, txHash: txh(n++) }));
+    }
+    const pnl = computeWalletPnl(acts, { now: NOW });
+    expect(pnl.closedTrades).toHaveLength(40);
+    expect(pnl.roundTrips).toHaveLength(4);
+    const f = find(detectWalletFlags({ chain: 'ethereum', address: W, activities: acts, pnl, now: NOW }), 'LOW_HISTORY');
+    expect(f).toMatchObject({ severity: 'MEDIUM', evidence: { closedTrades: 4 } });
+    expect(f.reason).toMatch(/4 trade tertutup \(< 10\)/);
+    // Ringkasan saja (tanpa daftar) → roundTripsCount diutamakan dari closedTradesCount.
+    const summaryOnly = { summary: { ...pnl.summary } };
+    expect(find(detectWalletFlags({ chain: 'ethereum', address: W, activities: acts, pnl: summaryOnly, now: NOW }), 'LOW_HISTORY').evidence.closedTrades).toBe(4);
+  });
+
+  it('UNIT-SM-WF-038 alasan INCOMPLETE_PNL mengikuti basis rasio (nilai jual USD vs rata-rata kuantitas per token)', () => {
+    const { acts, pnl } = normalTrader();
+    const usd = { ...pnl, summary: { ...pnl.summary, completenessRatio: 0.2, completenessBasis: 'USD' } };
+    const avg = { ...pnl, summary: { ...pnl.summary, completenessRatio: 0.2, completenessBasis: 'TOKEN_AVERAGE' } };
+    expect(find(detectWalletFlags({ chain: 'ethereum', address: W, activities: acts, pnl: usd, now: NOW }), 'INCOMPLETE_PNL').reason)
+      .toBe('PnL tidak lengkap: hanya 20% nilai jual (USD) yang harga belinya diketahui');
+    expect(find(detectWalletFlags({ chain: 'ethereum', address: W, activities: acts, pnl: avg, now: NOW }), 'INCOMPLETE_PNL').reason)
+      .toBe('PnL tidak lengkap: rata-rata per token hanya 20% kuantitas jual yang harga belinya diketahui');
+  });
+
+  it('UNIT-SM-WF-039 riwayat > 125 ribu aktivitas tidak melempar RangeError (tanpa Math.min/max(...arr))', () => {
+    const N = 160_000;
+    const acts = Array.from({ length: N }, (_, i) => makeActivity({
+      wallet: W, type: i % 2 ? 'SWAP_SELL' : 'SWAP_BUY', token: tokenAddr(1 + (i % 40)), blockTime: T0 + i * 45_000, txHash: txh(i + 1),
+    }));
+    const flags = detectWalletFlags({ chain: 'ethereum', address: W, activities: acts, now: T0 + N * 45_000 });
+    expect(Array.isArray(flags)).toBe(true);
+    expect(codes(flags)).not.toContain('LOW_HISTORY');
   });
 });
 
