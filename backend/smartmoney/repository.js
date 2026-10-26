@@ -9,7 +9,7 @@
 
 import {
   ACTIVITY_TYPES, ALERT_KINDS, ALERT_SEVERITIES, CLASSIFICATION_CONFIDENCE, EXCLUDING_FLAGS, LABEL_CATEGORIES,
-  PROVIDER_ERROR_CODES, TRADING_STYLES, explorerTxUrl, isChain, normalizeAddress, normalizeTxHash, walletKey,
+  NATIVE_TOKEN, PROVIDER_ERROR_CODES, TRADING_STYLES, explorerTxUrl, isChain, normalizeAddress, normalizeTxHash, walletKey,
 } from './contracts.js';
 
 const WATCH_KINDS = Object.freeze(['WALLET', 'TOKEN']);
@@ -60,8 +60,24 @@ function optionalText(v, max = 500) {
 /** Kunci kombinasi chain + alamat untuk Map hasil (sama dengan tokenKey/walletKey kontrak). */
 const keyOf = (chain, addr) => walletKey(chain, addr);
 
-/** Label terbaik per alamat: keyakinan tertinggi, lalu paling baru, lalu sumber & label (deterministik). */
+/**
+ * Kategori infrastruktur / pengecuali. Bila satu alamat punya beberapa label, label berkategori ini SELALU menang atas
+ * label lain berapa pun keyakinannya — alamat berlabel cex@0,8 + fund@0,9 harus tetap terbaca exchange agar
+ * pengecualian (flag CEX, discovery, klasifikasi deposit/penarikan) tidak tersembunyi.
+ */
+export const INFRA_LABEL_CATEGORIES = Object.freeze([
+  'cex', 'cex_deposit', 'bridge', 'dex_router', 'dex_pool', 'market_maker', 'mev_bot', 'contract', 'lp_token',
+  'airdrop_distributor',
+]);
+const INFRA = new Set(INFRA_LABEL_CATEGORIES);
+
+/**
+ * Label terbaik per alamat: kategori infrastruktur/pengecuali dulu, lalu keyakinan tertinggi, lalu paling baru, lalu
+ * sumber & label (deterministik). Daftar lengkap tetap tersedia lewat listLabelsFor / listLabelsForMany.
+ */
 function betterLabel(a, b) {
+  const ia = INFRA.has(a.category);
+  if (ia !== INFRA.has(b.category)) return ia ? a : b;
   if (a.confidence !== b.confidence) return a.confidence > b.confidence ? a : b;
   if (a.fetchedAt !== b.fetchedAt) return a.fetchedAt > b.fetchedAt ? a : b;
   return `${a.source}\u0000${a.label}` <= `${b.source}\u0000${b.label}` ? a : b;
@@ -186,11 +202,117 @@ function activityParams(a, now) {
   };
 }
 
+/** Alasan baris mapping Binance ditolak (Bahasa Indonesia), atau null bila valid. */
+function mappingProblem(r) {
+  if (r === null || typeof r !== 'object') return 'baris mapping harus objek';
+  if (!nonEmpty(r.source)) return 'Mapping Binance tanpa sumber ditolak';
+  if (!isChain(r.chain)) return `Chain tidak dikenal: ${String(r.chain).slice(0, 40)}`;
+  const contract = normalizeAddress(r.chain, r.contractAddress);
+  if (contract === null || contract === NATIVE_TOKEN) return `contractAddress tidak valid untuk chain ${r.chain}`;
+  if (!nonEmpty(r.binanceAsset) || r.binanceAsset.trim().length > 32) return 'binanceAsset wajib diisi (1..32 karakter)';
+  for (const [name, v] of [['spotSymbol', r.spotSymbol], ['futuresSymbol', r.futuresSymbol]]) {
+    if (v !== null && v !== undefined && !(typeof v === 'string' && SYMBOL_RE.test(v))) {
+      return `${name} tidak valid (hanya huruf besar A-Z dan angka)`;
+    }
+  }
+  const multiplier = r.multiplier ?? 1;
+  if (!Number.isSafeInteger(multiplier) || multiplier < 1) return 'multiplier harus bilangan bulat ≥ 1';
+  if (r.verifiedAt !== null && r.verifiedAt !== undefined && !(Number.isInteger(r.verifiedAt) && r.verifiedAt >= 0)) {
+    return 'verifiedAt harus epoch milidetik atau null';
+  }
+  return null;
+}
+
+/** Isi baris aktivitas yang menentukan "berubah" saat klasifikasi ulang (baris DB vs parameter baru). */
+const activitySignature = (row) => json([row.type, row.direction, row.amount, row.usd_value, row.block_time,
+  row.token_symbol, row.counterparty, row.confidence, row.reason]);
+const paramsSignature = (p) => json([p.type, p.direction, p.amount, p.usdValue, p.blockTime, p.tokenSymbol,
+  p.counterparty, p.confidence, p.reason]);
+
+/** Daftar hash tx kanonik unik; RangeError bila ada yang tidak valid. */
+function normalizeTxs(chain, txHashes) {
+  if (!Array.isArray(txHashes)) throw new TypeError('txHashes harus array');
+  const out = new Set();
+  for (const h of txHashes) {
+    const n = normalizeTxHash(chain, h);
+    if (n === null) throw new RangeError(`Hash transaksi tidak valid untuk chain ${chain}`);
+    out.add(n);
+  }
+  return [...out];
+}
+
+/** RawTransfer ternormalisasi (normalize.js) → parameter baris sm_raw_transfers; RangeError/TypeError bila tidak valid. */
+function rawParams(t, wallet, now) {
+  if (t === null || typeof t !== 'object') throw new TypeError('transfer harus objek');
+  assertChain(t.chain);
+  const txHash = normalizeTxHash(t.chain, t.txHash);
+  if (txHash === null) throw new RangeError('transfer.txHash tidak valid');
+  if (!Number.isSafeInteger(t.logIndex) || t.logIndex < 0) throw new RangeError('transfer.logIndex harus bilangan bulat ≥ 0');
+  assertTime(t.blockTime, 'transfer.blockTime');
+  if (!nonEmpty(t.provider)) throw new RangeError('transfer.provider wajib diisi');
+  if (!t.token || typeof t.token !== 'object' || normalizeAddress(t.chain, t.token.address) === null) {
+    throw new RangeError('transfer.token.address tidak valid');
+  }
+  if (!(isFiniteNumber(t.amount) && t.amount > 0)) throw new RangeError('transfer.amount harus > 0');
+  const transfer = { ...t, txHash };
+  return {
+    chain: t.chain, wallet: address(t.chain, wallet, 'wallet'), txHash, logIndex: t.logIndex, blockTime: t.blockTime,
+    payload: json(transfer), provider: String(t.provider).trim().slice(0, 64), isSimulated: flag(t.isSimulated), now,
+    transfer,
+  };
+}
+
+const RAW_META_FIELDS = Object.freeze(['initiator', 'toContract', 'method', 'providerCategory', 'dex']);
+const isNil = (v) => v === null || v === undefined;
+
+/**
+ * Lengkapi field yang belum diketahui pada transfer tersimpan dari kiriman ulang (identitas sama → fakta on-chain
+ * sama): usdValue (+ priceSource), blockNumber, decimals/nama/simbol '?' token, field txMeta. Nilai yang sudah ada
+ * tidak pernah ditimpa (sama dengan dedupe normalize.js).
+ * @returns {{ merged: object, changed: boolean }}
+ */
+function mergeKnown(stored, incoming) {
+  const merged = structuredClone(stored);
+  let changed = false;
+  const fill = (target, key, value) => {
+    if (isNil(target[key]) && !isNil(value)) {
+      target[key] = value;
+      changed = true;
+    }
+  };
+  if (isNil(merged.usdValue) && isFiniteNumber(incoming.usdValue) && incoming.usdValue >= 0) {
+    merged.usdValue = incoming.usdValue;
+    merged.priceSource = incoming.priceSource ?? null;
+    changed = true;
+  }
+  fill(merged, 'blockNumber', incoming.blockNumber);
+  if (merged.token && incoming.token && typeof incoming.token === 'object') {
+    fill(merged.token, 'decimals', incoming.token.decimals);
+    fill(merged.token, 'name', incoming.token.name);
+    const sym = incoming.token.symbol;
+    if (merged.token.symbol === '?' && typeof sym === 'string' && sym !== '' && sym !== '?') {
+      merged.token.symbol = sym;
+      changed = true;
+    }
+  }
+  if (incoming.txMeta && typeof incoming.txMeta === 'object') {
+    const meta = merged.txMeta && typeof merged.txMeta === 'object' ? merged.txMeta : {};
+    for (const f of RAW_META_FIELDS) fill(meta, f, incoming.txMeta[f]);
+    merged.txMeta = meta;
+  }
+  return { merged, changed };
+}
+
 /**
  * @param {import('better-sqlite3').Database} db
  * @param {{ clock?: () => number }} [deps] jam bila `now` tidak diberikan per panggilan (default Date.now)
  */
 export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}) {
+  // WHERE statis dari kode ini sendiri (bukan masukan pengguna); semua nilai tetap parameter terikat.
+  const activityQueries = (where) => ({
+    asc: db.prepare(`SELECT * FROM sm_activities WHERE ${where} ORDER BY block_time, id LIMIT @limit`),
+    desc: db.prepare(`SELECT * FROM sm_activities WHERE ${where} ORDER BY block_time DESC, id DESC LIMIT @limit`),
+  });
   const stmt = {
     // --- wallet, label, token ---
     upsertWallet: db.prepare(`INSERT INTO sm_wallets
@@ -211,9 +333,13 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
       VALUES (@chain, @address, @source, @label, @category, @confidence, @fetchedAt)
       ON CONFLICT (chain, address, source, label) DO UPDATE SET
         category = excluded.category, confidence = excluded.confidence, fetched_at = excluded.fetched_at`),
-    labels: db.prepare(`SELECT * FROM sm_labels
-      WHERE (@chain IS NULL OR chain = @chain)
-        AND (@addresses IS NULL OR address IN (SELECT value FROM json_each(@addresses)))
+    // Empat varian (bukan pola `@x IS NULL OR …`) agar indeks PK (chain, address, …) terpakai.
+    labelsAll: db.prepare('SELECT * FROM sm_labels ORDER BY chain, address, source, label'),
+    labelsByChain: db.prepare('SELECT * FROM sm_labels WHERE chain = @chain ORDER BY chain, address, source, label'),
+    labelsByAddresses: db.prepare(`SELECT * FROM sm_labels WHERE address IN (SELECT value FROM json_each(@addresses))
+      ORDER BY chain, address, source, label`),
+    labelsByChainAddresses: db.prepare(`SELECT * FROM sm_labels
+      WHERE chain = @chain AND address IN (SELECT value FROM json_each(@addresses))
       ORDER BY chain, address, source, label`),
     upsertToken: db.prepare(`INSERT INTO sm_tokens (chain, address, symbol, name, decimals, updated_at)
       VALUES (@chain, @address, @symbol, @name, @decimals, @now)
@@ -233,21 +359,42 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     // ada tidak pernah ditimpa (hasil pertama tetap, agar riwayat tidak berubah diam-diam).
     fillUsd: db.prepare(`UPDATE sm_activities SET usd_value = @usdValue
       WHERE id = @id AND usd_value IS NULL AND @usdValue IS NOT NULL`),
-    // Tiga varian agar indeks yang tepat terpakai: per wallet, per token, atau per waktu.
-    activitiesByWallet: db.prepare(`SELECT * FROM sm_activities
-      WHERE chain = @chain AND wallet = @wallet AND block_time BETWEEN @since AND @until
+    // Tiga varian agar indeks yang tepat terpakai: per wallet, per token, atau per waktu — masing-masing dalam dua
+    // urutan (asc: tertua dulu; desc: TERBARU dulu, agar LIMIT memotong yang tertua, bukan yang terbaru).
+    activitiesByWallet: activityQueries(`chain = @chain AND wallet = @wallet AND block_time BETWEEN @since AND @until
         AND (@token IS NULL OR token_address = @token)
-        AND (@types IS NULL OR type IN (SELECT value FROM json_each(@types)))
-      ORDER BY block_time, id LIMIT @limit`),
-    activitiesByToken: db.prepare(`SELECT * FROM sm_activities
-      WHERE chain = @chain AND token_address = @token AND block_time BETWEEN @since AND @until
-        AND (@types IS NULL OR type IN (SELECT value FROM json_each(@types)))
-      ORDER BY block_time, id LIMIT @limit`),
-    activitiesByTime: db.prepare(`SELECT * FROM sm_activities
-      WHERE block_time BETWEEN @since AND @until
+        AND (@types IS NULL OR type IN (SELECT value FROM json_each(@types)))`),
+    activitiesByToken: activityQueries(`chain = @chain AND token_address = @token AND block_time BETWEEN @since AND @until
+        AND (@types IS NULL OR type IN (SELECT value FROM json_each(@types)))`),
+    activitiesByTime: activityQueries(`block_time BETWEEN @since AND @until
         AND (@chain IS NULL OR chain = @chain)
-        AND (@types IS NULL OR type IN (SELECT value FROM json_each(@types)))
-      ORDER BY block_time, id LIMIT @limit`),
+        AND (@types IS NULL OR type IN (SELECT value FROM json_each(@types)))`),
+    // Seluruh aktivitas tanpa batas (analisis universe di sinkronisasi; bukan untuk API).
+    allActivities: db.prepare('SELECT * FROM sm_activities ORDER BY block_time, id'),
+    activitiesForTxs: db.prepare(`SELECT * FROM sm_activities WHERE chain = @chain AND wallet = @wallet
+        AND tx_hash IN (SELECT value FROM json_each(@txs))`),
+    deleteActivitiesForTxs: db.prepare(`DELETE FROM sm_activities WHERE chain = @chain AND wallet = @wallet
+        AND tx_hash IN (SELECT value FROM json_each(@txs))`),
+    // Saldo bersih (IN − OUT) per wallet × token sebelum `before` — saldo awal jendela radar (holdingsBefore).
+    // @wallets = JSON [[chain, alamat], …]; join per wallet memakai indeks (chain, wallet, block_time).
+    holdingsBefore: db.prepare(`SELECT a.chain, a.wallet, a.token_address,
+        SUM(CASE a.direction WHEN 'IN' THEN a.amount ELSE -a.amount END) AS qty, SUM(a.amount) AS gross
+      FROM json_each(@wallets) w
+      JOIN sm_activities a ON a.chain = json_extract(w.value, '$[0]') AND a.wallet = json_extract(w.value, '$[1]')
+        AND a.block_time < @before
+      GROUP BY a.chain, a.wallet, a.token_address`),
+
+    // --- transfer mentah (klasifikasi ulang data terlambat) ---
+    getRaw: db.prepare(`SELECT payload_json FROM sm_raw_transfers
+      WHERE chain = @chain AND wallet = @wallet AND tx_hash = @txHash AND log_index = @logIndex`),
+    insertRaw: db.prepare(`INSERT INTO sm_raw_transfers
+        (chain, wallet, tx_hash, log_index, block_time, payload_json, provider, is_simulated, ingested_at)
+      VALUES (@chain, @wallet, @txHash, @logIndex, @blockTime, @payload, @provider, @isSimulated, @now)`),
+    updateRaw: db.prepare(`UPDATE sm_raw_transfers SET payload_json = @payload
+      WHERE chain = @chain AND wallet = @wallet AND tx_hash = @txHash AND log_index = @logIndex`),
+    rawForTxs: db.prepare(`SELECT payload_json FROM sm_raw_transfers
+      WHERE chain = @chain AND wallet = @wallet AND tx_hash IN (SELECT value FROM json_each(@txs))
+      ORDER BY block_time, tx_hash, log_index`),
 
     // --- skor & klaster ---
     upsertScore: db.prepare(`INSERT INTO sm_wallet_scores
@@ -272,6 +419,11 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
             AND json_extract(f.value, '$.code') IN (SELECT value FROM json_each(@excluding))))
       ORDER BY s.score DESC, s.chain, s.address LIMIT @limit`),
     getScore: db.prepare('SELECT * FROM sm_wallet_scores WHERE chain = ? AND address = ?'),
+    // Ringkas (tanpa batas) untuk radar on-request: skor, kelayakan, flag, klaster setiap wallet.
+    scoreSummaries: db.prepare(`SELECT chain, address, score, eligible, style, cluster_id, flags_json
+      FROM sm_wallet_scores WHERE (@chain IS NULL OR chain = @chain) ORDER BY chain, address`),
+    clusterSizes: db.prepare(`SELECT chain, cluster_id, COUNT(*) AS size FROM sm_wallet_scores
+      WHERE cluster_id IS NOT NULL GROUP BY chain, cluster_id`),
     clusterMembers: db.prepare('SELECT address FROM sm_wallet_scores WHERE chain = ? AND cluster_id = ? ORDER BY address'),
     deleteLinks: db.prepare('DELETE FROM sm_wallet_links WHERE chain = ?'),
     insertLink: db.prepare(`INSERT OR REPLACE INTO sm_wallet_links (chain, a, b, reason_type, evidence_json, created_at)
@@ -280,13 +432,16 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
       ORDER BY a, b, reason_type`),
 
     // --- Binance ---
+    // Satu kontrak boleh beberapa baris (→ AMBIGUOUS di binanceMatch.js); entri identik ditulis ulang.
     upsertMapping: db.prepare(`INSERT INTO sm_binance_map
-        (chain, contract_address, binance_asset, spot_symbol, futures_symbol, multiplier, source, verified_at)
-      VALUES (@chain, @contractAddress, @binanceAsset, @spotSymbol, @futuresSymbol, @multiplier, @source, @verifiedAt)
-      ON CONFLICT (chain, contract_address) DO UPDATE SET
-        binance_asset = excluded.binance_asset, spot_symbol = excluded.spot_symbol, futures_symbol = excluded.futures_symbol,
-        multiplier = excluded.multiplier, source = excluded.source, verified_at = excluded.verified_at`),
-    listMapping: db.prepare('SELECT * FROM sm_binance_map ORDER BY chain, contract_address'),
+        (chain, contract_address, binance_asset, spot_symbol, futures_symbol, multiplier, source, provider, verified_at)
+      VALUES (@chain, @contractAddress, @binanceAsset, @spotSymbol, @futuresSymbol, @multiplier, @source, @provider, @verifiedAt)
+      ON CONFLICT (chain, contract_address, binance_asset, IFNULL(futures_symbol, ''), multiplier) DO UPDATE SET
+        spot_symbol = excluded.spot_symbol, source = excluded.source, provider = excluded.provider,
+        verified_at = excluded.verified_at`),
+    deleteMappingOf: db.prepare('DELETE FROM sm_binance_map WHERE provider = ?'),
+    listMapping: db.prepare(`SELECT * FROM sm_binance_map
+      ORDER BY chain, contract_address, binance_asset, IFNULL(futures_symbol, ''), multiplier, id`),
 
     // --- watchlist ---
     addWatch: db.prepare(`INSERT INTO sm_watchlist (user_id, kind, chain, address, note, created_at)
@@ -296,12 +451,14 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     removeWatch: db.prepare('DELETE FROM sm_watchlist WHERE user_id = @userId AND kind = @kind AND chain = @chain AND address = @address'),
     listWatch: db.prepare(`SELECT kind, chain, address, note, created_at FROM sm_watchlist WHERE user_id = ?
       ORDER BY kind, chain, address`),
+    listAllWatch: db.prepare('SELECT user_id, kind, chain, address FROM sm_watchlist ORDER BY user_id, kind, chain, address'),
 
     // --- alert ---
     insertAlert: db.prepare(`INSERT OR IGNORE INTO sm_alerts
         (dedupe_key, kind, severity, chain, token_key, wallet, title, message, evidence_json, created_at, is_simulated)
       VALUES (@dedupeKey, @kind, @severity, @chain, @tokenKey, @wallet, @title, @message, @evidence, @createdAt, @isSimulated)`),
     existingKeys: db.prepare('SELECT dedupe_key FROM sm_alerts WHERE dedupe_key IN (SELECT value FROM json_each(?))'),
+    alertTimesSince: db.prepare('SELECT dedupe_key, created_at FROM sm_alerts WHERE created_at >= ?'),
     listAlerts: db.prepare(`SELECT a.*, (r.alert_id IS NOT NULL) AS is_read FROM sm_alerts a
       LEFT JOIN sm_alert_reads r ON r.alert_id = a.id AND r.user_id = @userId
       WHERE (@kind IS NULL OR a.kind = @kind) AND (@unreadOnly = 0 OR r.alert_id IS NULL)
@@ -311,6 +468,7 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     markAllRead: db.prepare(`INSERT OR IGNORE INTO sm_alert_reads (user_id, alert_id, read_at)
       SELECT @userId, id, @now FROM sm_alerts`),
     getPrefs: db.prepare('SELECT prefs_json, updated_at FROM sm_alert_prefs WHERE user_id = ?'),
+    listAllPrefs: db.prepare('SELECT user_id, prefs_json FROM sm_alert_prefs ORDER BY user_id'),
     savePrefs: db.prepare(`INSERT INTO sm_alert_prefs (user_id, prefs_json, updated_at) VALUES (@userId, @prefs, @now)
       ON CONFLICT (user_id) DO UPDATE SET prefs_json = excluded.prefs_json, updated_at = excluded.updated_at`),
 
@@ -336,6 +494,11 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     setCursor: db.prepare(`INSERT INTO sm_sync_cursors (provider, chain, address, cursor, updated_at)
       VALUES (@provider, @chain, @address, @cursor, @now)
       ON CONFLICT (provider, chain, address) DO UPDATE SET cursor = excluded.cursor, updated_at = excluded.updated_at`),
+    walletSyncTimes: db.prepare(`SELECT chain, address, MAX(updated_at) AS synced_at FROM sm_sync_cursors
+      WHERE address <> '' GROUP BY chain, address`),
+    getSyncState: db.prepare('SELECT value_json, updated_at FROM sm_sync_state WHERE key = ?'),
+    setSyncState: db.prepare(`INSERT INTO sm_sync_state (key, value_json, updated_at) VALUES (@key, @value, @now)
+      ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`),
 
     // --- evaluasi & ringkasan ---
     insertEvaluation: db.prepare(`INSERT INTO sm_evaluations (computed_at, params_json, report_json, is_simulated)
@@ -376,7 +539,44 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
       stmt.deleteLinks.run(chain);
       for (const r of rows) stmt.insertLink.run(r);
     }),
-    upsertMapping: db.transaction((rows) => { for (const r of rows) stmt.upsertMapping.run(r); }),
+    replaceMapping: db.transaction((owners, rows) => {
+      for (const owner of owners) stmt.deleteMappingOf.run(owner);
+      for (const r of rows) stmt.upsertMapping.run(r);
+    }),
+    insertRaw: db.transaction((rows) => {
+      const fresh = [];
+      for (const r of rows) {
+        const stored = stmt.getRaw.get(r);
+        if (!stored) {
+          stmt.insertRaw.run(r);
+          fresh.push(r.transfer);
+          continue;
+        }
+        const { merged, changed } = mergeKnown(JSON.parse(stored.payload_json), r.transfer);
+        if (changed) {
+          stmt.updateRaw.run({ ...r, payload: json(merged) });
+          fresh.push(merged);
+        }
+      }
+      return fresh;
+    }),
+    replaceActivities: db.transaction((key, rows, now) => {
+      const before = new Map(stmt.activitiesForTxs.all(key).map((row) => [row.id, row]));
+      const deleted = stmt.deleteActivitiesForTxs.run(key).changes;
+      let inserted = 0;
+      const newIds = [];
+      const changedIds = [];
+      for (const r of rows) {
+        const prev = before.get(r.id);
+        if (stmt.insertActivity.run({ ...r, now: prev ? prev.ingested_at : now }).changes !== 1) continue;
+        inserted += 1;
+        if (!prev) newIds.push(r.id);
+        else if (activitySignature(prev) !== paramsSignature(r)) changedIds.push(r.id);
+      }
+      const after = new Set(rows.map((r) => r.id));
+      const removedIds = [...before.keys()].filter((id) => !after.has(id)).sort();
+      return { deleted, inserted, newIds, changedIds, removedIds };
+    }),
     insertAlerts: db.transaction((rows) => {
       let inserted = 0;
       for (const r of rows) inserted += stmt.insertAlert.run(r).changes;
@@ -385,6 +585,14 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
   };
 
   /** Validasi item watchlist dari masukan pengguna → baris kanonik atau null. */
+  /** Baris sm_labels untuk filter chain/alamat opsional (alamat sudah kanonik). */
+  function labelRows(chain, addresses) {
+    if (addresses !== null && addresses.length === 0) return [];
+    if (chain === null) return addresses === null ? stmt.labelsAll.all() : stmt.labelsByAddresses.all({ addresses: json(addresses) });
+    return addresses === null ? stmt.labelsByChain.all({ chain })
+      : stmt.labelsByChainAddresses.all({ chain, addresses: json(addresses) });
+  }
+
   function watchItem(userId, item) {
     if (!Number.isInteger(userId) || userId < 1) return null;
     if (item === null || typeof item !== 'object') return null;
@@ -470,16 +678,17 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     },
 
     /**
-     * Label terbaik per alamat (keyakinan tertinggi, lalu terbaru) — bentuk `labels` yang dipakai classify.js.
+     * Label terbaik per alamat — bentuk `labels` yang dipakai classify.js. Urutan pilihan: kategori infrastruktur/
+     * pengecuali (INFRA_LABEL_CATEGORIES) dulu berapa pun keyakinannya, lalu keyakinan tertinggi, lalu terbaru.
      * Tanpa `addresses` → semua label chain tersebut; tanpa `chain` → semua chain.
      * @returns {Promise<Map<string, object>>} kunci `chain:address`
      */
     async getLabels({ chain = null, addresses = null } = {}) {
       if (chain !== null) assertChain(chain);
       const normalized = addresses === null ? null
-        : addresses.map((a) => (chain === null ? a : normalizeAddress(chain, a))).filter((a) => a !== null);
+        : [...new Set(addresses.map((a) => (chain === null ? a : normalizeAddress(chain, a))).filter((a) => typeof a === 'string'))];
       const out = new Map();
-      for (const row of stmt.labels.all({ chain, addresses: normalized === null ? null : json(normalized) })) {
+      for (const row of labelRows(chain, normalized)) {
         const label = labelOf(row);
         const key = keyOf(row.chain, row.address);
         const prev = out.get(key);
@@ -492,7 +701,7 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     async listLabelsFor(chain, addr) {
       const a = isChain(chain) ? normalizeAddress(chain, addr) : null;
       if (a === null) return [];
-      return stmt.labels.all({ chain, addresses: json([a]) }).map(labelOf);
+      return labelRows(chain, [a]).map(labelOf);
     },
 
     /** Upsert metadata token; field null tidak menimpa nilai yang sudah ada. */
@@ -523,12 +732,17 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     },
 
     /**
-     * Aktivitas terurut `block_time, id`. `wallet` butuh `chain`; `tokenAddress` butuh `chain`.
-     * @param {{ chain?, wallet?, tokenAddress?, since?, until?, types?: string[], limit?: number }} [filter]
+     * Aktivitas terurut `block_time, id` (order 'asc', default) atau TERBARU dulu (order 'desc' — LIMIT lalu memotong
+     * yang tertua, bukan yang terbaru). `wallet` butuh `chain`; `tokenAddress` butuh `chain`.
+     * @param {{ chain?, wallet?, tokenAddress?, since?, until?, types?: string[], limit?: number,
+     *   order?: 'asc'|'desc' }} [filter]
      */
-    async listActivities({ chain = null, wallet = null, tokenAddress = null, since = null, until = null, types = null, limit = 10_000 } = {}) {
+    async listActivities({
+      chain = null, wallet = null, tokenAddress = null, since = null, until = null, types = null, limit = 10_000, order = 'asc',
+    } = {}) {
       if (chain !== null) assertChain(chain);
       assertLimit(limit, ACTIVITY_LIMIT_MAX);
+      if (order !== 'asc' && order !== 'desc') throw new RangeError("order harus 'asc' atau 'desc'");
       if ((wallet !== null || tokenAddress !== null) && chain === null) throw new RangeError('Filter wallet/token membutuhkan chain');
       if (types !== null && (!Array.isArray(types) || types.some((t) => !ACTIVITY_TYPES.includes(t)))) {
         throw new RangeError('types harus subset ACTIVITY_TYPES');
@@ -544,7 +758,86 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
       };
       const query = params.wallet !== null ? stmt.activitiesByWallet
         : params.token !== null ? stmt.activitiesByToken : stmt.activitiesByTime;
-      return query.all(params).map(activityOf);
+      return query[order].all(params).map(activityOf);
+    },
+
+    /**
+     * SELURUH aktivitas tersimpan (urut block_time, id) tanpa batas — hanya untuk analisis universe di sinkronisasi
+     * (PnL FIFO butuh riwayat lengkap; pemotongan diam-diam akan merusak skor). Bukan untuk route API.
+     */
+    async listAllActivities() {
+      return stmt.allActivities.all().map(activityOf);
+    },
+
+    /**
+     * Saldo bersih (Σ IN − Σ OUT aktivitas tersimpan) per wallet × token SEBELUM `before` — masukan `holdingsBefore`
+     * radar. Setiap wallet yang diminta selalu tercantum (Map kosong = tidak memegang apa pun). Saldo ≤ 1e-9 × total
+     * volume (sisa pembulatan) atau negatif (aktivitas masuk tidak tercatat) dianggap 0.
+     * @param {{ before: number, wallets: string[] }} input walletKey `chain:alamat`
+     * @returns {Promise<Map<string, Map<string, number>>>} walletKey → tokenKey → jumlah
+     */
+    async holdingsBefore({ before, wallets }) {
+      assertTime(before, 'before');
+      const keys = [...new Set(wallets)];
+      const out = new Map(keys.map((k) => [k, new Map()]));
+      const pairs = keys.map((k) => [k.slice(0, k.indexOf(':')), k.slice(k.indexOf(':') + 1)]);
+      if (pairs.length === 0) return out;
+      for (const row of stmt.holdingsBefore.all({ before, wallets: json(pairs) })) {
+        const qty = row.qty > row.gross * 1e-9 ? row.qty : 0;
+        if (qty > 0) out.get(keyOf(row.chain, row.wallet))?.set(keyOf(row.chain, row.token_address), qty);
+      }
+      return out;
+    },
+
+    /**
+     * Simpan transfer mentah (keluaran normalizeTransfers) untuk SATU wallet yang dilacak (chain dari tiap transfer).
+     * Kunci (chain, wallet, txHash, logIndex): kiriman ulang diabaikan, kecuali membawa info yang sebelumnya tidak
+     * diketahui (usdValue, decimals, txMeta, …) — baris tersimpan dilengkapi (lihat mergeKnown).
+     * @param {object[]} transfers RawTransfer ternormalisasi
+     * @param {string} wallet alamat wallet
+     * @returns {Promise<object[]>} transfer BARU bagi wallet ini + transfer tersimpan yang kini lebih lengkap (bentuk
+     *   gabungan). Tx dari transfer-transfer ini perlu diklasifikasi ulang.
+     */
+    async insertRawTransfers(transfers, wallet, { now = clock() } = {}) {
+      if (!Array.isArray(transfers)) throw new TypeError('transfers harus array');
+      return tx.insertRaw(transfers.map((t) => rawParams(t, wallet, now)));
+    },
+
+    /**
+     * Transfer mentah tersimpan milik wallet untuk sekumpulan tx (urut blockTime, txHash, logIndex) — seluruh kaki
+     * yang diketahui, untuk klasifikasi ulang tx utuh.
+     * @returns {Promise<object[]>}
+     */
+    async listRawTransfersForTxs(chain, wallet, txHashes) {
+      assertChain(chain);
+      const w = address(chain, wallet, 'wallet');
+      const txs = normalizeTxs(chain, txHashes);
+      if (txs.length === 0) return [];
+      return stmt.rawForTxs.all({ chain, wallet: w, txs: json(txs) }).map((r) => JSON.parse(r.payload_json));
+    },
+
+    /**
+     * Ganti SELURUH aktivitas satu wallet untuk sekumpulan tx: hapus lalu sisip dalam SATU transaksi (klasifikasi ulang
+     * tx utuh saat kaki terlambat datang — baris lama yang tidak lagi berlaku ikut terhapus). `ingested_at` aktivitas
+     * yang tetap ada dipertahankan. Aktivitas di luar chain × wallet × tx tersebut → RangeError (tidak ada yang ditulis).
+     * @returns {Promise<{ deleted: number, inserted: number, newIds: string[], changedIds: string[], removedIds: string[] }>}
+     *   newIds = id yang sebelumnya tidak ada; changedIds = id lama yang isinya berubah; removedIds = id lama yang hilang
+     */
+    async replaceActivitiesForTxs(chain, wallet, txHashes, activities, { now = clock() } = {}) {
+      assertChain(chain);
+      const w = address(chain, wallet, 'wallet');
+      const txs = normalizeTxs(chain, txHashes);
+      if (!Array.isArray(activities)) throw new TypeError('activities harus array');
+      const allowed = new Set(txs);
+      const rows = activities.map((a) => {
+        const p = activityParams(a, now);
+        if (p.chain !== chain || p.wallet !== w || !allowed.has(p.txHash)) {
+          throw new RangeError('Aktivitas di luar wallet × tx yang diganti');
+        }
+        return p;
+      });
+      if (txs.length === 0) return { deleted: 0, inserted: 0, newIds: [], changedIds: [], removedIds: [] };
+      return tx.replaceActivities({ chain, wallet: w, txs: json(txs) }, rows, now);
     },
 
     /**
@@ -589,6 +882,23 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     },
 
     /**
+     * Ringkasan skor SEMUA wallet (tanpa batas; tanpa komponen/metrik/PnL) — masukan radar on-request.
+     * @returns {Promise<Array<{ chain, address, score, eligible, style, clusterId, flags }>>}
+     */
+    async listScoreSummaries({ chain = null } = {}) {
+      if (chain !== null) assertChain(chain);
+      return stmt.scoreSummaries.all({ chain }).map((r) => ({
+        chain: r.chain, address: r.address, score: r.score, eligible: toBool(r.eligible), style: r.style,
+        clusterId: r.cluster_id, flags: parse(r.flags_json),
+      }));
+    },
+
+    /** @returns {Promise<Map<string, number>>} clusterId → jumlah anggota (id klaster sudah memuat chain) */
+    async clusterSizes() {
+      return new Map(stmt.clusterSizes.all().map((r) => [r.cluster_id, r.size]));
+    },
+
+    /**
      * Ganti seluruh tepi tautan satu chain (hasil clusters.js run terakhir). Pasangan diurutkan (a < b);
      * `type` (atau `reasonType`) = jenis bukti.
      * @param {Array<{ a, b, type?, reasonType?, evidence? }>} links
@@ -624,24 +934,42 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
       return stmt.clusterMembers.all(chain, clusterId).map((r) => r.address);
     },
 
-    /** Upsert baris mapping Binance (bentuk mappingRows binanceMatch.js). */
-    async upsertBinanceMap(rows) {
-      const params = rows.map((r) => {
-        if (!nonEmpty(r.source)) throw new RangeError('Mapping Binance tanpa sumber ditolak');
-        if (!nonEmpty(r.binanceAsset)) throw new RangeError('binanceAsset wajib diisi');
-        for (const [name, v] of [['spotSymbol', r.spotSymbol], ['futuresSymbol', r.futuresSymbol]]) {
-          if (v !== null && v !== undefined && !SYMBOL_RE.test(v)) throw new RangeError(`${name} tidak valid`);
+    /**
+     * Simpan mapping Binance (bentuk mappingRows binanceMatch.js). Satu kontrak boleh memiliki beberapa baris berbeda
+     * (→ AMBIGUOUS); entri identik (chain, kontrak, aset, futures, multiplier) ditulis ulang.
+     * PENGGANTIAN per penyegaran: dalam SATU transaksi, seluruh baris milik `provider` dihapus lalu diganti baris baru,
+     * sehingga kontrak yang delisting/migrasi ikut hilang. Tanpa opsi `provider`, pemilik = `source` tiap baris
+     * (baris dari satu sumber mengganti baris sumber itu). Sumber komposit adapter (mis. 'binance-getall+prefix-rule')
+     * membutuhkan opsi `provider` agar penggantian mencakup semua variannya.
+     * Validasi PER BARIS: baris tidak valid (mis. simbol aset non-ASCII, tanpa sumber, multiplier ≤ 0) DILEWATI dan
+     * dilaporkan di `rejected` — satu baris rusak tidak menggagalkan seluruh penyegaran. Penyegaran tanpa satu pun
+     * baris valid TIDAK menghapus mapping lama (respons rusak tidak boleh mengosongkan peta).
+     * @param {object[]} rows
+     * @param {{ provider?: string|null }} [options] id provider pemilik penyegaran (mis. 'binance-mapping')
+     * @returns {Promise<{ upserted: number, rejected: Array<{ input: any, reason: string }> }>}
+     */
+    async upsertBinanceMap(rows, { provider = null } = {}) {
+      if (provider !== null) assertProvider(provider);
+      if (!Array.isArray(rows)) throw new TypeError('rows harus array');
+      const params = [];
+      const rejected = [];
+      for (const r of rows) {
+        const reason = mappingProblem(r);
+        if (reason !== null) {
+          rejected.push({ input: r, reason });
+          continue;
         }
-        const multiplier = r.multiplier ?? 1;
-        if (!Number.isInteger(multiplier) || multiplier < 1) throw new RangeError('multiplier harus bilangan bulat ≥ 1');
-        return {
-          chain: r.chain, contractAddress: address(r.chain, r.contractAddress, 'contractAddress'), binanceAsset: r.binanceAsset,
-          spotSymbol: r.spotSymbol ?? null, futuresSymbol: r.futuresSymbol ?? null, multiplier, source: r.source.trim(),
-          verifiedAt: optionalTime(r.verifiedAt, 'verifiedAt'),
-        };
-      });
-      tx.upsertMapping(params);
-      return params.length;
+        params.push({
+          chain: r.chain, contractAddress: normalizeAddress(r.chain, r.contractAddress), binanceAsset: r.binanceAsset.trim(),
+          spotSymbol: r.spotSymbol ?? null, futuresSymbol: r.futuresSymbol ?? null, multiplier: r.multiplier ?? 1,
+          source: r.source.trim(), provider: provider ?? r.source.trim().slice(0, 64), verifiedAt: r.verifiedAt ?? null,
+        });
+      }
+      if (params.length > 0) {
+        const owners = provider !== null ? [provider] : [...new Set(params.map((p) => p.provider))];
+        tx.replaceMapping(owners, params);
+      }
+      return { upserted: params.length, rejected };
     },
 
     async listBinanceMap() {
@@ -672,8 +1000,27 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
       return stmt.listWatch.all(userId).map((r) => ({ kind: r.kind, chain: r.chain, address: r.address, note: r.note, createdAt: r.created_at }));
     },
 
+    /** Watchlist SEMUA pengguna (sinkronisasi: wallet dipantau selalu dilacak; gabungan watchlist untuk alert). */
+    async listAllWatchlist() {
+      return stmt.listAllWatch.all().map((r) => ({ userId: r.user_id, kind: r.kind, chain: r.chain, address: r.address }));
+    },
+
+    /** Semua label (setiap sumber) untuk banyak alamat SATU chain → Map alamat kanonik → label[]. */
+    async listLabelsForMany(chain, addresses) {
+      assertChain(chain);
+      const normalized = [...new Set(addresses.map((a) => normalizeAddress(chain, a)).filter((a) => a !== null))];
+      const out = new Map();
+      for (const row of labelRows(chain, normalized)) {
+        const list = out.get(row.address) ?? [];
+        list.push(labelOf(row));
+        out.set(row.address, list);
+      }
+      return out;
+    },
+
     /**
-     * Simpan alert (Alert kontrak alerts.js). Key dedupe yang sudah ada diabaikan.
+     * Simpan alert (Alert kontrak alerts.js). Key dedupe yang sudah ada diabaikan. `isSimulated` WAJIB boolean
+     * (tidak ada default 0 — alert dari data simulasi tidak boleh tersimpan sebagai data live).
      * @returns {Promise<number>} jumlah alert baru
      */
     async insertAlerts(alerts) {
@@ -684,6 +1031,8 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
         assertChain(a.chain);
         assertTime(a.createdAt, 'alert.createdAt');
         if (!nonEmpty(a.title) || !nonEmpty(a.message)) throw new RangeError('Judul dan pesan alert wajib diisi');
+        // Tanpa default: alert dari data simulasi tidak boleh tersimpan diam-diam sebagai data live.
+        if (typeof a.isSimulated !== 'boolean') throw new RangeError('alert.isSimulated wajib boolean');
         return {
           dedupeKey: a.dedupeKey, kind: a.kind, severity: a.severity, chain: a.chain, tokenKey: a.tokenKey ?? null,
           wallet: a.wallet ?? null, title: a.title, message: a.message, evidence: json(a.evidence ?? {}),
@@ -697,6 +1046,22 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
     async existingAlertKeys(keys) {
       if (keys.length === 0) return new Set();
       return new Set(stmt.existingKeys.all(json([...keys])).map((r) => r.dedupe_key));
+    },
+
+    /**
+     * Waktu alert terakhir per kunci dasar `${kind}:${tokenKey}:${wallet|'*'}` (dedupeKey tanpa segmen ember cooldown
+     * terakhir) untuk alert dengan createdAt ≥ `since` — masukan cooldown deriveAlerts (`lastAlertAt`).
+     * @returns {Promise<Map<string, number>>}
+     */
+    async lastAlertTimes({ since = 0 } = {}) {
+      assertTime(since, 'since');
+      const out = new Map();
+      for (const r of stmt.alertTimesSince.all(since)) {
+        const i = r.dedupe_key.lastIndexOf(':');
+        const base = i > 0 ? r.dedupe_key.slice(0, i) : r.dedupe_key;
+        if (!(out.get(base) >= r.created_at)) out.set(base, r.created_at);
+      }
+      return out;
     },
 
     /** Alert terbaru dulu dengan status `read` milik pengguna tersebut. */
@@ -731,6 +1096,11 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
       if (prefs === null || typeof prefs !== 'object' || Array.isArray(prefs)) throw new TypeError('prefs harus objek');
       stmt.savePrefs.run({ userId, prefs: json(prefs), now });
       return prefs;
+    },
+
+    /** Preferensi notifikasi semua pengguna yang pernah menyimpannya (sinkronisasi: ambang paling longgar). */
+    async listAllAlertPrefs() {
+      return stmt.listAllPrefs.all().map((r) => ({ userId: r.user_id, prefs: JSON.parse(r.prefs_json) }));
     },
 
     async recordProviderAttempt(provider, { now = clock(), isSimulated = false } = {}) {
@@ -769,6 +1139,24 @@ export function createSmartMoneyRepository(db, { clock = () => Date.now() } = {}
       const a = addr === '' || addr === null || addr === undefined ? '' : address(chain, addr, 'alamat kursor');
       if (cursor !== null && typeof cursor !== 'string') throw new TypeError('cursor harus string atau null');
       stmt.setCursor.run({ provider, chain, address: a, cursor, now });
+    },
+
+    /** @returns {Promise<Map<string, number>>} walletKey → waktu kursor wallet terakhir ditulis (provider mana pun) */
+    async listWalletSyncTimes() {
+      return new Map(stmt.walletSyncTimes.all().map((r) => [keyOf(r.chain, r.address), r.synced_at]));
+    },
+
+    /** @returns {Promise<{ value: any, updatedAt: number }|null>} status sinkronisasi tersimpan untuk `key` */
+    async getSyncState(key) {
+      const row = typeof key === 'string' ? stmt.getSyncState.get(key) : undefined;
+      return row ? { value: JSON.parse(row.value_json), updatedAt: row.updated_at } : null;
+    },
+
+    /** Simpan status sinkronisasi (nilai JSON) untuk `key` (1..64 karakter). */
+    async setSyncState(key, value, { now = clock() } = {}) {
+      if (typeof key !== 'string' || key.length < 1 || key.length > 64) throw new RangeError('key status sinkronisasi tidak valid');
+      if (value === undefined) throw new TypeError('value wajib diisi');
+      stmt.setSyncState.run({ key, value: json(value), now });
     },
 
     /** @returns {Promise<number>} id evaluasi */

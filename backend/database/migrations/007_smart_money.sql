@@ -18,6 +18,8 @@ CREATE TABLE sm_wallets (
   PRIMARY KEY (chain, address)
 ) STRICT, WITHOUT ROWID;
 
+CREATE INDEX idx_sm_wallets_simulated ON sm_wallets(is_simulated) WHERE is_simulated = 1;
+
 -- Label alamat. Satu alamat boleh memiliki beberapa label dari sumber berbeda; label tanpa sumber ditolak.
 CREATE TABLE sm_labels (
   chain       TEXT    NOT NULL CHECK (chain IN ('ethereum', 'base', 'arbitrum', 'optimism', 'bsc', 'polygon', 'solana')),
@@ -30,6 +32,9 @@ CREATE TABLE sm_labels (
   fetched_at  INTEGER NOT NULL,
   PRIMARY KEY (chain, address, source, label)
 ) STRICT, WITHOUT ROWID;
+
+-- Pencarian label per alamat lintas chain (tanpa filter chain, PK tidak terpakai).
+CREATE INDEX idx_sm_labels_address ON sm_labels(address);
 
 -- Metadata token (tampilan saja; identitas tetap chain + alamat).
 CREATE TABLE sm_tokens (
@@ -72,6 +77,9 @@ CREATE TABLE sm_activities (
 CREATE INDEX idx_sm_activities_wallet_time ON sm_activities(chain, wallet, block_time);
 CREATE INDEX idx_sm_activities_token_time ON sm_activities(chain, token_address, block_time);
 CREATE INDEX idx_sm_activities_time ON sm_activities(block_time);
+-- Indeks parsial "ada data simulasi?" (pita DATA SIMULASI di setiap respons): EXISTS cukup membaca indeks kecil,
+-- tidak memindai seluruh tabel ketika tidak ada data simulasi. Pola sama untuk sm_wallets/sm_alerts/sm_evaluations.
+CREATE INDEX idx_sm_activities_simulated ON sm_activities(is_simulated) WHERE is_simulated = 1;
 
 -- Skor wallet terakhir (walletScore.js) beserta penjelasan, keterbatasan, flag, dan ringkasan PnL.
 CREATE TABLE sm_wallet_scores (
@@ -107,7 +115,12 @@ CREATE TABLE sm_wallet_links (
 ) STRICT, WITHOUT ROWID;
 
 -- Pemetaan token on-chain → pasar Binance. Hanya kecocokan chain + kontrak persis yang ditautkan ke sinyal.
+-- Satu kontrak BOLEH memiliki beberapa baris (kontrak bersama beberapa aset Binance, atau beberapa perp ber-prefix
+-- seperti PEPEUSDT & 1000PEPEUSDT) → binanceMatch.js menilainya AMBIGUOUS. Kunci (chain, kontrak) saja akan
+-- meruntuhkan baris-baris itu menjadi satu dan menghasilkan MATCHED palsu. `provider` = pemilik baris: setiap
+-- penyegaran dari satu provider MENGGANTI seluruh barisnya (kontrak yang delisting/migrasi ikut hilang).
 CREATE TABLE sm_binance_map (
+  id                INTEGER PRIMARY KEY,
   chain             TEXT    NOT NULL CHECK (chain IN ('ethereum', 'base', 'arbitrum', 'optimism', 'bsc', 'polygon', 'solana')),
   contract_address  TEXT    NOT NULL,
   binance_asset     TEXT    NOT NULL CHECK (length(binance_asset) BETWEEN 1 AND 32),
@@ -115,9 +128,13 @@ CREATE TABLE sm_binance_map (
   futures_symbol    TEXT    CHECK (futures_symbol IS NULL OR futures_symbol GLOB '[A-Z0-9]*'),
   multiplier        INTEGER NOT NULL DEFAULT 1 CHECK (multiplier >= 1),
   source            TEXT    NOT NULL CHECK (length(trim(source)) > 0),
-  verified_at       INTEGER,
-  PRIMARY KEY (chain, contract_address)
-) STRICT, WITHOUT ROWID;
+  provider          TEXT    NOT NULL CHECK (length(trim(provider)) BETWEEN 1 AND 64),
+  verified_at       INTEGER
+) STRICT;
+
+CREATE UNIQUE INDEX idx_sm_binance_map_entry
+  ON sm_binance_map(chain, contract_address, binance_asset, IFNULL(futures_symbol, ''), multiplier);
+CREATE INDEX idx_sm_binance_map_provider ON sm_binance_map(provider);
 
 -- Watchlist per pengguna (wallet atau token). Terhapus bersama penggunanya.
 CREATE TABLE sm_watchlist (
@@ -147,6 +164,7 @@ CREATE TABLE sm_alerts (
 ) STRICT;
 
 CREATE INDEX idx_sm_alerts_created ON sm_alerts(created_at);
+CREATE INDEX idx_sm_alerts_simulated ON sm_alerts(is_simulated) WHERE is_simulated = 1;
 
 -- Status baca alert per pengguna.
 CREATE TABLE sm_alert_reads (
@@ -187,6 +205,30 @@ CREATE TABLE sm_sync_cursors (
   PRIMARY KEY (provider, chain, address)
 ) STRICT, WITHOUT ROWID;
 
+-- Transfer mentah (RawTransfer ternormalisasi, docs/15 §1) per wallet yang dilacak: dasar klasifikasi ULANG satu tx
+-- utuh saat kaki yang terlambat datang (mis. kaki quote-keluar muncul di batch berikutnya → TRANSFER_IN menjadi
+-- SWAP_BUY). Kunci menyertakan `wallet`: transfer antara dua wallet yang sama-sama dilacak (L1 → L2) harus tercatat
+-- "baru" bagi KEDUA wallet agar masing-masing mengklasifikasi tx tersebut.
+CREATE TABLE sm_raw_transfers (
+  chain         TEXT    NOT NULL CHECK (chain IN ('ethereum', 'base', 'arbitrum', 'optimism', 'bsc', 'polygon', 'solana')),
+  wallet        TEXT    NOT NULL,
+  tx_hash       TEXT    NOT NULL,
+  log_index     INTEGER NOT NULL CHECK (log_index >= 0),
+  block_time    INTEGER NOT NULL,
+  payload_json  TEXT    NOT NULL CHECK (json_valid(payload_json)),
+  provider      TEXT    NOT NULL CHECK (length(provider) BETWEEN 1 AND 64),
+  is_simulated  INTEGER NOT NULL DEFAULT 0 CHECK (is_simulated IN (0, 1)),
+  ingested_at   INTEGER NOT NULL,
+  PRIMARY KEY (chain, wallet, tx_hash, log_index)
+) STRICT, WITHOUT ROWID;
+
+-- Status layanan sinkronisasi (kunci → JSON): mis. waktu penyegaran mapping Binance terakhir, ringkasan run terakhir.
+CREATE TABLE sm_sync_state (
+  key         TEXT    PRIMARY KEY CHECK (length(key) BETWEEN 1 AND 64),
+  value_json  TEXT    NOT NULL CHECK (json_valid(value_json)),
+  updated_at  INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+
 -- Laporan evaluasi historis tanpa look-ahead (evaluate.js).
 CREATE TABLE sm_evaluations (
   id            INTEGER PRIMARY KEY,
@@ -197,3 +239,4 @@ CREATE TABLE sm_evaluations (
 ) STRICT;
 
 CREATE INDEX idx_sm_evaluations_computed ON sm_evaluations(computed_at);
+CREATE INDEX idx_sm_evaluations_simulated ON sm_evaluations(is_simulated) WHERE is_simulated = 1;

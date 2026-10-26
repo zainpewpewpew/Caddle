@@ -109,19 +109,23 @@ Kontrak lengkap: `docs/15-kontrak-smart-money.md`. Semua tabel `STRICT`, ber-pre
 | Tabel | Kunci & constraint penting |
 |---|---|
 | `sm_wallets` | PK `(chain, address)`; `first_seen_at`, `last_activity_at`, `discovered_via` (sumber penemuan pertama dipertahankan), `discovery_reason`, `is_simulated` |
-| `sm_labels` | PK `(chain, address, source, label)`; `source` wajib tidak kosong (label tanpa sumber ditolak); `category` ∈ `LABEL_CATEGORIES`; `confidence` 0..1 |
+| `sm_labels` | PK `(chain, address, source, label)` + indeks `(address)`; `source` wajib tidak kosong (label tanpa sumber ditolak); `category` ∈ `LABEL_CATEGORIES`; `confidence` 0..1. `getLabels` memilih satu label per alamat: kategori infrastruktur/pengecuali (cex, cex_deposit, bridge, dex_router, dex_pool, market_maker, mev_bot, contract, lp_token, airdrop_distributor) selalu menang, lalu keyakinan, lalu terbaru; daftar lengkap lewat `listLabelsFor` |
 | `sm_tokens` | PK `(chain, address)`; metadata tampilan (`symbol`, `name`, `decimals`) |
 | `sm_activities` | PK `id` = kunci dedupe Activity (`chain:tx:wallet:token`) → duplikat diabaikan (`INSERT OR IGNORE`); data terlambat hanya mengisi `usd_value` yang masih `NULL`. `type`/`direction`/`confidence` di-`CHECK`, `amount > 0`. Indeks `(chain, wallet, block_time)`, `(chain, token_address, block_time)`, `(block_time)` |
 | `sm_wallet_scores` | PK `(chain, address)`; skor 0..100, `eligible`, `style`, `cluster_id`, komponen/metrik/alasan/keterbatasan/flag/PnL sebagai JSON |
 | `sm_wallet_links` | PK `(chain, a, b, reason_type)` dengan `CHECK (a < b)`; bukti tautan JSON. Diganti per chain setiap run klaster |
-| `sm_binance_map` | PK `(chain, contract_address)`; `futures_symbol` + `multiplier ≥ 1` (mis. `1000PEPEUSDT` × 1000); `source` wajib |
+| `sm_binance_map` | `id` + indeks UNIK `(chain, contract_address, binance_asset, IFNULL(futures_symbol, ''), multiplier)`: satu kontrak boleh beberapa baris (kontrak bersama / beberapa perp ber-prefix → `AMBIGUOUS`, bukan `MATCHED` palsu); `futures_symbol` + `multiplier ≥ 1` (mis. `1000PEPEUSDT` × 1000); `source` wajib; `provider` = pemilik baris — setiap penyegaran provider mengganti seluruh barisnya secara atomik (kontrak delisting/migrasi hilang); baris tidak valid dilewati & dilaporkan, penyegaran tanpa baris valid tidak menghapus mapping lama |
 | `sm_watchlist` | PK `(user_id, kind, chain, address)`; `kind` ∈ `WALLET`/`TOKEN`; FK `users` `ON DELETE CASCADE` |
 | `sm_alerts` | `dedupe_key` UNIK (alert ganda dalam satu ember cooldown diabaikan); `kind`/`severity` di-`CHECK` |
 | `sm_alert_reads` | PK `(user_id, alert_id)`; status baca per pengguna; cascade dari `users` dan `sm_alerts` |
 | `sm_alert_prefs` | PK `user_id` (cascade); `prefs_json` |
 | `sm_provider_status` | PK `provider`; percobaan/sukses terakhir, `last_error_code` ∈ `PROVIDER_ERROR_CODES`, pesan ≤ 500 karakter tanpa kunci API, cakupan JSON |
 | `sm_sync_cursors` | PK `(provider, chain, address)`; `address = ''` untuk kursor tingkat chain |
+| `sm_raw_transfers` | PK `(chain, wallet, tx_hash, log_index)`; RawTransfer ternormalisasi (`payload_json`) per wallet dilacak — dasar klasifikasi ulang tx UTUH saat kaki terlambat datang (`replaceActivitiesForTxs`: hapus + sisip atomik per wallet × tx). `wallet` ikut kunci agar transfer antar dua wallet dilacak tercatat baru bagi keduanya |
+| `sm_sync_state` | PK `key`; `value_json` (mis. waktu penyegaran mapping Binance terakhir, ringkasan run sinkronisasi terakhir) |
 | `sm_evaluations` | Laporan evaluasi historis (`params_json`, `report_json`); yang terbaru dibaca `latestEvaluation()` |
+
+Indeks parsial `WHERE is_simulated = 1` pada `sm_activities`, `sm_wallets`, `sm_alerts`, `sm_evaluations` membuat pemeriksaan "ada data simulasi?" (pita DATA SIMULASI di setiap respons) membaca indeks kecil, bukan memindai tabel. `sm_alerts.is_simulated` wajib diisi eksplisit oleh pemanggil (tidak ada default diam-diam).
 
 ## 7. Catatan presisi
 

@@ -7,7 +7,8 @@ import { MigrationError, migrate } from '../../backend/database/migrate.js';
 
 const REQUIRED_TABLES = ['users', 'sessions', 'symbols', 'candles', 'features', 'pattern_definitions', 'pattern_examples',
   'signals', 'signal_events', 'backtest_runs', 'backtest_results', 'settings', 'audit_logs',
-  'sm_wallets', 'sm_labels', 'sm_activities', 'sm_watchlist', 'sm_alerts', 'sm_alert_reads', 'sm_evaluations'];
+  'sm_wallets', 'sm_labels', 'sm_activities', 'sm_watchlist', 'sm_alerts', 'sm_alert_reads', 'sm_evaluations',
+  'sm_binance_map', 'sm_raw_transfers', 'sm_sync_state'];
 
 const tables = (db) => db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { openDatabase } from '../../../backend/database/connection.js';
 import { migrate } from '../../../backend/database/migrate.js';
 import { createRepositories } from '../../../backend/database/repositories/index.js';
+import { matchToken } from '../../../backend/smartmoney/binanceMatch.js';
 import { createSmartMoneyRepository } from '../../../backend/smartmoney/repository.js';
 
 // Data uji deterministik — alamat & hash FIKTIF (sha256 dari label), bukan data on-chain nyata.
@@ -247,8 +248,178 @@ describe('repositori smart money', () => {
     const pepeA = addr('pepe-a');
     await repo.upsertBinanceMap([{ chain: 'ethereum', contractAddress: pepeA, binanceAsset: 'PEPE', spotSymbol: 'PEPEUSDT', futuresSymbol: '1000PEPEUSDT', multiplier: 1000, source: 'fixture-map', verifiedAt: NOW }]);
     expect(await repo.listBinanceMap()).toEqual([{ chain: 'ethereum', contractAddress: pepeA, binanceAsset: 'PEPE', spotSymbol: 'PEPEUSDT', futuresSymbol: '1000PEPEUSDT', multiplier: 1000, source: 'fixture-map', verifiedAt: NOW }]);
-    await expect(repo.upsertBinanceMap([{ chain: 'ethereum', contractAddress: addr('pepe-b'), binanceAsset: 'PEPE', source: '' }])).rejects.toThrow(/sumber/);
-    await expect(repo.upsertBinanceMap([{ chain: 'ethereum', contractAddress: addr('pepe-b'), binanceAsset: 'PEPE', multiplier: 0, source: 's' }])).rejects.toThrow(/multiplier/);
+    // Baris tidak valid DITOLAK per baris (dilaporkan, tidak disimpan) — tidak menggagalkan / mengosongkan mapping.
+    const bad = await repo.upsertBinanceMap([
+      { chain: 'ethereum', contractAddress: addr('pepe-b'), binanceAsset: 'PEPE', source: '' },
+      { chain: 'ethereum', contractAddress: addr('pepe-b'), binanceAsset: 'PEPE', multiplier: 0, source: 's' },
+    ]);
+    expect(bad.upserted).toBe(0);
+    expect(bad.rejected.map((r) => r.reason)).toEqual([expect.stringMatching(/sumber/), expect.stringMatching(/multiplier/)]);
+    expect((await repo.listBinanceMap()).map((r) => r.contractAddress)).toEqual([pepeA]);
+  });
+
+  it('UNIT-SM-REPO-015 mapping Binance: dua baris berbeda untuk satu kontrak bertahan → matchToken AMBIGUOUS (round-trip)', async () => {
+    const { repo } = setup();
+    const c = addr('shared-contract');
+    const res = await repo.upsertBinanceMap([
+      { chain: 'ethereum', contractAddress: c, binanceAsset: 'PEPE', spotSymbol: 'PEPEUSDT', futuresSymbol: 'PEPEUSDT', multiplier: 1, source: 'binance-getall', verifiedAt: NOW },
+      { chain: 'ethereum', contractAddress: c, binanceAsset: 'PEPE', spotSymbol: 'PEPEUSDT', futuresSymbol: '1000PEPEUSDT', multiplier: 1000, source: 'binance-getall+prefix-rule', verifiedAt: NOW },
+    ], { provider: 'binance-mapping' });
+    expect(res).toEqual({ upserted: 2, rejected: [] });
+    const stored = await repo.listBinanceMap();
+    expect(stored).toHaveLength(2);
+    expect(matchToken({ chain: 'ethereum', address: c, symbol: 'PEPE' }, stored).status).toBe('AMBIGUOUS');
+    // Hanya satu baris (setelah penyegaran berikutnya) → MATCHED; baris lama milik provider yang sama ikut terganti.
+    await repo.upsertBinanceMap([
+      { chain: 'ethereum', contractAddress: c, binanceAsset: 'PEPE', spotSymbol: 'PEPEUSDT', futuresSymbol: '1000PEPEUSDT', multiplier: 1000, source: 'binance-getall+prefix-rule', verifiedAt: NOW + 1 },
+    ], { provider: 'binance-mapping' });
+    const after = await repo.listBinanceMap();
+    expect(after).toHaveLength(1);
+    expect(matchToken({ chain: 'ethereum', address: c, symbol: 'PEPE' }, after)).toMatchObject({ status: 'MATCHED', futuresSymbol: '1000PEPEUSDT', multiplier: 1000 });
+  });
+
+  it('EDGE-SM-REPO-007 penyegaran mapping: kontrak delisting hilang, provider lain tidak tersentuh, baris rusak dilewati', async () => {
+    const { repo } = setup();
+    const row = (name, o = {}) => ({ chain: 'ethereum', contractAddress: addr(name), binanceAsset: name.toUpperCase(), spotSymbol: null, futuresSymbol: `${name.toUpperCase()}USDT`, multiplier: 1, source: 'binance-getall', verifiedAt: NOW, ...o });
+    await repo.upsertBinanceMap([row('aaa'), row('bbb')], { provider: 'binance-mapping' });
+    await repo.upsertBinanceMap([row('ccc', { source: 'fixture-map' })]);
+    const res = await repo.upsertBinanceMap([
+      row('aaa'),
+      row('ddd', { binanceAsset: '币安人生', futuresSymbol: '币安人生USDT' }), // simbol non-ASCII → baris dilewati
+    ], { provider: 'binance-mapping' });
+    expect(res.upserted).toBe(1);
+    expect(res.rejected).toHaveLength(1);
+    expect(res.rejected[0].reason).toMatch(/futuresSymbol tidak valid/);
+    expect((await repo.listBinanceMap()).map((r) => r.binanceAsset).sort()).toEqual(['AAA', 'CCC']);
+    // Respons tanpa satu pun baris valid tidak mengosongkan mapping yang ada.
+    expect((await repo.upsertBinanceMap([row('eee', { multiplier: -1 })], { provider: 'binance-mapping' })).upserted).toBe(0);
+    expect((await repo.listBinanceMap()).map((r) => r.binanceAsset).sort()).toEqual(['AAA', 'CCC']);
+    await expect(repo.upsertBinanceMap([row('aaa')], { provider: 'Bukan Id' })).rejects.toThrow(RangeError);
+  });
+
+  it('UNIT-SM-REPO-016 getLabels: label infrastruktur (cex) menang atas label lain berkeyakinan lebih tinggi', async () => {
+    const { repo } = setup();
+    const hot = addr('hot-wallet');
+    await repo.upsertLabels([
+      label({ address: hot, label: 'Exchange 14', category: 'cex', source: 'eth-labels', confidence: 0.8 }),
+      label({ address: hot, label: 'Large holder', category: 'fund', source: 'vendor-x', confidence: 0.9 }),
+    ]);
+    expect((await repo.getLabels({ chain: 'ethereum' })).get(`ethereum:${hot}`)).toMatchObject({ category: 'cex', source: 'eth-labels' });
+    expect((await repo.getLabels({ addresses: [hot] })).get(`ethereum:${hot}`).category).toBe('cex');
+    expect((await repo.listLabelsFor('ethereum', hot)).map((l) => l.category).sort()).toEqual(['cex', 'fund']);
+    const many = await repo.listLabelsForMany('ethereum', [hot, POOL, 'bukan-alamat']);
+    expect([...many.keys()]).toEqual([hot]);
+    expect(many.get(hot)).toHaveLength(2);
+  });
+
+  it('UNIT-SM-REPO-017 transfer mentah: baru per wallet, kiriman ulang diabaikan, info terlambat melengkapi', async () => {
+    const { repo } = setup();
+    const other = addr('wallet-2');
+    const t = {
+      chain: 'ethereum', txHash: tx('raw-1'), logIndex: 3, blockNumber: null, blockTime: NOW - 1000, from: WALLET, to: other,
+      token: { address: TOKEN, symbol: '?', name: null, decimals: null }, amount: 5, usdValue: null, priceSource: null,
+      provider: 'fixture', isSimulated: true, txMeta: { initiator: WALLET, toContract: null, method: null, providerCategory: null, dex: null },
+    };
+    expect(await repo.insertRawTransfers([t], WALLET)).toEqual([t]);
+    expect(await repo.insertRawTransfers([t], WALLET)).toEqual([]);
+    // Transfer antara dua wallet yang dilacak = baru bagi wallet kedua juga.
+    expect(await repo.insertRawTransfers([t], other)).toHaveLength(1);
+    const later = { ...t, usdValue: 12.5, priceSource: 'p', token: { ...t.token, symbol: 'TKA', decimals: 18 }, txMeta: { ...t.txMeta, providerCategory: 'swap' } };
+    const [merged] = await repo.insertRawTransfers([later], WALLET);
+    expect(merged).toMatchObject({ usdValue: 12.5, priceSource: 'p', token: { symbol: 'TKA', decimals: 18 }, txMeta: { providerCategory: 'swap', initiator: WALLET } });
+    // Nilai yang sudah diketahui tidak ditimpa.
+    expect(await repo.insertRawTransfers([{ ...later, usdValue: 99 }], WALLET)).toEqual([]);
+    expect(await repo.listRawTransfersForTxs('ethereum', WALLET.toUpperCase().replace('0X', '0x'), [tx('raw-1'), tx('none')])).toEqual([merged]);
+    expect(await repo.listRawTransfersForTxs('ethereum', WALLET, [])).toEqual([]);
+    await expect(repo.insertRawTransfers([{ ...t, logIndex: -1 }], WALLET)).rejects.toThrow(RangeError);
+    await expect(repo.listRawTransfersForTxs('ethereum', WALLET, ['0x12'])).rejects.toThrow(RangeError);
+  });
+
+  it('UNIT-SM-REPO-018 replaceActivitiesForTxs: hapus + sisip atomik per wallet × tx; baris basi hilang', async () => {
+    const { db, repo } = setup();
+    const usdc = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    const transferIn = activity({ type: 'TRANSFER_IN', counterparty: POOL, reason: 'transfer masuk' });
+    const otherTx = activity({ txHash: tx('tx-2'), type: 'TRANSFER_IN', reason: 'tx lain' });
+    await repo.insertActivities([transferIn, otherTx], { now: NOW - 50 });
+    // Kaki terlambat: tx yang sama ternyata swap → SWAP_BUY token + (baris lama USDC dihapus bila ada).
+    const stale = activity({ token: { address: usdc, symbol: 'USDC', name: 'USD Coin', decimals: 6 }, type: 'TRANSFER_OUT', direction: 'OUT', reason: 'keluar' });
+    await repo.insertActivities([stale], { now: NOW - 50 });
+    const res = await repo.replaceActivitiesForTxs('ethereum', WALLET, [tx('tx-1')], [activity({ reason: 'swap lengkap' })], { now: NOW });
+    expect(res).toEqual({ deleted: 2, inserted: 1, newIds: [], changedIds: [transferIn.id], removedIds: [stale.id] });
+    const rows = await repo.listActivities({ chain: 'ethereum', wallet: WALLET });
+    expect(rows.map((a) => [a.txHash, a.type])).toEqual([[tx('tx-1'), 'SWAP_BUY'], [tx('tx-2'), 'TRANSFER_IN']].sort((x, y) => (x[0] < y[0] ? -1 : 1)));
+    // ingested_at baris yang tetap ada dipertahankan.
+    expect(db.prepare('SELECT ingested_at FROM sm_activities WHERE id = ?').get(transferIn.id).ingested_at).toBe(NOW - 50);
+    // Aktivitas di luar wallet × tx → RangeError, tidak ada yang berubah.
+    await expect(repo.replaceActivitiesForTxs('ethereum', WALLET, [tx('tx-1')], [activity({ txHash: tx('tx-3') })])).rejects.toThrow(RangeError);
+    expect(await repo.listActivities({ chain: 'ethereum', wallet: WALLET })).toHaveLength(2);
+    const fresh = await repo.replaceActivitiesForTxs('ethereum', WALLET, [tx('tx-9')], [activity({ txHash: tx('tx-9') })]);
+    expect(fresh.newIds).toEqual([activity({ txHash: tx('tx-9') }).id]);
+  });
+
+  it('UNIT-SM-REPO-019 listActivities order desc: LIMIT memotong yang tertua; holdingsBefore', async () => {
+    const { repo } = setup();
+    await repo.insertActivities([1, 2, 3].map((i) => activity({ txHash: tx(`o-${i}`), blockTime: NOW - (4 - i) * 1000 })));
+    expect((await repo.listActivities({ limit: 2 })).map((a) => NOW - a.blockTime)).toEqual([3000, 2000]);
+    expect((await repo.listActivities({ limit: 2, order: 'desc' })).map((a) => NOW - a.blockTime)).toEqual([1000, 2000]);
+    expect((await repo.listActivities({ chain: 'ethereum', wallet: WALLET, limit: 1, order: 'desc' }))[0].blockTime).toBe(NOW - 1000);
+    expect((await repo.listActivities({ chain: 'ethereum', tokenAddress: TOKEN, limit: 1, order: 'desc' }))[0].blockTime).toBe(NOW - 1000);
+    await expect(repo.listActivities({ order: 'acak' })).rejects.toThrow(RangeError);
+    expect(await repo.listAllActivities()).toHaveLength(3);
+    await repo.insertActivities([activity({ txHash: tx('sell'), type: 'SWAP_SELL', direction: 'OUT', amount: 1000, blockTime: NOW - 500 })]);
+    const h = await repo.holdingsBefore({ before: NOW - 1500, wallets: [`ethereum:${WALLET}`, `ethereum:${addr('kosong')}`] });
+    expect(h.get(`ethereum:${WALLET}`).get(`ethereum:${TOKEN}`)).toBe(2000);
+    expect(h.get(`ethereum:${addr('kosong')}`).size).toBe(0);
+    // Tiga beli (3000) − satu jual (1000) sebelum NOW.
+    expect((await repo.holdingsBefore({ before: NOW, wallets: [`ethereum:${WALLET}`] })).get(`ethereum:${WALLET}`).get(`ethereum:${TOKEN}`)).toBe(2000);
+    // Dijual habis → tidak tercantum (saldo 0 bukan "memegang").
+    await repo.insertActivities([activity({ txHash: tx('sell-2'), type: 'SWAP_SELL', direction: 'OUT', amount: 2000, blockTime: NOW - 100 })]);
+    expect((await repo.holdingsBefore({ before: NOW, wallets: [`ethereum:${WALLET}`] })).get(`ethereum:${WALLET}`).size).toBe(0);
+  });
+
+  it('NEG-SM-REPO-003 alert tanpa isSimulated boolean ditolak; lastAlertTimes per kunci dasar', async () => {
+    const { repo } = setup();
+    await expect(repo.insertAlerts([alert({ isSimulated: undefined })])).rejects.toThrow(/isSimulated/);
+    await expect(repo.insertAlerts([alert({ isSimulated: 1 })])).rejects.toThrow(/isSimulated/);
+    await repo.insertAlerts([
+      alert({ dedupeKey: `NEW_BUY:ethereum:${TOKEN}:${WALLET}:10`, createdAt: NOW - 10 }),
+      alert({ dedupeKey: `NEW_BUY:ethereum:${TOKEN}:${WALLET}:11`, createdAt: NOW - 5 }),
+      alert({ dedupeKey: `MULTI_WALLET_BUY:ethereum:${TOKEN}:*:11`, createdAt: NOW - 100 }),
+    ]);
+    const times = await repo.lastAlertTimes({ since: NOW - 50 });
+    expect(times).toEqual(new Map([[`NEW_BUY:ethereum:${TOKEN}:${WALLET}`, NOW - 5]]));
+    expect((await repo.lastAlertTimes()).get(`MULTI_WALLET_BUY:ethereum:${TOKEN}:*`)).toBe(NOW - 100);
+  });
+
+  it('UNIT-SM-REPO-020 dukungan sinkronisasi: status, watchlist & preferensi semua pengguna, waktu sinkron wallet, ringkasan skor', async () => {
+    const { repo, u1, u2 } = setup();
+    expect(await repo.getSyncState('binanceMap')).toBeNull();
+    await repo.setSyncState('binanceMap', { refreshedAt: 5 }, { now: 7 });
+    expect(await repo.getSyncState('binanceMap')).toEqual({ value: { refreshedAt: 5 }, updatedAt: 7 });
+    await expect(repo.setSyncState('', 1)).rejects.toThrow(RangeError);
+    await repo.addToWatchlist(u2, { kind: 'TOKEN', chain: 'ethereum', address: TOKEN });
+    await repo.addToWatchlist(u1, { kind: 'WALLET', chain: 'ethereum', address: WALLET });
+    expect(await repo.listAllWatchlist()).toEqual([
+      { userId: u1, kind: 'WALLET', chain: 'ethereum', address: WALLET },
+      { userId: u2, kind: 'TOKEN', chain: 'ethereum', address: TOKEN },
+    ]);
+    await repo.saveAlertPrefs(u2, { minUsd: 10 });
+    expect(await repo.listAllAlertPrefs()).toEqual([{ userId: u2, prefs: { minUsd: 10 } }]);
+    await repo.setCursor('fixture', 'ethereum', WALLET, 'a', { now: 10 });
+    await repo.setCursor('lain', 'ethereum', WALLET, 'b', { now: 20 });
+    await repo.setCursor('fixture', 'ethereum', '', 'chain', { now: 30 });
+    expect(await repo.listWalletSyncTimes()).toEqual(new Map([[`ethereum:${WALLET}`, 20]]));
+    const base = { chain: 'ethereum', computedAt: NOW, style: 'SWING', components: {}, metrics: {}, reasons: [], limitations: [], pnl: null };
+    await repo.saveWalletScores([
+      { ...base, address: addr('a1'), score: 50, eligible: true, clusterId: `ethereum:${addr('a1')}`, flags: [] },
+      { ...base, address: addr('a2'), score: 40, eligible: false, clusterId: `ethereum:${addr('a1')}`, flags: [{ code: 'LINKED', severity: 'LOW' }] },
+    ]);
+    const summaries = await repo.listScoreSummaries({ chain: 'ethereum' });
+    const expected = [[addr('a1'), 50, true, 0], [addr('a2'), 40, false, 1]].sort((x, y) => (x[0] < y[0] ? -1 : 1));
+    expect(summaries.map((s) => [s.address, s.score, s.eligible, s.flags.length])).toEqual(expected);
+    expect(summaries[0]).toMatchObject({ chain: 'ethereum', style: 'SWING', clusterId: `ethereum:${addr('a1')}` });
+    expect(await repo.listScoreSummaries({ chain: 'base' })).toEqual([]);
+    expect(await repo.clusterSizes()).toEqual(new Map([[`ethereum:${addr('a1')}`, 2]]));
   });
 
   it('UNIT-SM-REPO-011 status provider: percobaan, sukses, kegagalan (sukses menghapus error)', async () => {
