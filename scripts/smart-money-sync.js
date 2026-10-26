@@ -5,8 +5,11 @@
 // Provider = SMART_MONEY_PROVIDERS (urutan = prioritas). Tanpa adapter aktif (variabel kosong, adapter belum dirakit,
 // atau kunci API belum diisi) skrip menjelaskan sebabnya dan keluar dengan kode 0 TANPA menyentuh database — tidak
 // pernah ada data contoh/simulasi sebagai pengganti. Kunci API tidak pernah dicetak (pesan provider disaring).
-// Kode keluar: 0 = selesai (termasuk "selesai dengan catatan" / tanpa provider), 1 = konfigurasi/argumen tidak valid
-// atau kesalahan internal, 130 = dibatalkan Ctrl+C sebelum putaran selesai.
+// Putaran memakai lease yang sama dengan tombol "Sync sekarang" di website dan loop worker scanner
+// (backend/smartmoney/syncRunner.js): bila sinkronisasi lain sedang berjalan, putaran sekali jalan dilewati dengan
+// penjelasan (kode 0) dan `--loop` mencoba lagi semenit kemudian — kuota API tidak pernah terpakai dua kali.
+// Kode keluar: 0 = selesai (termasuk "selesai dengan catatan" / tanpa provider / dilewati karena sinkronisasi lain
+// berjalan), 1 = konfigurasi/argumen tidak valid atau kesalahan internal, 130 = dibatalkan Ctrl+C sebelum selesai.
 
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -14,12 +17,15 @@ import { parseArgs } from 'node:util';
 import { ConfigError, loadConfig } from '../backend/app/config.js';
 import { openDatabase } from '../backend/database/connection.js';
 import { migrate } from '../backend/database/migrate.js';
-import { createBinanceRestClient } from '../backend/ingestion/binance/restClient.js';
-import { createNativePriceResolver, enrichNativeUsd } from '../backend/smartmoney/nativePrices.js';
 import { createLiveProviderRegistry } from '../backend/smartmoney/providers/live.js';
 import { createSmartMoneyRepository } from '../backend/smartmoney/repository.js';
-import { runSmartMoneySync, sanitizeProviderMessage } from '../backend/smartmoney/sync.js';
+import { sanitizeProviderMessage } from '../backend/smartmoney/sync.js';
+import { createSyncDeps } from '../backend/smartmoney/syncDeps.js';
+import { createSyncRunner } from '../backend/smartmoney/syncRunner.js';
 import { startSmartMoneyLoop } from '../worker/smartMoney.js';
+
+// Dipindah ke backend (dipakai juga tombol "Sync sekarang" di server); diekspor ulang untuk pemanggil lama.
+export { createSyncDeps };
 
 /** Teks bantuan `--help`. */
 export const SYNC_USAGE = `Pemakaian: npm run smart-money:sync -- [opsi]
@@ -167,17 +173,15 @@ export function createCliLogger({ verbose = false, write = (line) => process.std
 }
 
 /**
- * Dependensi tambahan sinkronisasi: penilaian USD kaki koin native per jam (Binance klines, publik) — HANYA bila ada
- * adapter live (data simulasi tidak pernah dinilai dengan harga live).
- * @param {{ list: () => Array<{ isSimulated?: boolean }> }} registry
- * @param {{ createRest?: () => { getKlines: Function } }} [options]
- * @returns {{ nativePrices: object|null, enrichNativeUsd: Function|null }}
+ * Penjelasan saat putaran sekali jalan dilewati karena sinkronisasi lain sedang memegang lease.
+ * @param {{ trigger?: string, phase?: string, done?: number|null, total?: number|null }|null} run publicRun lease
+ * @returns {string}
  */
-export function createSyncDeps(registry, { createRest = () => createBinanceRestClient() } = {}) {
-  const live = registry.list().some((a) => a.isSimulated !== true);
-  if (!live) return { nativePrices: null, enrichNativeUsd: null };
-  const rest = createRest();
-  return { nativePrices: createNativePriceResolver({ getKlines: (query) => rest.getKlines(query) }), enrichNativeUsd };
+export function busyMessage(run) {
+  const who = run?.trigger === 'schedule' ? 'terjadwal (worker scanner)' : 'manual (tombol Sync sekarang / terminal lain)';
+  const step = run?.phase ? `, tahap ${run.phase}${Number.isSafeInteger(run.done) && Number.isSafeInteger(run.total) ? ` ${run.done}/${run.total}` : ''}` : '';
+  return `Sinkronisasi smart money dilewati: putaran ${who} sedang berjalan${step}.\n`
+    + '- Coba lagi setelah selesai; progresnya terlihat di halaman Smart Money Radar.';
 }
 
 /** Promise yang selesai saat SIGINT/SIGTERM pertama diterima (handler dilepas lewat `dispose`). */
@@ -275,22 +279,28 @@ export async function main(argv = process.argv.slice(2), {
     }
 
     const repo = createSmartMoneyRepository(db, { clock });
-    const controller = new AbortController();
+    const runner = createSyncRunner({
+      repo, registry, config: config.smartMoney, owner: `cli:${process.pid}`, clock, logger, syncDeps,
+    });
     const waiter = waitForStop ? null : signalWaiter();
     waiter?.promise.then(() => {
       err('Membatalkan sinkronisasi… (data yang sudah tersimpan tetap utuh)');
-      controller.abort();
+      runner.stop();
     });
-    let summary;
+    let result;
     try {
-      summary = await runSmartMoneySync({
-        repo, registry, clock, logger, config: config.smartMoney, signal: controller.signal, ...syncDeps,
-      });
+      result = await runner.runNow({ trigger: 'manual' });
     } finally {
       waiter?.dispose();
     }
-    out(formatSyncSummary(summary, { simulated }));
-    return summary.status === 'ABORTED' ? EXIT_ABORTED : 0;
+    if (result.skipped) {
+      out(busyMessage(result.run));
+      return 0;
+    }
+    // Kesalahan internal sudah dicatat logger (pesan disaring) dan lastRun ditandai FAILED.
+    if (result.summary === null) return 1;
+    out(formatSyncSummary(result.summary, { simulated }));
+    return result.summary.status === 'ABORTED' ? EXIT_ABORTED : 0;
   } finally {
     db.close();
   }

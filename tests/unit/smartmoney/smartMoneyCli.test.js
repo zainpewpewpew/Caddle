@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDatabase } from '../../../backend/database/connection.js';
+import { migrate } from '../../../backend/database/migrate.js';
 import { createFixtureProvider } from '../../../backend/smartmoney/providers/fixtureProvider.js';
 import { createLiveProviderRegistry } from '../../../backend/smartmoney/providers/live.js';
 import { createSmartMoneyRepository } from '../../../backend/smartmoney/repository.js';
@@ -86,6 +87,31 @@ describe('CLI sinkronisasi smart money (scripts/smart-money-sync.js)', () => {
       expect(await repo.hasSimulatedData()).toBe(true);
     } finally {
       db.close();
+    }
+  });
+
+  it('UNIT-SM-CLI-013 sekali jalan menghormati lease: sinkronisasi lain berjalan → dilewati dengan penjelasan, kode 0, tanpa data baru', async () => {
+    const db = openDatabase(env.DATABASE_PATH);
+    try {
+      migrate(db, { now: () => new Date(0) });
+      const repo = createSmartMoneyRepository(db, { clock });
+      await repo.acquireSyncLease({ owner: 'worker:9', trigger: 'schedule', ttlMs: 120_000 });
+      await repo.renewSyncLease({ owner: 'worker:9', ttlMs: 120_000, progress: { phase: 'transfers', done: 3, total: 40 } });
+    } finally {
+      db.close();
+    }
+    const c = capture();
+    const code = await syncMain([], { env: { ...env, SMART_MONEY_PROVIDERS: 'fixture' }, clock, ...c.io, createRegistry: fixtureRegistry });
+    expect(code).toBe(0);
+    expect(c.text()).toContain('Sinkronisasi smart money dilewati: putaran terjadwal (worker scanner) sedang berjalan, tahap transfers 3/40.');
+    expect(c.text()).not.toContain('worker:9');
+    const check = openDatabase(env.DATABASE_PATH);
+    try {
+      const repo = createSmartMoneyRepository(check, { clock });
+      expect((await repo.coverage()).activities).toBe(0);
+      expect(await repo.getSyncLease()).toMatchObject({ owner: 'worker:9' }); // lease milik proses lain tidak disentuh
+    } finally {
+      check.close();
     }
   });
 

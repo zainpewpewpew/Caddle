@@ -112,6 +112,10 @@ export const DEFAULT_SYNC_TUNING = Object.freeze({
   maxErrorsReported: 50,
 });
 
+/** Tahap putaran sinkronisasi yang dilaporkan lewat `onProgress` (urutan = urutan eksekusi). */
+export const SYNC_PHASES = Object.freeze(['start', 'mapping', 'discovery', 'transfers', 'analysis', 'alerts']);
+/** @typedef {'start'|'mapping'|'discovery'|'transfers'|'analysis'|'alerts'} SyncPhase */
+
 /** Kunci sm_sync_state. */
 export const SYNC_STATE_KEYS = Object.freeze({
   mapping: 'binanceMapRefresh',
@@ -337,15 +341,17 @@ function counterpartiesOf(transfers, wallet) {
  *   nativePrices?: { priceAt: Function }|null,
  *   enrichNativeUsd?: ((transfers: object[], resolver: object) => Promise<object[]>)|null,
  *   signal?: AbortSignal, tuning?: Partial<typeof DEFAULT_SYNC_TUNING>,
+ *   onProgress?: ((p: { phase: SyncPhase, done: number|null, total: number|null }) => void)|null,
  * }} deps config = config.smartMoney. nativePrices + enrichNativeUsd (nativePrices.js) mengisi nilai USD kaki
- *   native/wrapped-native yang tidak diberi provider.
+ *   native/wrapped-native yang tidak diberi provider. onProgress dipanggil sinkron di setiap tahap (dan per wallet saat
+ *   tahap 'transfers'); error di dalamnya diabaikan agar tidak pernah menggagalkan putaran.
  * @returns {Promise<object>} ringkasan run: { status: 'OK'|'DEGRADED'|'NO_PROVIDERS'|'ABORTED', startedAt, finishedAt,
  *   fetched, duplicates, rejected, collisions, reclassified, inserted, alerts, alertsSkipped: { stale, cooldown },
  *   wallets, discovery, mapping, scored, links, providers, errors, notes }
  */
 export async function runSmartMoneySync({
   repo, registry, clock = Date.now, logger = NOOP_LOGGER, config, nativePrices = null, enrichNativeUsd = null, signal,
-  tuning = {},
+  tuning = {}, onProgress = null,
 } = {}) {
   if (!repo || typeof repo.listAllActivities !== 'function') throw new TypeError('repo smart money wajib diisi');
   if (!registry || typeof registry.list !== 'function' || typeof registry.withCapability !== 'function') {
@@ -377,6 +383,15 @@ export async function runSmartMoneySync({
     if (!summary.notes.includes(text)) summary.notes.push(text);
   };
   const aborted = () => signal?.aborted === true;
+  const progress = (phase, done = null, total = null) => {
+    if (typeof onProgress !== 'function') return;
+    try {
+      onProgress({ phase, done, total });
+    } catch (err) {
+      log.warn({ err: sanitizeProviderMessage(err?.message) }, 'callback progres sinkronisasi smart money gagal');
+    }
+  };
+  progress('start');
 
   const adapters = registry.list();
   for (const id of typeof registry.missing === 'function' ? registry.missing() : []) {
@@ -461,6 +476,7 @@ export async function runSmartMoneySync({
   }
 
   // ---------------------------------------------------------------- (a) mapping Binance (≤ 1× / mappingRefreshMs)
+  progress('mapping');
   const mapState = (await repo.getSyncState(SYNC_STATE_KEYS.mapping))?.value ?? {};
   const mapByProvider = { ...(mapState && typeof mapState.byProvider === 'object' ? mapState.byProvider : {}) };
   for (const p of registry.withCapability('binanceMapping')) {
@@ -529,6 +545,8 @@ export async function runSmartMoneySync({
     }
     const candidates = [];
     const simulatedCandidates = new Set();
+    let tokensScanned = 0;
+    progress('discovery', 0, picked.length);
     for (const chain of discoveryChains) {
       const tokens = picked.filter((t) => t.chain === chain);
       if (tokens.length === 0) continue;
@@ -549,6 +567,8 @@ export async function runSmartMoneySync({
           if (p.isSimulated && a) simulatedCandidates.add(makeWalletKey(chain, a));
         }
       }
+      tokensScanned += tokens.length;
+      progress('discovery', tokensScanned, picked.length);
     }
     summary.discovery.candidates = candidates.length;
     if (candidates.length) {
@@ -745,7 +765,8 @@ export async function runSmartMoneySync({
     return failed ? 'FAILED' : 'DONE';
   }
 
-  for (const item of selected) {
+  progress('transfers', 0, selected.length);
+  for (const [index, item] of selected.entries()) {
     if (aborted()) break;
     const { chain, address } = item.w;
     let outcome = 'FALLBACK';
@@ -762,6 +783,7 @@ export async function runSmartMoneySync({
       log.error({ chain, err: sanitizeProviderMessage(err?.message) }, 'kesalahan internal sinkronisasi wallet smart money');
     }
     if (outcome === 'ABORTED') break;
+    progress('transfers', index + 1, selected.length);
     if (outcome === 'DONE') summary.wallets.synced += 1;
     else if (outcome === 'FAILED') summary.wallets.failed += 1;
     else {
@@ -782,6 +804,7 @@ export async function runSmartMoneySync({
   }
 
   // ---------------------------------------------------------------- (e) analisis universe
+  progress('analysis');
   const analysisNow = Math.floor(clock());
   const activities = await repo.listAllActivities();
   const labelsAll = await repo.getLabels();
@@ -814,6 +837,7 @@ export async function runSmartMoneySync({
   }
 
   // ---------------------------------------------------------------- (f) alert
+  progress('alerts');
   summary.alerts = await deriveAndStoreAlerts({ activities, analysis, prices, analysisNow });
 
   await finish();

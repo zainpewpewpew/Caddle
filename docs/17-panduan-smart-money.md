@@ -129,6 +129,30 @@ volume progresif (PVA)*, *breakout akumulasi*, *higher low (struktur naik)*, *ko
 **Buka chart** membuka Symbol Intelligence simbol futures itu (15m, LONG). Panel **Evaluasi historis radar** di bawah
 halaman dijelaskan di §4.
 
+#### Tombol Sync sekarang
+
+Tombol **Sync sekarang** di kepala halaman Radar menjalankan satu putaran sinkronisasi saat itu juga, tanpa menunggu
+jadwal otomatis. Hanya admin yang dapat menekannya; pengguna lain melihat progres dan hasilnya.
+
+- **Progres:** bar dan teks tahap — *Menyiapkan* → *Pemetaan kontrak Binance* → *Penemuan wallet* → *Riwayat transaksi
+  wallet* (mis. 12/50 wallet) → *Menghitung skor & radar* → *Menyusun alert*. Putaran berjalan di server; halaman boleh
+  ditinggal, dan progresnya muncul lagi saat Radar dibuka kembali.
+- **Hasil:** status (*Berhasil*, *Selesai dengan catatan*, *Gagal*, *Dihentikan*, *Belum ada sumber data*), jumlah
+  wallet tersinkron, transfer diambil, aktivitas baru, wallet baru, dan alert baru, ditambah catatan & error per
+  provider. Data Radar dimuat ulang otomatis dengan filter dan tampilan (Daftar / Peta Benang) yang sedang dipakai.
+- **Satu putaran dalam satu waktu.** Saat scanner berjalan, worker juga menyinkronkan otomatis tiap 15 menit
+  (`SMART_MONEY_SYNC_MINUTES`). Bila putaran terjadwal itu sedang berjalan, tombol menampilkan progresnya alih-alih
+  memulai putaran kedua; sebaliknya, putaran terjadwal yang bertemu sync manual dilewati dan dicoba lagi semenit
+  kemudian. Kuota API tidak terpakai dua kali.
+- **Jeda 30 detik** setelah putaran terakhir selesai sebelum tombol bisa ditekan lagi (hitung mundur tampil di tombol).
+  Tiap putaran memakai kuota harian Etherscan yang sama (paket gratis 100.000 panggilan/hari), jadi tidak perlu
+  ditekan berulang-ulang.
+- Tombol abu-abu dengan keterangan *Belum ada sumber data* berarti belum ada provider aktif: isi `ETHERSCAN_API_KEY`
+  di `.env` (§5) lalu restart `npm start`.
+- Tanpa kunci Binance read-only, langkah *Penemuan wallet* dilewati (lihat catatan hasil): putaran hanya memperbarui
+  wallet yang sudah dilacak, termasuk wallet di watchlist. Isi `BINANCE_API_KEY` + `BINANCE_API_SECRET` (§5b) agar
+  wallet baru ditemukan otomatis.
+
 #### Peta Benang
 
 Tombol **Daftar | Peta Benang** di atas hasil radar menampilkan data yang sama sebagai graf: wallet di kiri, token di
@@ -345,7 +369,8 @@ Laporan dicetak sebagai Markdown dan disimpan ke database; ringkasannya tampil d
 
 Semua langkah dilakukan di **Mac** (lingkungan cloud pengembang tidak dapat menjangkau sumber ini). Biaya: $0.
 
-Urutan: **isi `.env` → `npm run smart-money:check` → `npm start` → tombol scanner atau `npm run smart-money:sync`.**
+Urutan: **isi `.env` → `npm run smart-money:check` → `npm start` → tombol **Sync sekarang** di Radar, tombol scanner,
+atau `npm run smart-money:sync`.**
 
 ### a. Kunci Etherscan (gratis)
 
@@ -438,12 +463,16 @@ tidak memuat kunci; tetap periksa sebelum menempel, dan jangan pernah menempel i
 
 1. `npm start` (migrasi `007` diterapkan otomatis).
 2. Pilih salah satu:
-   - **Website:** System Health → **Jalankan scanner** (admin). Worker yang sama menjalankan sinkronisasi smart money
-     bila ada provider aktif: putaran pertama ±1 menit setelah start, lalu tiap 15 menit (`SMART_MONEY_SYNC_MINUTES`)
-     setelah putaran sebelumnya selesai. Log-nya bertanda `smart-money` di terminal `npm start`.
+   - **Website, sekarang juga:** Smart Money Radar → **Sync sekarang** (admin, §2.1). Satu putaran di server dengan
+     progres dan ringkasan hasil di halaman; scanner tidak perlu berjalan.
+   - **Website, otomatis:** System Health → **Jalankan scanner** (admin). Worker yang sama menjalankan sinkronisasi
+     smart money bila ada provider aktif: putaran pertama ±1 menit setelah start, lalu tiap 15 menit
+     (`SMART_MONEY_SYNC_MINUTES`) setelah putaran sebelumnya selesai. Log-nya bertanda `smart-money` di terminal
+     `npm start`. Tombol **Sync sekarang** dan jadwal ini tidak pernah berjalan bersamaan.
    - **Terminal:** `npm run smart-money:sync` (satu putaran, cetak ringkasan) atau `npm run smart-money:sync -- --loop`
-     (berulang sampai Ctrl+C); tambah `--verbose` untuk log lengkap. Jangan jalankan `--loop` bersamaan dengan worker
-     — kuota API terpakai dua kali.
+     (berulang sampai Ctrl+C); tambah `--verbose` untuk log lengkap. Putaran terminal tidak pernah berjalan bersamaan
+     dengan worker atau tombol **Sync sekarang** (yang datang belakangan dilewati), tetapi jangan biarkan `--loop`
+     hidup bersama worker: jadwalnya jadi dobel dan kuota API habis dua kali lebih cepat.
 3. Putaran awal: pemetaan Binance → penemuan wallet (4 token MATCHED per putaran, bergiliran) → riwayat 180 hari per
    wallet. Radar baru terisi setelah ada wallet **eligible**; di awal "Belum ada akumulasi pada jendela ini" itu normal.
    Pantau progres di Wallet Discovery dengan *Hanya eligible* dimatikan.
@@ -472,4 +501,8 @@ CoinGecko / GeckoTerminal". Jangan dihapus bila tampilan diubah, dan biarkan ter
 | Chain `⚪` di Etherscan | Normal (chain di luar paket gratis). Bila juga ⚪/❌ di Routescan, chain itu tidak tercakup: wallet di sana dilewati ("tanpa provider" di ringkasan sync). Solana belum tercakup. |
 | `RATE_LIMITED` / kuota habis | Batas harian Etherscan pulih setelah pergantian hari UTC (07.00 WIB). Routescan tanpa kunci: isi `ROUTESCAN_API_KEY` gratis. GeckoTerminal tanpa kunci ±10 panggilan/menit dari pool IP bersama — 429 sesekali normal. Kurangi beban: `SMART_MONEY_SYNC_MINUTES=30`, `SMART_MONEY_MAX_WALLETS=25`. |
 | "Belum ada sumber data" padahal kunci terisi | Server belum di-restart setelah `.env` diubah, `SMART_MONEY_PROVIDERS=off`, atau nama variabel salah ketik. |
+| Tombol **Sync sekarang** abu-abu | *Hanya admin…*: masuk sebagai admin. *Belum ada sumber data*: lihat baris di atas. Hitung mundur: jeda 30 detik setelah putaran terakhir. |
+| "Sinkronisasi terjadwal dari worker scanner sedang berjalan" | Putaran otomatis worker sedang jalan; tombol menampilkan progresnya. Tunggu sampai selesai — hasilnya tampil di tempat yang sama. |
+| Sync **Berhasil** tetapi Radar tetap kosong | Belum ada wallet *eligible*: tanpa kunci Binance tidak ada penemuan wallet (catatan "pemetaan Binance belum aktif"). Isi kunci Binance read-only (§5b) atau ikuti wallet lewat Watchlist, lalu sync lagi. |
+| Sync berstatus **Gagal** | Kesalahan internal (bukan provider); detailnya ada di log terminal `npm start`. Tempel baris log `smart-money` ke thread. |
 | Badge BASI terus | Tidak ada sinkron sukses > 60 menit: scanner mati/Mac tidur, atau semua provider gagal. Lihat log `smart-money` atau jalankan `npm run smart-money:sync`. |

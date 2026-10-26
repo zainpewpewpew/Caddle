@@ -5,6 +5,8 @@ import { DEFAULT_ALERT_PREFS } from '../../backend/smartmoney/alerts.js';
 import {
   ALERT_KINDS, DISCLAIMERS, RELEVANCE_LEVELS, explorerAddressUrl, explorerTokenUrl, explorerTxUrl,
 } from '../../backend/smartmoney/contracts.js';
+import { runSmartMoneySync } from '../../backend/smartmoney/sync.js';
+import { DEFAULT_MANUAL_COOLDOWN_MS } from '../../backend/smartmoney/syncRunner.js';
 import { seedSignals } from '../helpers/signalSeed.js';
 import { SM, createSmartMoneyApp, session } from '../helpers/smartMoneyApi.js';
 import { ANALYST } from '../helpers/testApp.js';
@@ -334,5 +336,80 @@ describe('API Smart Money — watchlist, alert, preferensi (per pengguna)', () =
     // Watchlist & preferensi admin tidak tersentuh.
     expect((await s.get(`${SM}/watchlist`)).json().items).toEqual([]);
     expect((await s.get(`${SM}/alert-prefs`)).json().isDefault).toBe(true);
+  });
+});
+
+describe('API Smart Money — tombol "Sync sekarang"', () => {
+  let ctx;
+  afterEach(async () => { await ctx?.app.close(); ctx = null; });
+
+  const syncAudit = async () => (await ctx.app.services.repos.audit.recent(50)).filter((a) => a.action === 'smartmoney.sync');
+
+  it('POS-SM-API-016 GET /sync: ringkasan putaran terakhir, jeda aktif setelah putaran, admin boleh memicu, analyst tidak', async () => {
+    ctx = await createSmartMoneyApp();
+    const admin = await session(ctx.app);
+    const body = (await admin.get(`${SM}/sync`)).json();
+    expect(body).toMatchObject({
+      running: false, run: null, canTrigger: true, reason: null, providersConfigured: 1, intervalMinutes: 15,
+      cooldownUntil: ctx.summary.finishedAt + DEFAULT_MANUAL_COOLDOWN_MS,
+      lastRun: { status: 'OK', startedAt: ctx.summary.startedAt, finishedAt: ctx.summary.finishedAt, inserted: ctx.summary.inserted },
+    });
+    const analyst = await session(ctx.app, ANALYST);
+    expect((await analyst.get(`${SM}/sync`)).json()).toMatchObject({ canTrigger: false, reason: 'NOT_ADMIN', lastRun: { status: 'OK' } });
+    ctx.clock.advance(DEFAULT_MANUAL_COOLDOWN_MS);
+    expect((await admin.get(`${SM}/sync`)).json().cooldownUntil).toBeNull();
+  });
+
+  it('POS-SM-API-017 POST /sync → 202 seketika, putaran berjalan di latar dan menulis lastRun baru; diaudit', async () => {
+    ctx = await createSmartMoneyApp();
+    const admin = await session(ctx.app);
+    ctx.clock.advance(DEFAULT_MANUAL_COOLDOWN_MS);
+    const now = ctx.clock();
+    const res = await admin.send('POST', `${SM}/sync`);
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({
+      started: true, run: { owner: 'server', trigger: 'manual', startedAt: now, updatedAt: now, phase: 'start', done: null, total: null },
+    });
+    await ctx.app.services.smartMoneySync.pending(); // null bila putaran (fixture, cepat) sudah selesai lebih dulu
+    const after = (await admin.get(`${SM}/sync`)).json();
+    expect(after).toMatchObject({ running: false, run: null, lastRun: { status: 'OK', startedAt: now }, cooldownUntil: now + DEFAULT_MANUAL_COOLDOWN_MS });
+    expect(await ctx.repo.getSyncLease()).toBeNull();
+    // Data radar tetap ada (putaran ulang atas data yang sama tidak menghapus apa pun).
+    expect((await admin.get(`${SM}/radar`)).json().items.length).toBeGreaterThan(0);
+    const [entry] = await syncAudit();
+    expect(entry).toMatchObject({ outcome: 'success', user_id: admin.userId, detail: { trigger: 'manual', providers: ['fixture'] } });
+  });
+
+  it('POS-SM-API-018 progres per tahap terlihat semua pengguna selama berjalan; klik kedua → 409 SYNC_RUNNING; selesai → lastRun', async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    ctx = await createSmartMoneyApp({
+      appOptions: {
+        smartMoneySync: {
+          runSync: async (deps) => {
+            deps.onProgress({ phase: 'mapping', done: null, total: null });
+            deps.onProgress({ phase: 'transfers', done: 2, total: 5 });
+            await gate;
+            return runSmartMoneySync(deps);
+          },
+        },
+      },
+    });
+    const admin = await session(ctx.app);
+    const analyst = await session(ctx.app, ANALYST);
+    ctx.clock.advance(DEFAULT_MANUAL_COOLDOWN_MS);
+    expect((await admin.send('POST', `${SM}/sync`)).statusCode).toBe(202);
+    const during = (await analyst.get(`${SM}/sync`)).json();
+    expect(during).toMatchObject({
+      running: true, canTrigger: false, reason: 'NOT_ADMIN',
+      run: { owner: 'server', trigger: 'manual', phase: 'transfers', done: 2, total: 5 },
+    });
+    const again = await admin.send('POST', `${SM}/sync`);
+    expect(again.statusCode).toBe(409);
+    expect(again.json()).toMatchObject({ error: 'SYNC_RUNNING', message: expect.stringMatching(/sedang berjalan/), run: { phase: 'transfers', done: 2, total: 5 } });
+    release();
+    await ctx.app.services.smartMoneySync.pending();
+    expect((await admin.get(`${SM}/sync`)).json()).toMatchObject({ running: false, run: null, lastRun: { status: 'OK', startedAt: ctx.clock() } });
+    expect((await syncAudit()).map((a) => [a.outcome, a.detail.reason ?? null])).toEqual([['failure', 'SYNC_RUNNING'], ['success', null]]);
   });
 });

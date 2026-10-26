@@ -3,7 +3,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_ALERT_PREFS } from '../../backend/smartmoney/alerts.js';
 import { ALERT_KINDS } from '../../backend/smartmoney/contracts.js';
+import { DEFAULT_MANUAL_COOLDOWN_MS } from '../../backend/smartmoney/syncRunner.js';
 import { SM, createSmartMoneyApp, session } from '../helpers/smartMoneyApi.js';
+import { ANALYST } from '../helpers/testApp.js';
 
 const EVM_OK = `0x${'ab'.repeat(20)}`;
 
@@ -178,5 +180,80 @@ describe('API Smart Money — validasi mutasi', () => {
     const again = await s.send('POST', `${SM}/watchlist`, { kind: 'TOKEN', chain: 'ethereum', address: tokens[0], note: 'diperbarui' });
     expect(again.statusCode).toBe(201);
     expect(again.json().note).toBe('diperbarui');
+  });
+});
+
+describe('API Smart Money — "Sync sekarang" ditolak dengan alasan yang jelas', () => {
+  let ctx;
+  afterEach(async () => { await ctx?.app.close(); ctx = null; });
+
+  const syncAudit = async () => (await ctx.app.services.repos.audit.recent(50)).filter((a) => a.action === 'smartmoney.sync');
+
+  it('NEG-SM-API-011 masih dalam jeda setelah putaran terakhir → 429 SYNC_COOLDOWN + Retry-After; tidak ada putaran baru', async () => {
+    ctx = await createSmartMoneyApp();
+    const admin = await session(ctx.app);
+    const first = await admin.send('POST', `${SM}/sync`);
+    expect(first.statusCode).toBe(429);
+    expect(first.headers['retry-after']).toBe('30');
+    expect(first.json()).toEqual({
+      error: 'SYNC_COOLDOWN', message: 'Sinkronisasi baru saja selesai. Coba lagi dalam 30 detik.', retryAfterMs: DEFAULT_MANUAL_COOLDOWN_MS,
+    });
+    ctx.clock.advance(10_000);
+    const later = await admin.send('POST', `${SM}/sync`);
+    expect(later.headers['retry-after']).toBe('20');
+    expect(later.json().retryAfterMs).toBe(20_000);
+    expect(await ctx.repo.getSyncLease()).toBeNull();
+    expect((await admin.get(`${SM}/sync`)).json().lastRun.startedAt).toBe(ctx.summary.startedAt);
+    expect((await syncAudit()).map((a) => a.detail.reason)).toEqual(['SYNC_COOLDOWN', 'SYNC_COOLDOWN']);
+  });
+
+  it('NEG-SM-API-012 tanpa provider aktif → GET canTrigger false (NO_PROVIDERS), POST 409 NO_PROVIDERS; tidak ada data simulasi', async () => {
+    ctx = await createSmartMoneyApp({ providers: '', seed: false });
+    const admin = await session(ctx.app);
+    const analyst = await session(ctx.app, ANALYST);
+    const expected = {
+      running: false, run: null, lastRun: null, canTrigger: false, reason: 'NO_PROVIDERS', cooldownUntil: null, providersConfigured: 0,
+    };
+    expect((await admin.get(`${SM}/sync`)).json()).toMatchObject(expected);
+    expect((await analyst.get(`${SM}/sync`)).json()).toMatchObject(expected);
+    const res = await admin.send('POST', `${SM}/sync`);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      error: 'NO_PROVIDERS', message: 'Belum ada sumber data aktif. Isi ETHERSCAN_API_KEY di .env, lalu jalankan ulang npm start.',
+    });
+    expect((await admin.get(`${SM}/status`)).json().lastRun).toBeNull();
+    expect((await admin.get(`${SM}/radar`)).json().items).toEqual([]);
+    expect((await syncAudit())[0]).toMatchObject({ outcome: 'failure', detail: { reason: 'NO_PROVIDERS' } });
+  });
+
+  it('NEG-SM-API-013 putaran terjadwal worker scanner sedang berjalan → 409 SYNC_RUNNING dengan progres worker (tanpa id proses)', async () => {
+    ctx = await createSmartMoneyApp();
+    const admin = await session(ctx.app);
+    ctx.clock.advance(DEFAULT_MANUAL_COOLDOWN_MS);
+    await ctx.repo.acquireSyncLease({ owner: 'worker:4242', trigger: 'schedule', ttlMs: 120_000 });
+    await ctx.repo.renewSyncLease({ owner: 'worker:4242', ttlMs: 120_000, progress: { phase: 'discovery', done: 1, total: 3 } });
+    const res = await admin.send('POST', `${SM}/sync`);
+    expect(res.statusCode).toBe(409);
+    const run = { owner: 'worker', trigger: 'schedule', phase: 'discovery', done: 1, total: 3 };
+    expect(res.json()).toMatchObject({ error: 'SYNC_RUNNING', message: expect.stringMatching(/terjadwal dari worker scanner/), run });
+    expect(res.body).not.toContain('4242');
+    const status = await admin.get(`${SM}/sync`);
+    expect(status.json()).toMatchObject({ running: true, run });
+    expect(status.body).not.toContain('4242');
+    // Pemegang lease mati tanpa melepas → setelah kedaluwarsa tombol bisa dipakai lagi.
+    ctx.clock.advance(120_001);
+    expect((await admin.send('POST', `${SM}/sync`)).statusCode).toBe(202);
+    await ctx.app.services.smartMoneySync.pending();
+    expect(await ctx.repo.getSyncLease()).toBeNull();
+  });
+
+  it('NEG-SM-API-014 /sync tidak menerima query apa pun → 400', async () => {
+    ctx = await createSmartMoneyApp({ seed: false });
+    const admin = await session(ctx.app);
+    expect((await admin.get(`${SM}/sync?force=true`)).statusCode).toBe(400);
+    const post = await admin.send('POST', `${SM}/sync?wallets=500`);
+    expect(post.statusCode).toBe(400);
+    expect(post.json().error).toBe('VALIDATION_ERROR');
+    expect(await ctx.repo.getSyncLease()).toBeNull();
   });
 });

@@ -212,3 +212,68 @@ describe('Keamanan API Smart Money — provider fixture tidak pernah aktif sendi
     expect(registry.list().map((a) => a.id)).toEqual(['fixture']);
   });
 });
+
+describe('Keamanan API Smart Money — tombol "Sync sekarang"', () => {
+  let ctx;
+  afterEach(async () => { await ctx?.app.close(); ctx = null; });
+
+  const syncAudit = async () => (await ctx.app.services.repos.audit.recent(50)).filter((a) => a.action === 'smartmoney.sync');
+
+  it('SEC-SM-API-011 hanya admin dengan sesi, token CSRF, dan Origin sendiri yang dapat memicu; penolakan bersesi diaudit', async () => {
+    ctx = await createSmartMoneyApp();
+    ctx.clock.advance(60_000);
+    for (const method of ['GET', 'POST']) {
+      const res = await ctx.app.inject({ method, url: `${SM}/sync`, headers: { origin: TEST_ORIGIN } });
+      expect(res.statusCode, method).toBe(401);
+    }
+    const analyst = await session(ctx.app, ANALYST);
+    const forbidden = await analyst.send('POST', `${SM}/sync`);
+    expect(forbidden.statusCode).toBe(403);
+    expect(forbidden.json().error).toBe('FORBIDDEN');
+    const admin = await session(ctx.app);
+    const noCsrf = await admin.send('POST', `${SM}/sync`, undefined, { csrf: false });
+    expect(noCsrf.json().error).toBe('CSRF_INVALID');
+    const evil = await admin.send('POST', `${SM}/sync`, undefined, { origin: 'https://evil.example' });
+    expect(evil.statusCode).toBe(403);
+    expect(await ctx.repo.getSyncLease()).toBeNull();
+    expect((await admin.get(`${SM}/sync`)).json().lastRun.startedAt).toBe(ctx.summary.startedAt);
+    // Origin lintas situs ditolak sebelum sesi dibaca → tidak ada pengguna untuk dicatat.
+    expect((await syncAudit()).map((a) => [a.user_id, a.outcome, a.detail.reason])).toEqual([
+      [admin.userId, 'failure', 'CSRF_INVALID'], [analyst.userId, 'failure', 'FORBIDDEN'],
+    ]);
+  });
+
+  it('SEC-SM-API-012 rate limit khusus POST /sync: maks. 10 per menit per IP → permintaan ke-11 429 RATE_LIMITED', async () => {
+    ctx = await createSmartMoneyApp();
+    const admin = await session(ctx.app);
+    const errors = [];
+    for (let i = 0; i < 11; i += 1) errors.push((await admin.send('POST', `${SM}/sync`)).json().error);
+    expect(errors.slice(0, 10).every((e) => e === 'SYNC_COOLDOWN')).toBe(true);
+    expect(errors[10]).toBe('RATE_LIMITED');
+    // GET status tidak ikut dibatasi penghitung POST.
+    expect((await admin.get(`${SM}/sync`)).statusCode).toBe(200);
+  });
+
+  it('SEC-SM-API-013 kegagalan putaran latar tidak bocor: respons tetap 202, status hanya memuat ringkasan tersaring', async () => {
+    ctx = await createSmartMoneyApp({
+      appOptions: {
+        smartMoneySync: {
+          runSync: async () => { throw new Error('gagal https://api.contoh.test/v2?apikey=RAHASIA99 di /home/user/rahasia.js'); },
+        },
+      },
+    });
+    const admin = await session(ctx.app);
+    ctx.clock.advance(60_000);
+    const res = await admin.send('POST', `${SM}/sync`);
+    expect(res.statusCode).toBe(202);
+    await ctx.app.services.smartMoneySync.pending();
+    const status = await admin.get(`${SM}/sync`);
+    expect(status.json()).toMatchObject({
+      running: false, run: null, lastRun: { status: 'FAILED', startedAt: ctx.clock(), notes: [expect.stringMatching(/log server/)], errors: [] },
+    });
+    for (const text of [res.body, status.body]) {
+      for (const secret of ['RAHASIA99', 'https://', 'rahasia.js']) expect(text, secret).not.toContain(secret);
+    }
+    expect(await ctx.repo.getSyncLease()).toBeNull();
+  });
+});

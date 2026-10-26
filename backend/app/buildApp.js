@@ -22,6 +22,8 @@ import { migrate } from '../database/migrate.js';
 import { createRepositories } from '../database/repositories/index.js';
 import { registerSecurityHeaders } from '../security/headers.js';
 import { createLiveProviderRegistry } from '../smartmoney/providers/live.js';
+import { createSyncDeps } from '../smartmoney/syncDeps.js';
+import { createSyncRunner } from '../smartmoney/syncRunner.js';
 import { isApiRoute, registerRequestGuards } from '../security/requestGuards.js';
 import { WORKER_SCRIPT_PATH, WorkerSupervisorError, createWorkerSupervisor } from '../system/workerSupervisor.js';
 
@@ -52,17 +54,21 @@ const CHART_VENDOR_DIR = resolveChartVendorDir();
  * @param {{ config: ReturnType<import('./config.js').loadConfig>, db: import('better-sqlite3').Database,
  *           clock?: () => number, hasherOptions?: object, logger?: any,
  *           workerSupervisor?: ReturnType<typeof createWorkerSupervisor>, workerScriptPath?: string,
- *           workerRestartCooldownMs?: number, smartMoneyRegistry?: object }} options
+ *           workerRestartCooldownMs?: number, smartMoneyRegistry?: object,
+ *           smartMoneySync?: { cooldownMs?: number, syncDeps?: object|Function, runSync?: Function } }} options
  *   workerSupervisor / workerScriptPath / workerRestartCooldownMs: KHUSUS tes & E2E (supervisor dengan fork tiruan,
  *   skrip worker tiruan, jeda start ulang lebih pendek). Tidak pernah dibaca dari env maupun request; server produksi
  *   selalu menjalankan worker/index.js dengan jeda RESTART_COOLDOWN_MS.
  *   smartMoneyRegistry: KHUSUS tes & E2E (registri berisi provider fixture data simulasi, hanya NODE_ENV=test).
- *   Default: registri live dari SMART_MONEY_PROVIDERS. Server hanya membaca metadata provider (status, atribusi);
- *   pengambilan data dilakukan sinkronisasi di worker / `npm run smart-money:sync`.
+ *   Default: registri live dari SMART_MONEY_PROVIDERS. Route smart money hanya membaca database; pengambilan data
+ *   dilakukan putaran sinkronisasi (loop terjadwal worker, `npm run smart-money:sync`, atau tombol "Sync sekarang" yang
+ *   menjalankan putaran di proses server lewat createSyncRunner — lease database mencegah putaran tumpang-tindih).
+ *   smartMoneySync: KHUSUS tes & E2E (jeda antar-sync, deps/tuning sinkronisasi, runSync tiruan). Produksi memakai
+ *   jeda DEFAULT_MANUAL_COOLDOWN_MS dan harga native dari klines Binance publik (createSyncDeps, dibuat malas).
  */
 export async function buildApp({
   config, db, clock = Date.now, hasherOptions, logger, workerSupervisor, workerScriptPath, workerRestartCooldownMs,
-  smartMoneyRegistry,
+  smartMoneyRegistry, smartMoneySync,
 }) {
   const app = Fastify({
     logger: logger ?? {
@@ -109,9 +115,20 @@ export async function buildApp({
   });
 
   const smRegistry = smartMoneyRegistry ?? createLiveProviderRegistry(config, { env: process.env, clock });
+  // Tombol "Sync sekarang" (POST /api/smart-money/sync): putaran berjalan di latar proses server. Lease di database
+  // dibagi dengan loop terjadwal worker scanner, jadi kedua jalur tidak pernah berjalan bersamaan.
+  const { cooldownMs: smSyncCooldownMs, syncDeps: smSyncDeps, runSync: smRunSync } = smartMoneySync ?? {};
+  const smSync = createSyncRunner({
+    repo: repos.smartMoney, registry: smRegistry, config: config.smartMoney, owner: `server:${process.pid}`, clock,
+    logger: app.log.child({ module: 'smart-money' }),
+    syncDeps: smSyncDeps ?? (() => createSyncDeps(smRegistry)),
+    ...(smSyncCooldownMs !== undefined ? { cooldownMs: smSyncCooldownMs } : {}),
+    ...(smRunSync !== undefined ? { runSync: smRunSync } : {}),
+  });
 
   app.decorate('services', {
     hasher, sessionService, authService, repos, workerSupervisor: supervisor, smartMoneyRegistry: smRegistry,
+    smartMoneySync: smSync,
   });
 
   await registerSecurityHeaders(app, config);
@@ -173,6 +190,7 @@ export async function buildApp({
   await app.register(marketRoutes, { candles: repos.candles });
   await app.register(smartMoneyRoutes, {
     repo: repos.smartMoney, signals: repos.signals, registry: smRegistry, config: config.smartMoney, clock, audit: repos.audit,
+    syncRunner: smSync,
   });
 
   // Frontend statis. index.html hanya disajikan lewat route '/' yang memeriksa sesi.
@@ -235,6 +253,9 @@ export async function buildApp({
   });
   // Child tidak boleh menjadi yatim: menutup aplikasi selalu menghentikan worker lebih dulu.
   app.addHook('onClose', async () => supervisor.shutdown());
+  // Sync manual yang sedang berjalan dibatalkan dan ditunggu (lease dilepas) SEBELUM hook onClose mana pun — termasuk
+  // penutupan database oleh pemanggil buildApp, yang didaftarkan belakangan sehingga berjalan lebih dulu.
+  app.addHook('preClose', async () => smSync.stop());
 
   return app;
 }

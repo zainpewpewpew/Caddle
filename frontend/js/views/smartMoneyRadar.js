@@ -4,6 +4,8 @@
 // apa adanya, atau keadaan kosong yang jujur bila belum pernah dijalankan.
 // Tampilan hasil: "Daftar" (kartu, bawaan) atau "Peta Benang" (smartThreads.js) dari respons yang SAMA — beralih
 // tampilan tidak mengirim request baru. Pilihan tersimpan di hash (?view=benang) lewat history.replaceState.
+// Tombol "Sync sekarang" (smartMoneySync.js) menjalankan sinkronisasi tanpa menunggu jadwal worker; setiap run yang
+// dipantau selesai → radar dimuat ulang dengan filter & tampilan yang sedang dipakai.
 import { api } from '../lib/api.js';
 import { badge, dataTable, emptyState, page, panel, segmented, selectField, toggle } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
@@ -18,6 +20,7 @@ import {
   evaluationSummary, excludedSummary, explorerTokenUrl, explorerTxUrl, formatSignedPct, isNoSourceState, parseRadarFilters,
   relevanceLabel, signalPatternLabels, signalsByTimeframe, smartTokenHref, smartWalletHref, stateLabel, symbolChartHref,
 } from './smartMoneyFormat.js';
+import { syncControl } from './smartMoneySync.js';
 import { threadsView } from './smartThreads.js';
 import { parseRadarView, radarViewHash } from './smartThreadsLayout.js';
 
@@ -274,7 +277,8 @@ function resultViews(initialView) {
   };
 }
 
-export async function smartMoneyView() {
+/** @param {{ user?: { role: string } }|undefined} ctx */
+export async function smartMoneyView(ctx) {
   const initial = parseRadarFilters(hashQuery());
   const results = resultViews(parseRadarView(hashQuery()));
   const form = h('form', { class: 'toolbar sm-toolbar', 'aria-label': 'Filter radar smart money' },
@@ -323,13 +327,20 @@ export async function smartMoneyView() {
   const evaluation = evaluationSection();
   await evaluation.load();
 
+  // Dibuat setelah semua await, tepat sebelum halaman dipasang: timer polling-nya berhenti sendiri saat halaman dilepas
+  // (tanpa cleanup, seperti kontrol scanner persisten). Run yang dipantau selesai → radar dimuat ulang (view.load
+  // membaca filter form saat ini; tampilan Daftar/Peta Benang dipertahankan resultViews).
+  const sync = syncControl({ user: ctx?.user, onFinished: () => { view.load(); } });
+
   const d = disclaimersOf(null);
   const el = page({
     title: 'Smart Money Radar',
     subtitle: 'Token Accumulation Radar: token yang sedang dibeli lewat swap oleh beberapa wallet berkualitas yang saling independen. Transfer, penarikan exchange, bridge, airdrop, dan LP tidak dihitung sebagai pembelian.',
-    actions: [h('a', { class: 'btn btn--sm btn--ghost', href: '#/smart-wallets' }, icon('wallet', 'btn__icon'), 'Wallet Discovery'),
+    actions: [sync.button,
+      h('a', { class: 'btn btn--sm btn--ghost', href: '#/smart-wallets' }, icon('wallet', 'btn__icon'), 'Wallet Discovery'),
       h('a', { class: 'btn btn--sm btn--ghost', href: '#/smart-watchlist' }, icon('bell', 'btn__icon'), 'Watchlist & Alerts')],
   },
+  sync.el,
   metaHost,
   h('p', { class: 'sm-insider-note', 'data-testid': 'sm-insider-note' }, icon('lock', 'sm-insider-note__icon'), d.insiderName),
   panel({ title: 'Token yang diakumulasi', actions: count, flush: true, footer: `${d.conviction} ${d.readOnly}` }, form,

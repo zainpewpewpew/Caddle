@@ -2,6 +2,7 @@
 // Bentuk data mengikuti docs/15-kontrak-smart-money.md §5. Frontend tidak dapat mengimpor backend/smartmoney/
 // contracts.js (hanya folder frontend/ yang disajikan), sehingga konstanta yang dibutuhkan UI disalin di sini —
 // tests/unit/smartmoney/uiFormat.test.js memastikan salinan ini tetap identik dengan kontrak backend.
+import { formatDuration, formatInteger } from '../lib/format.js';
 
 export const EMPTY = '—';
 export const SM_API = '/api/smart-money';
@@ -835,4 +836,189 @@ export function evaluationSummary(data) {
     })),
     warnings: stringsOf(report.warnings, 12),
   };
+}
+
+// ---------------------------------------------------------------- sinkronisasi manual (GET/POST /api/smart-money/sync)
+
+/** Fase run sinkronisasi (`run.phase` GET /api/smart-money/sync), urut. */
+export const SYNC_PHASES = Object.freeze(['start', 'mapping', 'discovery', 'transfers', 'analysis', 'alerts']);
+
+const SYNC_PHASE_LABELS = Object.freeze({
+  start: 'Menyiapkan',
+  mapping: 'Pemetaan kontrak Binance',
+  discovery: 'Penemuan wallet',
+  transfers: 'Riwayat transaksi wallet',
+  analysis: 'Menghitung skor & radar',
+  alerts: 'Menyusun alert',
+});
+
+/** Jeda bawaan loop terjadwal worker scanner (SMART_MONEY_SYNC_MINUTES) bila server tidak mengirim intervalMinutes. */
+export const SYNC_DEFAULT_INTERVAL_MINUTES = 15;
+/** Batas pemantauan progres di UI (menit) — lihat syncErrorText('POLL_TIMEOUT'). */
+export const SYNC_POLL_CAP_MINUTES = 15;
+export const SYNC_NOT_ADMIN = 'Hanya admin yang dapat menjalankan sinkronisasi';
+/** Penjelasan reason/error NO_PROVIDERS (langkah lengkap: docs/17-panduan-smart-money.md §5). */
+export const SYNC_NO_PROVIDERS_HELP = 'Belum ada provider data smart money yang aktif, jadi sinkronisasi tidak dapat dijalankan. '
+  + 'Isi ETHERSCAN_API_KEY di file .env folder proyek, lalu hentikan server (Ctrl+C) dan jalankan npm start lagi — '
+  + '.env hanya dibaca saat server mulai. Langkah lengkap: docs/17-panduan-smart-money.md §5.';
+/**
+ * Petunjuk hasil saat tidak ada wallet yang dilacak (lastRun.wallets.tracked === 0): hanya kunci Etherscan → penemuan
+ * wallet dilewati dan run "berhasil" dengan angka nol semua.
+ */
+export const SYNC_NO_WALLETS_HINT = 'Belum ada wallet yang dilacak — ikuti wallet lewat Watchlist & Alerts, atau isi kunci '
+  + 'Binance read-only (BINANCE_API_KEY + BINANCE_API_SECRET) agar wallet baru ditemukan otomatis.';
+
+const SYNC_MESSAGE_MAX = 300;
+const clipText = (text) => (text.length > SYNC_MESSAGE_MAX ? `${text.slice(0, SYNC_MESSAGE_MAX - 1)}…` : text);
+
+/** 'Otomatis tiap 15 menit saat scanner berjalan' dari `intervalMinutes` GET /sync (null/tidak valid → 15). */
+export function syncAutoHint(intervalMinutes) {
+  const minutes = isNum(intervalMinutes) && intervalMinutes > 0 ? Math.round(intervalMinutes) : SYNC_DEFAULT_INTERVAL_MINUTES;
+  return `Otomatis tiap ${minutes || SYNC_DEFAULT_INTERVAL_MINUTES} menit saat scanner berjalan`;
+}
+
+/** Label fase run; fase baru yang belum dikenal tampil apa adanya. */
+export function syncPhaseLabel(phase) {
+  if (typeof phase === 'string' && Object.hasOwn(SYNC_PHASE_LABELS, phase)) return SYNC_PHASE_LABELS[phase];
+  return typeof phase === 'string' && phase ? phase.replaceAll('_', ' ') : 'Sinkronisasi';
+}
+
+/**
+ * Siapa yang menjalankan run: 'terjadwal (worker scanner)' (loop worker) atau 'manual' (tombol Sync sekarang).
+ * `trigger` didahulukan; tanpa trigger, owner 'worker' berarti loop terjadwal dan owner 'server' berarti manual.
+ * @param {{ owner?: string, trigger?: string }|null|undefined} run
+ * @returns {string|null}
+ */
+export function syncRunnerLabel(run) {
+  const owner = run?.owner;
+  const trigger = run?.trigger === 'manual' || run?.trigger === 'schedule' ? run.trigger
+    : owner === 'worker' ? 'schedule' : owner === 'server' ? 'manual' : null;
+  if (trigger === 'manual') return 'manual';
+  if (trigger === 'schedule') return owner === 'server' ? 'terjadwal' : 'terjadwal (worker scanner)';
+  return null;
+}
+
+/** Rasio progres 0..1 dari done/total, atau null bila tidak diketahui (bar indeterminate). */
+export function syncProgressRatio(run) {
+  if (!isNum(run?.done) || !isNum(run?.total) || run.total <= 0) return null;
+  return Math.min(1, Math.max(0, run.done / run.total));
+}
+
+/**
+ * Bagian teks progres run yang sedang berjalan: fase, 'x/y wallet', lama berjalan, dan siapa yang menjalankan.
+ * `now` disuplai pemanggil (epoch ms). Bagian yang tidak diketahui → null.
+ * @returns {{ phase: string, count: string|null, elapsed: string|null, runner: string|null }}
+ */
+export function syncProgressParts(run, now) {
+  const r = run && typeof run === 'object' ? run : {};
+  const count = syncProgressRatio(r) === null ? null
+    : `${formatInteger(r.done)}/${formatInteger(r.total)}${r.phase === 'transfers' ? ' wallet' : ''}`;
+  const elapsed = isNum(r.startedAt) && isNum(now) ? `berjalan ${formatDuration(Math.max(0, now - r.startedAt) / 1000)}` : null;
+  return { phase: syncPhaseLabel(r.phase), count, elapsed, runner: syncRunnerLabel(r) };
+}
+
+/** 'Riwayat transaksi wallet · 12/50 wallet · berjalan 1 mnt 20 dtk · terjadwal (worker scanner)' */
+export function syncProgressText(run, now) {
+  const p = syncProgressParts(run, now);
+  return [p.phase, p.count, p.elapsed, p.runner].filter(Boolean).join(' · ');
+}
+
+const SYNC_STATUS = Object.freeze({
+  OK: ['Berhasil', 'bull'],
+  DEGRADED: ['Selesai dengan catatan', 'warn'],
+  NO_PROVIDERS: ['Belum ada sumber data', 'warn'],
+  ABORTED: ['Dihentikan', 'warn'],
+  FAILED: ['Gagal', 'bear'],
+});
+
+/**
+ * Status run terakhir (`lastRun.status`) → label badge. Status baru yang belum dikenal tampil apa adanya.
+ * @returns {{ label: string, tone: string|undefined }}
+ */
+export function syncStatusLabel(status) {
+  if (typeof status === 'string' && Object.hasOwn(SYNC_STATUS, status)) {
+    const [label, tone] = SYNC_STATUS[status];
+    return { label, tone };
+  }
+  return { label: typeof status === 'string' && status ? status : EMPTY, tone: undefined };
+}
+
+/**
+ * Ringkasan angka run (`lastRun`, bentuk publicLastRun di backend/api/smartMoneyRoutes.js) sebagai baris pendek.
+ * Baris yang angkanya tidak ada dilewati; status NO_PROVIDERS tidak menyentuh data sehingga tanpa baris angka.
+ * Tanpa wallet yang dilacak (wallets.tracked === 0) baris terakhir adalah SYNC_NO_WALLETS_HINT.
+ * @returns {string[]}
+ */
+export function syncResultLines(lastRun) {
+  const r = lastRun && typeof lastRun === 'object' ? lastRun : {};
+  if (r.status === 'NO_PROVIDERS') return [];
+  const n = formatInteger;
+  const positive = (v) => isNum(v) && v > 0;
+  const lines = [];
+  const w = r.wallets && typeof r.wallets === 'object' ? r.wallets : {};
+  if (isNum(w.synced)) {
+    const extra = [];
+    if (positive(w.failed)) extra.push(`${n(w.failed)} gagal`);
+    if (positive(w.deferred)) extra.push(`${n(w.deferred)} ditunda`);
+    if (positive(w.skippedNoProvider)) extra.push(`${n(w.skippedNoProvider)} tanpa provider`);
+    lines.push(`Wallet: ${n(w.synced)} tersinkron${isNum(w.selected) ? ` dari ${n(w.selected)} dipilih` : ''}${extra.length ? ` (${extra.join(', ')})` : ''}`);
+  }
+  const transfer = [isNum(r.fetched) ? `${n(r.fetched)} diambil` : null, isNum(r.inserted) ? `${n(r.inserted)} aktivitas baru` : null].filter(Boolean);
+  if (transfer.length) lines.push(`Transfer: ${transfer.join(' · ')}`);
+  const d = r.discovery && typeof r.discovery === 'object' ? r.discovery : {};
+  if (isNum(d.added)) lines.push(`Penemuan wallet: ${n(d.added)} wallet baru${positive(d.candidates) ? ` dari ${n(d.candidates)} kandidat` : ''}`);
+  const m = r.mapping && typeof r.mapping === 'object' ? r.mapping : {};
+  if (isNum(m.upserted)) lines.push(`Pemetaan Binance: ${n(m.upserted)} kontrak diperbarui${positive(m.rejected) ? ` (${n(m.rejected)} ditolak)` : ''}`);
+  if (isNum(r.alerts)) lines.push(`Alert baru: ${n(r.alerts)}`);
+  if (w.tracked === 0) lines.push(SYNC_NO_WALLETS_HINT);
+  return lines;
+}
+
+/**
+ * `lastRun` adalah ringkasan run yang dipantau (run.startedAt, waktu server) — atau run sesudahnya. Ringkasan dengan
+ * startedAt lebih awal berarti run itu berakhir tanpa menulis ringkasan baru. Tanpa `startedAt` run, ringkasan apa pun
+ * diterima.
+ */
+export function isSyncResultOf(lastRun, startedAt) {
+  if (!lastRun || typeof lastRun !== 'object') return false;
+  if (!isNum(startedAt)) return true;
+  if (isNum(lastRun.startedAt)) return lastRun.startedAt >= startedAt;
+  return isNum(lastRun.finishedAt) && lastRun.finishedAt >= startedAt;
+}
+
+/** Sisa jeda trigger manual → 'Bisa dijalankan lagi dalam 45 dtk' ('' bila jeda sudah lewat). */
+export function syncCooldownText(remainingMs) {
+  if (!isNum(remainingMs) || remainingMs <= 0) return '';
+  return `Bisa dijalankan lagi dalam ${formatDuration(Math.ceil(remainingMs / 1000))}`;
+}
+
+/**
+ * Pesan Bahasa Indonesia untuk kode error/penolakan sinkronisasi (respons POST/GET /api/smart-money/sync, plus kode UI:
+ * NETWORK, POLL_TIMEOUT, NO_RESULT, STATUS_FAILED). Kode tak dikenal memakai pesan server (teks biasa, dipotong).
+ * @param {string|null|undefined} code
+ * @param {{ retryAfterMs?: number|null, message?: string|null }} [options]
+ */
+export function syncErrorText(code, { retryAfterMs, message } = {}) {
+  const wait = isNum(retryAfterMs) && retryAfterMs > 0 ? formatDuration(Math.ceil(retryAfterMs / 1000)) : null;
+  const later = wait ? `dalam ${wait}` : 'sebentar lagi';
+  // Pesan server tanpa titik penutup (kalimat ini menambah tanda baca sendiri).
+  const msg = typeof message === 'string' && message.trim() ? clipText(message.trim().replace(/\.+$/, '')) : null;
+  switch (code) {
+    case 'SYNC_RUNNING': return 'Sinkronisasi lain sedang berjalan — progresnya ditampilkan di sini.';
+    case 'NO_PROVIDERS': return SYNC_NO_PROVIDERS_HELP;
+    case 'SYNC_COOLDOWN': return `Sinkronisasi manual baru saja dijalankan. Coba lagi ${later}.`;
+    case 'RATE_LIMITED': return `Terlalu banyak permintaan ke server. Coba lagi ${later}.`;
+    case 'FORBIDDEN':
+    case 'NOT_ADMIN': return `${SYNC_NOT_ADMIN}.`;
+    case 'CSRF_INVALID': return 'Token keamanan sesi kedaluwarsa. Muat ulang halaman lalu coba lagi.';
+    case 'NETWORK': return 'Server tidak dapat dihubungi. Periksa koneksi lalu coba lagi.';
+    case 'POLL_TIMEOUT':
+      return `Pemantauan dihentikan setelah ${SYNC_POLL_CAP_MINUTES} menit. Sinkronisasi mungkin masih berjalan — muat ulang halaman untuk memeriksa statusnya.`;
+    case 'NO_RESULT': return 'Sinkronisasi selesai, tetapi ringkasannya belum tersedia — muat ulang halaman atau lihat log server';
+    case 'STATUS_FAILED': return `Status sinkronisasi tidak dapat dimuat${msg ? `: ${msg}` : ''}.`;
+    default: {
+      const tag = typeof code === 'string' && code && code !== 'UNKNOWN' ? ` (${code})` : '';
+      return msg ? `Sinkronisasi gagal: ${msg}${tag}` : `Sinkronisasi gagal${tag}. Coba lagi.`;
+    }
+  }
 }

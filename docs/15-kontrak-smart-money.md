@@ -289,6 +289,19 @@ route `backend/api/smartMoneyRoutes.js` di bawah `/api/smart-money/*` (semua waj
 | `GET/PUT /alert-prefs` | filter notifikasi per pengguna |
 | `GET /screener-links` | peta `futuresSymbol → ringkasan smart money` untuk chip di LONG Scanner |
 | `GET /evaluation` | laporan evaluasi historis terakhir atau `{ available: false }` |
+| `GET /sync` | status sinkronisasi lintas proses: putaran yang sedang berjalan + progresnya, ringkasan putaran terakhir, boleh memicu? |
+| `POST /sync` | tombol **Sync sekarang** (admin, CSRF, maks. 10/menit per IP, audit `smartmoney.sync`): memulai satu putaran di latar |
+
+Route lain hanya membaca database. `POST /sync` adalah satu-satunya route yang memicu panggilan provider: putaran
+berjalan di latar proses server lewat `backend/smartmoney/syncRunner.js` — penjalan yang sama dipakai loop terjadwal
+worker scanner (`worker/smartMoney.js`). Keduanya berbagi **lease** di `sm_sync_state` (kunci `runLease`, diambil atomik
+dengan `BEGIN IMMEDIATE`, tidak re-entrant, kedaluwarsa 2 menit, diperpanjang tiap progres dan detak 20 detik), jadi
+sync manual dan terjadwal tidak pernah berjalan bersamaan: tombol menampilkan progres putaran worker, dan putaran
+terjadwal yang bertemu sync manual dilewati lalu dicoba lagi 60 detik kemudian. Progres (`onProgress` di
+`runSmartMoneySync`: `start → mapping → discovery (n/total token) → transfers (n/total wallet) → analysis → alerts`)
+ditulis ke lease paling sering sekali per detik per tahap, sehingga terbaca dari proses mana pun. Sync manual berikutnya
+baru boleh 30 detik setelah putaran terakhir selesai (proses mana pun). Putaran yang berhenti karena kesalahan
+tak terduga dicatat sebagai `lastRun.status = 'FAILED'` dengan catatan generik (detail hanya di log, tersaring).
 
 ## 5. Bentuk respons API (dipakai frontend)
 
@@ -328,3 +341,19 @@ meta: {
 - `GET /screener-links` → `{ meta, items: { [futuresSymbol]: { tokenKey, symbol, chain, independentBuyers,
   conviction, state, lastActivityAt } } }` — hanya token `MATCHED`.
 - `GET /evaluation` → `{ meta, available: false }` atau `{ meta, available: true, computedAt, params, report }`.
+- `GET /sync` (semua pengguna) → `{ running, run, lastRun, canTrigger, reason, cooldownUntil, providersConfigured,
+  intervalMinutes }`:
+  - `run`: `null` atau `{ owner: 'server'|'worker', trigger: 'manual'|'schedule', startedAt, updatedAt,
+    phase: 'start'|'mapping'|'discovery'|'transfers'|'analysis'|'alerts', done: number|null, total: number|null }`
+    (tanpa id proses);
+  - `lastRun`: ringkasan putaran terakhir yang sudah disaring (sama dengan `GET /status`), `status`
+    `'OK'|'DEGRADED'|'NO_PROVIDERS'|'ABORTED'|'FAILED'`;
+  - `reason`: `null`, `'NO_PROVIDERS'` (belum ada sumber data — berlaku untuk semua peran, didahulukan), atau
+    `'NOT_ADMIN'`; `canTrigger = reason === null`;
+  - `cooldownUntil`: epoch ms akhir jeda 30 detik setelah putaran terakhir, atau `null`.
+- `POST /sync` (admin, CSRF; tanpa body — body diabaikan, query apa pun → 400):
+  - 202 `{ started: true, run }` — putaran berjalan di latar; hasilnya dibaca lewat `GET /sync` (`lastRun`);
+  - 409 `{ error: 'SYNC_RUNNING', message, run }` — putaran lain (manual atau terjadwal worker) sedang berjalan;
+  - 409 `{ error: 'NO_PROVIDERS', message }` — belum ada provider aktif (tidak ada data simulasi pengganti);
+  - 429 `{ error: 'SYNC_COOLDOWN', message, retryAfterMs }` + header `Retry-After` (detik);
+  - 403 `FORBIDDEN` (bukan admin) / `CSRF_INVALID`, 429 `RATE_LIMITED` (> 10 permintaan/menit per IP).

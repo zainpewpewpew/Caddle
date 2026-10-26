@@ -20,7 +20,8 @@ export const WORKER_ACTION_RATE_LIMIT = Object.freeze({ max: 10, timeWindow: 60_
 /** Kode penolakan gerbang yang dicatat apa adanya; kode lain dari respons 403 dicatat sebagai FORBIDDEN. */
 const GATE_REASONS = new Set(['FORBIDDEN', 'CSRF_INVALID']);
 
-function gateReason(payload) {
+/** Kode penolakan gerbang dari payload respons 403 (dipakai juga audit tombol "Sync sekarang" smart money). */
+export function gateReason(payload) {
   try {
     const code = JSON.parse(typeof payload === 'string' ? payload : String(payload))?.error;
     return GATE_REASONS.has(code) ? code : 'FORBIDDEN';

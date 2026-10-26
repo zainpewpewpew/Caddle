@@ -167,7 +167,8 @@ describe('Smart Money UI — Radar', () => {
       }),
     });
     let el = await smartMoneyView();
-    expect(dom.requests.map((r) => r.url)).toEqual(['/api/smart-money/radar?window=24h&limit=100', '/api/smart-money/evaluation']);
+    // Status sinkronisasi (tombol "Sync sekarang") dibaca sekali setelah radar & evaluasi — tidak menahan halaman.
+    expect(dom.requests.map((r) => r.url)).toEqual(['/api/smart-money/radar?window=24h&limit=100', '/api/smart-money/evaluation', '/api/smart-money/sync']);
     expect(texts(el)).toContain('Belum ada evaluasi historis');
     expect(texts(el)).toContain('npm run smart-money:evaluate');
     expect(el.querySelector('[data-testid="sm-evaluation"]')).toBeNull();
