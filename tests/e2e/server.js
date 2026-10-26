@@ -51,7 +51,8 @@ for (const user of Object.values(E2E_USERS)) {
   await createUser({ users: repos.users, audit: repos.audit, hasher, maxUsers: config.maxUsers, clock: Date.now }, user);
 }
 if (seeded) {
-  await seedSignals(repos);
+  // LONG Scanner produksi hanya 15m (DIRECTION_TIMEFRAMES) → sinyal seed di 15m.
+  await seedSignals(repos, { timeframe: '15m' });
   await seedWorkerHistory(repos);
   // Peristiwa skenario berumur 2–20 jam: batas basi alert dinaikkan KHUSUS penyemaian ini (SEED_SYNC_TUNING);
   // default produksi (30 menit) tidak berubah.

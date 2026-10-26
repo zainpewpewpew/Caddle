@@ -1,20 +1,29 @@
 import { createAnalysisPipeline, patternDefinitions } from '../../backend/analysis/pipeline.js';
+import { TIMEFRAME_MS } from '../../backend/market/contracts.js';
 import { silentAccumulationCandles } from '../fixtures/candles/scenarios.js';
 
 // Mengisi database dengan sinyal hasil pipeline ASLI atas candle SINTETIS (bukan data pasar nyata).
 export const SEED_SYMBOL = 'SYNUSDT';
 const NOW = Date.UTC(2027, 0, 1);
 
-export async function seedSignals(repos, { symbol = SEED_SYMBOL, seed = 1 } = {}) {
+/**
+ * @param {{ symbol?: string, seed?: number, timeframe?: '5m'|'15m' }} [options] timeframe '15m' = candle sintetis yang
+ *   sama dengan waktu diregangkan ke interval 15m (LONG Scanner produksi hanya 15m); bentuk harga/volume identik.
+ */
+export async function seedSignals(repos, { symbol = SEED_SYMBOL, seed = 1, timeframe = '5m' } = {}) {
   await repos.symbols.upsertFromExchange([{
     symbol, baseAsset: symbol.replace(/USDT$/, ''), quoteAsset: 'USDT', contractType: 'PERPETUAL', status: 'TRADING',
     tickSize: '0.0001', stepSize: '1', onboardDate: 0,
   }], NOW);
   const pipeline = createAnalysisPipeline({ repos, signals: repos.signals });
-  const candles = silentAccumulationCandles(seed).map((c) => ({ ...c, symbol }));
+  const raw = silentAccumulationCandles(seed);
+  const ms = TIMEFRAME_MS[timeframe];
+  const start = Math.floor(raw[0].openTime / ms) * ms;
+  const candles = raw.map((c, i) => (timeframe === '5m' ? { ...c, symbol }
+    : { ...c, symbol, timeframe, openTime: start + i * ms, closeTime: start + (i + 1) * ms - 1 }));
   for (const candle of candles) {
     await repos.candles.upsertClosed([candle], { now: NOW });
-    await pipeline.onClosedCandles({ symbol, timeframe: '5m' });
+    await pipeline.onClosedCandles({ symbol, timeframe });
   }
   return { candles };
 }

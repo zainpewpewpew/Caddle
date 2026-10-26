@@ -28,12 +28,9 @@ test('E2E-SIG-001 screener menampilkan sinyal dari API; filter server bekerja', 
   await expect(results.getByRole('cell', { name: 'SYNUSDT' })).toBeVisible();
   await expect(page.locator('.panel__actions .badge')).toHaveText('1 hasil');
 
-  await page.getByLabel('Timeframe').selectOption('1h');
-  await expect(results.getByText('Tidak ada kandidat yang cocok')).toBeVisible();
-  await expect(page.locator('.panel__actions .badge')).toHaveText('0 hasil');
-
-  await page.getByLabel('Timeframe').selectOption('5m');
-  await expect(results.getByRole('cell', { name: 'SYNUSDT' })).toBeVisible();
+  // Timeframe tetap (bukan filter): LONG Scanner 15m dengan konteks 1h.
+  await expect(page.getByTestId('scanner-timeframe')).toContainText('15m');
+  await expect(results.getByRole('cell', { name: '15m', exact: true })).toBeVisible();
   await page.getByLabel('Alignment').selectOption('COUNTERTREND');
   await expect(results.getByText('Tidak ada kandidat yang cocok')).toBeVisible();
   expect(errors).toEqual([]);
