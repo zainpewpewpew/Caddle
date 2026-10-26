@@ -3,10 +3,10 @@
 // Skor yang ditampilkan adalah kecocokan dengan aturan pola, bukan probabilitas profit. Riset saja.
 import { api } from '../lib/api.js';
 import { createCandleChart, loadChartLibrary, onDisconnect } from '../lib/chart.js';
-import { badge, callout, emptyState, panel, refreshRowSelection, score, segmented, stage } from '../lib/components.js';
+import { callout, emptyState, panel, refreshRowSelection, score, segmented } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
 import { formatPrice, formatUtc } from '../lib/format.js';
-import { alignmentBadge, patternBadge, riskBadges } from './signalFormat.js';
+import { alignmentBadge, directionBadge, directionOf, patternBadge, riskBadges, signalStage } from './signalFormat.js';
 
 export const CHART_TIMEFRAMES = Object.freeze(['5m', '15m', '1h']);
 export const SYMBOL_RE = /^[A-Z0-9]{2,30}$/;
@@ -17,24 +17,12 @@ const CANDLE_LIMIT = 300;
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 
 export const isValidSymbol = (symbol) => typeof symbol === 'string' && SYMBOL_RE.test(symbol);
-/** Arah sinyal; field `direction` yang tidak ada (data lama) atau tak dikenal = LONG. */
-export const normalizeDirection = (direction) => (direction === 'SHORT' ? 'SHORT' : 'LONG');
+/** Arah sinyal; field `direction` yang tidak ada (data lama) atau tak dikenal = LONG (sama dengan directionOf). */
+export const normalizeDirection = directionOf;
 export const normalizeTimeframe = (timeframe, fallback = DEFAULT_TIMEFRAME) => (CHART_TIMEFRAMES.includes(timeframe) ? timeframe : fallback);
 
-export function directionBadge(direction) {
-  const dir = normalizeDirection(direction);
-  return badge(dir, dir === 'SHORT' ? 'bear' : 'bull');
-}
-
-/**
- * Tahap sinyal menurut arah. MOMENTUM_BUILDING dipakai kedua arah, jadi sinyal SHORT diberi
- * `data-direction="SHORT"` agar warnanya dapat dibedakan di CSS. LONG identik dengan stage().
- */
-export function signalStage(state, direction) {
-  const el = stage(state);
-  if (normalizeDirection(direction) === 'SHORT') el.dataset.direction = 'SHORT';
-  return el;
-}
+// Badge arah dan tahap sinyal dipakai dari signalFormat.js (satu sumber dengan scanner & riwayat sinyal).
+export { directionBadge, signalStage };
 
 /**
  * Tautan halaman detail: #/symbol?s=BTCUSDT&tf=15m&dir=LONG&signal=12 (parameter selain s opsional).

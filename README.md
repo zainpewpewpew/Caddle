@@ -11,8 +11,8 @@ Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — men
 | 1 — Fondasi | Audit, arsitektur, autentikasi, shell frontend, API, migrasi | **Selesai (di `main`)** |
 | 2 — Data pasar | Binance REST/WS, candle historis, validasi, worker | **Selesai (di `main`; REST + WebSocket live terverifikasi di Mac pemilik, lihat laporan)** |
 | 3 — Mesin pola | SA, PVA, hybrid timeframe, skor, state machine | **Selesai (di `main`)** |
-| Short Scanner (lanjutan M3) | Pola SHORT SD & PVD, state SHORT, API `direction`, migrasi `005`, halaman SHORT Scanner | **Dalam pengerjaan** — backend & frontend selesai, belum diuji & belum di `main` |
-| 4 — Dashboard premium | Screener, grafik, real-time | Belum dimulai |
+| Short Scanner (lanjutan M3) | Pola SHORT SD & PVD, state SHORT, API `direction`, migrasi `005`, halaman SHORT Scanner | **Di `main`** — kode selesai; pengujian end-to-end dilakukan pemilik di mesin lokal |
+| 4 — Dashboard premium | Screener, grafik, real-time | **Sebagian** — grafik koin di sebelah tabel scanner, halaman detail Symbol Intelligence ([docs/08](docs/08-grafik-simbol.md)), proses sync scanner live ([docs/09](docs/09-proses-sync.md)) |
 | 5 — Pattern Discovery Lab | Upload, anotasi, definisi pola berversi | Belum dimulai |
 | 6 — Backtesting | Replay historis, metrik, out-of-sample | Belum dimulai |
 | 7 — Keamanan & QA | Pengujian lengkap, pemindaian, pentest | Berjalan terus sejak M1 |
@@ -22,7 +22,7 @@ Detail: [docs/03-rencana-implementasi.md](docs/03-rencana-implementasi.md).
 
 ## Teknologi
 
-- **Frontend:** HTML5, CSS3, Vanilla JavaScript (ES Modules), tanpa framework dan tanpa bundler. TradingView Lightweight Charts direncanakan di Milestone 4.
+- **Frontend:** HTML5, CSS3, Vanilla JavaScript (ES Modules), tanpa framework dan tanpa bundler. Grafik koin memakai TradingView Lightweight Charts (Apache-2.0, dipin eksak, disajikan dari `node_modules` lewat satu rute file tetap — lihat [docs/08](docs/08-grafik-simbol.md) dan `THIRD_PARTY_NOTICES.md`).
 - **Backend:** Node.js 22 atau 24 (LTS), Fastify 5, JSON Schema validation, arsitektur modular monolith.
 - **Database:** SQLite (better-sqlite3) dengan migrasi berversi dan lapisan repositori — disiapkan untuk migrasi ke PostgreSQL.
 - **Pengujian:** Vitest (unit/integrasi), Playwright (E2E), ESLint, npm audit, Semgrep.
@@ -72,6 +72,7 @@ Worker scanner selalu berjalan sebagai **proses terpisah** dari server API, deng
 
 1. **Dari website (disarankan):** System Health → kartu **Kontrol scanner** → **Jalankan scanner** / **Hentikan scanner** (dengan konfirmasi). Overview, LONG Scanner, dan SHORT Scanner juga selalu menampilkan kontrol scanner ringkas (selama `WORKER_CONTROL` aktif): status scanner dan satu tombol yang berganti antara **Jalankan scanner** dan **Hentikan scanner** (dengan konfirmasi). Satu worker memindai LONG dan SHORT sekaligus, jadi satu kontrol mencakup keduanya. Hanya **admin** yang dapat menjalankan atau menghentikan; analyst hanya melihat statusnya.
    - Status: *Berjalan*, *Berhenti*, *Memulai…*, *Menghentikan…*, *Gagal (kode keluar N)*, atau *Berjalan di luar website*.
+   - **Proses sync terlihat langsung:** setelah start, kontrol ringkas menampilkan langkah yang sedang berjalan (sinkron jam → discovery simbol → backfill candle x/y seri → stream live → analisis pola) dan System Health memuat panel **Proses sync scanner** lengkap, diperbarui tiap 2 detik selama sync dan tiap 10 detik saat live ([docs/09](docs/09-proses-sync.md)).
    - Menghentikan scanner mengirim SIGTERM (worker menyelesaikan tugas aktif dan menulis heartbeat akhir); bila belum berhenti dalam 15 detik, worker dihentikan paksa (SIGKILL).
    - Menutup server (Ctrl+C / SIGTERM, atau menutup jendela terminal `npm start` yang mengirim SIGHUP) menghentikan worker lebih dulu. Bila server mati mendadak, worker berhenti sendiri saat koneksi IPC ke server terputus.
    - Worker yang crash **tidak** dijalankan ulang otomatis: status menjadi *Gagal (kode keluar N)*. Sesaat setelah start, System Health dan kontrol scanner ringkas terus memantau selama ±10 detik, jadi worker yang langsung crash tampil sebagai *Gagal* dalam beberapa detik. Periksa log di terminal `npm start`, lalu tekan **Jalankan scanner** lagi.
@@ -85,6 +86,10 @@ Worker scanner selalu berjalan sebagai **proses terpisah** dari server API, deng
 | `WORKER_AUTOSTART` | `false` | `true`: server langsung menjalankan worker saat start (butuh `WORKER_CONTROL` aktif; tercatat di audit). Dibatalkan bila worker di luar website sedang berjalan. |
 
 Nilai selain `true`/`false` membuat server menolak start (fail fast).
+
+## Grafik koin & detail simbol
+
+Klik (atau Enter pada) baris kandidat di LONG/SHORT Scanner untuk membuka grafik candlestick koin itu di sebelah tabel (di layar sempit: di bawahnya): volume, EMA7/EMA25, level invalidasi & deteksi pertama, serta ringkasan sinyal (arah, pola, tahap, skor, risk flag). Tombol **Buka detail** membuka halaman **Symbol Intelligence** (`#/symbol?s=BTCUSDT&tf=15m&dir=LONG`) dengan grafik besar, riwayat sinyal kedua arah, dan penjelasan kondisi sinyal terakhir. Data grafik = candle tertutup dari database (`GET /api/market/candles`); tanpa candle tampil empty state, tidak pernah data contoh. Detail: [docs/08](docs/08-grafik-simbol.md).
 
 ## Short Scanner (riset)
 
@@ -165,6 +170,8 @@ config/         contoh environment
 - [05 — Database](docs/05-database.md)
 - [06 — Evaluasi dependensi](docs/06-evaluasi-dependensi.md)
 - [07 — Kontrak antarmodul](docs/07-kontrak-modul.md)
+- [08 — Grafik simbol & side panel tabel](docs/08-grafik-simbol.md)
+- [09 — Proses sync scanner](docs/09-proses-sync.md)
 - [Architecture Decision Records](docs/adr/)
 - [Laporan pengujian Milestone 1](docs/laporan/milestone-1-pengujian.md)
 - [Laporan pengujian Milestone 2–3](docs/laporan/milestone-2-3-pengujian.md)
