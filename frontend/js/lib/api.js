@@ -10,6 +10,8 @@ export class ApiError extends Error {
     this.status = status;
     this.code = body?.error ?? 'UNKNOWN';
     this.details = body?.details ?? [];
+    // Badan respons error apa adanya (mis. retryAfterMs / run pada 429/409 sinkronisasi smart money); null bila bukan JSON.
+    this.body = body && typeof body === 'object' ? body : null;
   }
 }
 
