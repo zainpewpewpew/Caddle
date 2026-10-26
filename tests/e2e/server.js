@@ -26,11 +26,13 @@ import { E2E_PORT, E2E_USERS } from './fixtures.js';
 const port = Number(process.env.E2E_SERVER_PORT ?? E2E_PORT);
 const seeded = process.env.E2E_SEED_SIGNALS === '1';
 const dbPath = join(mkdtempSync(join(tmpdir(), 'lr-e2e-')), 'e2e.db');
-// Batas login dinaikkan khusus E2E: seluruh suite (desktop + mobile) memakai ~20 login per server
-// dan tidak ada skenario E2E yang menguji rate limit (itu diuji di tests/security & tests/negative).
+// Batas login dinaikkan khusus E2E: tiap spec masuk ulang per tes, dan server kosong (8181) dipakai
+// app/neural/reversal/scanner/smartmoney ≈ 36 login per proyek; desktop + mobile berjalan dalam satu
+// jendela 15 menit (≈ 72 login > 60 → "Terlalu banyak percobaan"). Tidak ada skenario E2E yang
+// menguji rate limit (itu diuji di tests/security & tests/negative), jadi batasnya 200.
 const config = loadConfig({
   NODE_ENV: 'test', HOST: '127.0.0.1', PORT: String(port), APP_ORIGIN: `http://127.0.0.1:${port}`,
-  DATABASE_PATH: dbPath, LOG_LEVEL: 'warn', LOGIN_RATE_LIMIT_MAX: '60', WORKER_CONTROL: 'true',
+  DATABASE_PATH: dbPath, LOG_LEVEL: 'warn', LOGIN_RATE_LIMIT_MAX: '200', WORKER_CONTROL: 'true',
   SMART_MONEY_PROVIDERS: seeded ? 'fixture' : 'off',
 });
 const db = openDatabase(dbPath);
