@@ -394,7 +394,7 @@ BINANCE_API_SECRET=
 | `SMART_MONEY_SYNC_MINUTES` | 15 | 5–1440 | Jeda antar putaran sinkronisasi |
 | `SMART_MONEY_STALE_MINUTES` | 60 | 1–10080 | Data ditandai BASI bila sinkron sukses terakhir lebih tua dari ini |
 | `SMART_MONEY_MAX_WALLETS` | 50 | 1–500 | Wallet maksimum per putaran |
-| `ROUTESCAN_API_KEY` | kosong | — | Kunci gratis Routescan: kuota 10.000 → 100.000/hari |
+| `ROUTESCAN_API_KEY` | kosong | — | Kunci gratis Routescan: kuota yang dipakai AlphaLens naik dari 9.000 ke 90.000 panggilan/hari (di bawah batas resmi) |
 
 `.env` hanya dibaca saat start: bila server sedang berjalan, hentikan (Ctrl+C) lalu `npm start` lagi.
 
