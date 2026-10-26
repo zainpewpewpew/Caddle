@@ -285,7 +285,8 @@ akurat untuk EOA, kurang untuk aggregator/smart account.
    https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Exchange-Information].
    **Tidak** memuat contract address.
 4. Endpoint tidak resmi `www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll` (dipakai web Binance)
-   **tidak terdokumentasi** — jangan dijadikan dependensi.
+   **tidak terdokumentasi**. Awalnya tidak dipakai; sejak 2026-10-26 dipakai sebagai sumber **tanpa kunci**
+   (`binance-public`) untuk pengguna tanpa kunci Binance, dengan pembacaan defensif dan cadangan — lihat §9.3.
 5. **Cross-check CoinGecko:** `/derivatives/exchanges/binance_futures?include_tickers=unexpired` → ticker perp
    dengan `contract_type: "perpetual"` dan (changelog) `coin_id` [R]; lalu `/coins/{coin_id}` → `platforms`
    (map `asset_platform_id → contract_address`) [R]. Juga `/coins/{id}/tickers?exchange_ids=binance` untuk spot [R].
@@ -368,7 +369,8 @@ sumber resmi berlisensi jelas dalam riset ini.
 ### 8.1 Keputusan yang dibutuhkan
 
 1. **API key Binance read-only** (Enable Reading saja, tanpa trading/withdraw; idealnya batasi IP Mac) untuk
-   `getall`. Alternatif tanpa kunci: CoinGecko saja (lebih lemah).
+   `getall`. **Opsional sejak 2026-10-26:** tanpa kunci dipakai endpoint publik `getNetworkCoinAll` (§9.3); kunci
+   read-only tetap didahulukan bila diisi.
 2. **Chain prioritas awal:** usul **Ethereum + Base + Solana** (+ BNB Chain bila sanggup berbayar). BNB Chain di
    Etherscan memerlukan paket berbayar; alternatif gratis: Routescan / instance Blockscout (uji dulu).
 3. **Etherscan free vs Lite (±$49/bln)** — Lite membuka chain berbayar? (**belum terverifikasi** apakah Lite
@@ -409,3 +411,59 @@ sumber resmi berlisensi jelas dalam riset ini.
    Birdeye sebagai pembanding PnL.
 8. **Watchlist & alert** di atas data yang sudah tervalidasi; setiap alert membawa provider, umur data, dan
    keterbatasan.
+
+---
+
+## 9. Pembaruan 2026-10-26 — jalur Etherscan-saja (tanpa kunci Binance)
+
+Pertanyaan riset: apakah Smart Money Radar bisa berjalan penuh hanya dengan `ETHERSCAN_API_KEY` gratis? Hasilnya
+dipakai untuk provider `binance-public`, metode `trendingTokens` GeckoTerminal, dan mode otomatis (docs/15 §3–4,
+docs/17 §5a). Tingkat verifikasi memakai legenda §0; lingkungan cloud tetap tidak menjangkau host vendor, jadi
+semua bentuk respons diverifikasi lewat `npm run smart-money:check` di Mac.
+
+### 9.1 Etherscan API V2 — batas paket gratis yang relevan
+
+| Fakta | Dampak ke AlphaLens | Sumber |
+|---|---|---|
+| **Akses gratis untuk Base (8453), BNB Chain (56), OP Mainnet (10), dan Avalanche C-Chain (43114) dihentikan pada November 2025**; permintaan paket gratis ke chain tersebut ditolak dengan pesan `free API access is not supported for this chain` | Paket gratis Etherscan dipakai untuk Ethereum, Arbitrum, Polygon saja; Base, Optimism, BNB Chain lewat Routescan (tanpa kunci). Pesan itu dipetakan ke `NOT_SUPPORTED` (⚪ di cek), bukan `UNAUTHORIZED` | [R] https://info.etherscan.com/whats-changing-in-the-free-api-tier-coverage-and-why/ ; [S] berita CCN dan Yahoo Finance (November 2025) yang melaporkan perubahan cakupan chain paket gratis |
+| Maks. **1.000 rekaman per respons** di paket gratis sejak **2026-07-01** (sebelumnya 10.000) | Paginasi `tokentx`/`txlist` memakai halaman ≤ 1.000; sinkron pertama riwayat 180 hari wallet aktif butuh beberapa putaran | [S] blog Blockscout mengutip changelog Etherscan (lihat §2.1) |
+| `tokenholderlist` dan `topholders` (daftar pemegang token) berlabel **API PRO** — tidak tersedia di paket gratis | Penemuan wallet tidak bisa berangkat dari "pemegang teratas token" lewat Etherscan gratis; dipakai trade pool GeckoTerminal | [R] dok endpoint Etherscan (`module=token&action=tokenholderlist`, `action=topholders`) |
+| `getLogs` (`module=logs&action=getLogs`) **tersedia di paket gratis** | Opsi masa depan: pembeli awal dari log `Transfer`/`Swap` per kontrak tanpa endpoint PRO (belum dipakai) | [R] dok endpoint Etherscan `logs` |
+
+### 9.2 GeckoTerminal — pool trending tanpa kunci
+
+- `GET https://api.geckoterminal.com/api/v2/networks/{network}/trending_pools` — pool trending per jaringan,
+  **tanpa kunci**, kuota keyless yang sama (±10 panggilan/menit, pool IP bersama; AlphaLens memakai 6/menit) [R:
+  https://docs.coingecko.com/docs/keyless-public-api, referensi "Trending Pools by Network"]. Bentuk
+  `data[].relationships.base_token/quote_token.data.id` (`{network}_{address}`) sama dengan endpoint pool lain [R].
+- Dipakai **hanya sebagai cadangan** penemuan wallet bila belum ada token MATCHED: satu chain per putaran (bergiliran)
+  agar kuota keyless tidak habis. Token trending sering token baru yang **belum tentu listing di Binance** — kandidatnya
+  ditandai `geckoterminal-trending`. Atribusi "Powered by CoinGecko / GeckoTerminal" tetap berlaku (§2.2).
+
+### 9.3 Binance `bapi` `getNetworkCoinAll` — pemetaan kontrak tanpa kunci
+
+- `GET https://www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll` mengembalikan daftar koin +
+  `networkList[]` (`network`, `contractAddress`, …) seperti `getall`, **tanpa saldo dan tanpa tanda tangan**. Endpoint
+  ini dipakai halaman deposit/penarikan binance.com dan dirujuk beberapa proyek open source, tetapi **tidak
+  terdokumentasi** di developers.binance.com [belum terverifikasi secara resmi — tidak ada halaman dok].
+- Konsekuensi desain: dibaca **defensif** (`{ code: "000000", data: [...], success: true }` atau array langsung; selain
+  itu `BAD_RESPONSE`), tidak pernah menerima kunci, dan diverifikasi tiap kali lewat `npm run smart-money:check`
+  (PEPE → `1000PEPEUSDT` ×1000). Bila berubah/diblokir, penemuan jatuh ke cadangan trending (§9.2) dan pengguna
+  disarankan mengisi kunci read-only (`getall`, §5.1 butir 1), yang tetap **didahulukan** bila diisi.
+- Dari IP cloud riset endpoint `bapi` tidak terjangkau (proxy 403, §0.1); bentuk respons belum direkam langsung.
+
+### 9.4 Riset open source: penemuan smart money hanya dengan Etherscan
+
+- Tidak ditemukan repositori yang **masih dirawat** dan melakukan penemuan smart money hanya dengan Etherscan (tanpa
+  data DEX/label berbayar). Proyek yang ada umumnya skrip sekali pakai, basi, atau bergantung pada Dune/Nansen/Birdeye
+  [GH, pencarian GitHub 2026-10-26].
+- Teknik yang paling umum: **pembeli awal (early buyers)** — ambil `tokentx` per kontrak token (`module=account&
+  action=tokentx&contractaddress=…`), urutkan dari blok awal, kumpulkan penerima transfer dari pool/router di jam-jam
+  pertama, lalu nilai riwayat wallet tersebut; dikombinasikan antar beberapa token untuk mencari wallet yang
+  berulang kali masuk awal. Batas 1.000 rekaman/respons (§9.1) membuat teknik ini mahal untuk token ramai. AlphaLens
+  tidak memakainya sekarang (trade pool GeckoTerminal sudah memberi `tx_from_address` dengan nilai USD), tetapi
+  dicatat sebagai alternatif.
+- **Peringatan keamanan:** sebuah listing skill bernama **"insider-wallets-finder"** meminta pengguna **mengunduh
+  binary berpassword** (arsip terkunci yang tidak bisa dipindai antivirus) untuk dijalankan secara lokal — pola umum
+  distribusi malware/pencuri kunci wallet. Listing itu **tidak dipakai**, tidak diunduh, dan tidak dijadikan rujukan
+  kode. Jangan pernah menjalankan binary semacam itu di Mac yang memuat `.env` atau wallet.

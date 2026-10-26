@@ -36,7 +36,9 @@ describe('konfigurasi smart money', () => {
   it('UNIT-SM-CFG-004 mode otomatis: provider mengikuti kunci di .env; `off` mematikan; daftar eksplisit menang', () => {
     expect(parseSmartMoneyConfig({}).providers).toEqual([]);
     expect(parseSmartMoneyConfig({ ETHERSCAN_API_KEY: '  ' }).providers).toEqual([]);
-    expect(parseSmartMoneyConfig({ ETHERSCAN_API_KEY: 'x' }).providers).toEqual(['etherscan', 'routescan', 'geckoterminal']);
+    // Jalur Etherscan-saja: tanpa kunci Binance → pemetaan publik tanpa kunci (binance-public).
+    expect(parseSmartMoneyConfig({ ETHERSCAN_API_KEY: 'x' }).providers).toEqual(['etherscan', 'routescan', 'geckoterminal', 'binance-public']);
+    expect(parseSmartMoneyConfig({ ETHERSCAN_API_KEY: 'x', BINANCE_API_KEY: 'k' }).providers).toEqual(['etherscan', 'routescan', 'geckoterminal', 'binance-public']);
     expect(parseSmartMoneyConfig({ BINANCE_API_KEY: 'k' }).providers).toEqual([]);
     expect(parseSmartMoneyConfig({ BINANCE_API_KEY: 'k', BINANCE_API_SECRET: 's' }).providers).toEqual(['binance-mapping']);
     const both = { ETHERSCAN_API_KEY: 'x', BINANCE_API_KEY: 'k', BINANCE_API_SECRET: 's' };

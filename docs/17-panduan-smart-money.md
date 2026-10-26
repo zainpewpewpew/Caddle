@@ -28,7 +28,8 @@ lalu menunjukkan token yang sedang mereka akumulasi beserta buktinya.
 
 - **Baca saja.** Tidak mengirim transaksi atau order, bukan copy-trading. Yang dipakai hanya alamat publik.
 - **Tidak pernah meminta seed phrase atau private key.** Satu-satunya kunci exchange adalah kunci Binance **read-only**
-  untuk memetakan kontrak token ke pasar Binance. Siapa pun yang meminta seed phrase "untuk fitur ini" adalah penipu.
+  yang **opsional** untuk memetakan kontrak token ke pasar Binance (tanpa kunci dipakai daftar publik Binance, §5a).
+  Siapa pun yang meminta seed phrase "untuk fitur ini" adalah penipu.
 - **"Insider" hanya nama fitur.** Tidak ada kesimpulan bahwa pemilik wallet punya informasi orang dalam.
 - **Skor bukan probabilitas profit.** Skor wallet dan skor keyakinan adalah ringkasan bukti yang dapat dijelaskan;
   bobotnya hipotesis awal yang belum dikalibrasi (lihat §4).
@@ -46,7 +47,7 @@ Token dibuka lewat tautan alamat wallet/token di halaman lain.
 - **Kesegaran** = waktu aktivitas on-chain terbaru yang tersimpan; **Sinkron terakhir** = kapan sumber data terakhir
   berhasil dihubungi.
 - Badge **BASI** = sinkron sukses terakhir lebih tua dari `SMART_MONEY_STALE_MINUTES` (bawaan 60 menit) atau belum pernah.
-- **Cakupan** (chain · wallet · aktivitas), **Provider** (jumlah terkonfigurasi), **Sumber data** (atribusi wajib, §5f).
+- **Cakupan** (chain · wallet · aktivitas), **Provider** (jumlah terkonfigurasi), **Sumber data** (atribusi wajib, §5g).
 - Pita **DATA SIMULASI** bila ada data simulasi (§3). Tanpa provider aktif tampil "Belum ada sumber data on-chain" —
   tidak pernah data contoh.
 
@@ -149,9 +150,18 @@ jadwal otomatis. Hanya admin yang dapat menekannya; pengguna lain melihat progre
   ditekan berulang-ulang.
 - Tombol abu-abu dengan keterangan *Belum ada sumber data* berarti belum ada provider aktif: isi `ETHERSCAN_API_KEY`
   di `.env` (§5) lalu restart `npm start`.
-- Tanpa kunci Binance read-only, langkah *Penemuan wallet* dilewati (lihat catatan hasil): putaran hanya memperbarui
-  wallet yang sudah dilacak, termasuk wallet di watchlist. Isi `BINANCE_API_KEY` + `BINANCE_API_SECRET` (§5b) agar
-  wallet baru ditemukan otomatis.
+- Kunci Binance **tidak wajib** untuk *Penemuan wallet* (§5a). Hanya dengan `ETHERSCAN_API_KEY`, pemetaan kontrak
+  diambil dari daftar publik Binance (`binance-public`, tanpa kunci) dan wallet baru ditemukan dari pembeli token yang
+  listing di Binance. Bila daftar publik gagal atau belum memuat token MATCHED, penemuan memakai cadangan **token
+  trending GeckoTerminal** di satu chain per putaran (bergiliran). Baris hasil *Penemuan wallet* menyebut jalurnya:
+  - *Penemuan wallet (token listing Binance): …* — kandidat dari pembeli token MATCHED.
+  - *Penemuan wallet (token trending GeckoTerminal di base — belum tentu listing Binance): …* — jalur cadangan; wallet
+    temuannya belum tentu pernah membeli token yang ada di Binance.
+  - *Penemuan wallet: …* tanpa keterangan — penemuan tidak berjalan pada putaran itu (lihat catatan hasil); hanya
+    wallet yang sudah dilacak, termasuk watchlist, yang diperbarui.
+
+  Baris *Pemetaan Binance (publik, tanpa kunci): N kontrak diperbarui* berarti mapping berasal dari daftar publik;
+  tanpa keterangan "(publik…)" berarti dari kunci read-only (§5c).
 
 #### Peta Benang
 
@@ -175,8 +185,9 @@ Daftar wallet yang dilacak, urut skor tertinggi. Filter: chain, gaya (Scalper: m
 (bawaan mati).
 
 Wallet ditemukan dari pembeli bernilai besar (bawaan ≥ $1.000) di pool token yang MATCHED di Binance dalam 24 jam
-terakhir (GeckoTerminal), lalu dinilai **dari riwayat swap-nya sendiri**. Alamat temuan adalah pengirim transaksi —
-bisa relayer, bot, atau aggregator — jadi cara ditemukan bukan bukti kualitas.
+terakhir (GeckoTerminal), lalu dinilai **dari riwayat swap-nya sendiri**. Bila belum ada token MATCHED sama sekali,
+dipakai pool token **trending** GeckoTerminal (sumber `geckoterminal-trending`, alasan "belum tentu listing Binance").
+Alamat temuan adalah pengirim transaksi — bisa relayer, bot, atau aggregator — jadi cara ditemukan bukan bukti kualitas.
 
 **Cara peringkat (skor wallet 0–100):**
 
@@ -261,7 +272,8 @@ aktivitas per wallet. Pencocokan Binance hanya memakai kontrak — simbol tidak 
 - **Pengali 1000PEPE**: beberapa perp Binance memakai pengali, mis. `1000PEPEUSDT` = 1.000 PEPE per unit, sehingga harga
   di chart perp = harga 1 PEPE × 1.000. Pengali berasal dari data Binance (tooltip "1 kontrak = 1000 token"), tidak
   ditebak dari nama.
-- **Sumber mapping** tampil di panel (mis. `binance-getall`); mapping disegarkan sekali sehari.
+- **Sumber mapping** tampil di panel: `binance-getall` (kunci read-only) atau `binance-public` (daftar publik tanpa
+  kunci), kadang berakhiran `+prefix-rule`/`+denomination`; mapping disegarkan sekali sehari.
 
 ### 2.5 Watchlist & Alerts
 
@@ -300,8 +312,9 @@ Tanpa data, atau bila permintaannya gagal, tabel tampil seperti biasa tanpa chip
 | --- | --- | --- | --- |
 | Etherscan API V2 | Riwayat transfer wallet: Ethereum, Arbitrum, Polygon | `ETHERSCAN_API_KEY` (gratis) | 2 panggilan/detik, 90.000/hari |
 | Routescan | Riwayat transfer chain EVM lain (Base, Optimism, BNB Chain) | Tanpa kunci (`ROUTESCAN_API_KEY` opsional) | 1,5/detik; 9.000/hari (90.000 dengan kunci) |
-| GeckoTerminal | Penemuan wallet dari trade pool + harga token | Tanpa kunci | 6 panggilan/menit |
-| Binance (kunci read-only) | Daftar kontrak aset → pasar spot/futures | `BINANCE_API_KEY` + `BINANCE_API_SECRET` | Disegarkan sekali sehari |
+| GeckoTerminal | Penemuan wallet dari trade pool, token trending (cadangan penemuan), harga token | Tanpa kunci | 6 panggilan/menit |
+| Binance publik (`binance-public`) | Daftar kontrak aset → pasar spot/futures bila kunci Binance kosong | Tanpa kunci (endpoint situs binance.com, tidak resmi) | Disegarkan sekali sehari |
+| Binance (kunci read-only, **opsional**) | Sama dengan baris di atas lewat API resmi; didahulukan bila kunci terisi | `BINANCE_API_KEY` + `BINANCE_API_SECRET` | Disegarkan sekali sehari |
 | Binance klines publik | Harga ETH/BNB/POL per jam untuk nilai USD swap | Tanpa kunci | — |
 
 - **Kesegaran.** Sinkronisasi berjalan tiap `SMART_MONEY_SYNC_MINUTES` (15) menit dan memproses maks.
@@ -372,7 +385,37 @@ Semua langkah dilakukan di **Mac** (lingkungan cloud pengembang tidak dapat menj
 Urutan: **isi `.env` → `npm run smart-money:check` → `npm start` → tombol **Sync sekarang** di Radar, tombol scanner,
 atau `npm run smart-money:sync`.**
 
-### a. Kunci Etherscan (gratis)
+### a. Cukup `ETHERSCAN_API_KEY` (jalur Etherscan-saja)
+
+**Satu kunci gratis Etherscan sudah cukup untuk seluruh alur**: riwayat wallet, skor, penemuan wallet otomatis, status
+MATCHED, dan tautan ke LONG Scanner. Kunci Binance read-only (§5c) **opsional**; bila diisi, kunci itu didahulukan
+untuk pemetaan kontrak (API resmi, lebih stabil). Dengan hanya `ETHERSCAN_API_KEY`, mode otomatis menyalakan:
+
+| Sumber | Kunci | Fungsinya di jalur ini |
+| --- | --- | --- |
+| `etherscan` | `ETHERSCAN_API_KEY` | Riwayat transfer wallet di Ethereum, Arbitrum, Polygon (chain paket gratis) |
+| `routescan` | Tanpa kunci | Riwayat transfer chain yang tidak lagi gratis di Etherscan: Base, Optimism, BNB Chain |
+| `geckoterminal` | Tanpa kunci | Penemuan wallet dari pembeli besar di pool DEX; daftar token trending sebagai cadangan; harga token |
+| `binance-public` | Tanpa kunci | Daftar kontrak aset Binance (endpoint publik situs binance.com) → status MATCHED, tautan ke LONG Scanner, token untuk penemuan wallet |
+
+Cara kerja penemuan wallet:
+
+1. **Normal:** `binance-public` memetakan kontrak → pasar Binance. Penemuan memakai token MATCHED (4 token per putaran,
+   bergiliran) — hasilnya sama dengan memakai kunci Binance.
+2. **Cadangan:** bila belum ada token MATCHED sama sekali (endpoint publik gagal atau bentuknya berubah), sync mengambil
+   pool trending GeckoTerminal di **satu chain per putaran** (bergiliran, menjaga kuota tanpa kunci). Kandidat ditandai
+   sumber `geckoterminal-trending` dengan alasan "belum tentu listing Binance". Wallet tetap dinilai dari riwayat swap
+   sendiri, tetapi token trending sering token baru yang tidak ada di Binance — relevansi ke LONG Scanner bisa rendah.
+
+> Endpoint publik Binance (`getNetworkCoinAll`) **tidak terdokumentasi resmi** dan dapat berubah sewaktu-waktu. AlphaLens
+> membacanya secara defensif: bila bentuknya berubah, pemetaan dilaporkan `BAD_RESPONSE` dan penemuan otomatis pindah ke
+> cadangan trending. Tidak ada kunci yang dikirim ke endpoint ini. Bila pemetaan publik terus gagal, isi kunci
+> read-only (§5c).
+
+Verifikasi dengan `npm run smart-money:check` (§5e): bagian **— Jalur Etherscan-saja (tanpa kunci Binance) —** di akhir
+output harus ditutup baris *➡️ Penemuan wallet otomatis AKTIF tanpa kunci Binance*.
+
+### b. Kunci Etherscan (gratis)
 
 1. Daftar atau masuk di https://etherscan.io.
 2. Buka menu akun → **API Keys** (langsung: https://etherscan.io/myapikey).
@@ -383,7 +426,10 @@ Paket gratis Etherscan: penggunaan pribadi & riset, 3 panggilan/detik, 100.000/h
 di bawahnya (2/detik, 90.000/hari) dan memakai Etherscan untuk Ethereum, Arbitrum, Polygon; chain EVM yang tidak
 tercakup paket gratis otomatis lewat Routescan (tanpa kunci).
 
-### b. Kunci Binance READ-ONLY
+### c. Kunci Binance READ-ONLY (opsional)
+
+Lewati bagian ini bila jalur Etherscan-saja (§5a) sudah cukup. Kunci ini menggantikan daftar publik dengan API resmi
+Binance (terdokumentasi, lebih stabil); hasil fiturnya sama.
 
 1. Masuk Binance → **Profil** → **API Management** → **Create API**.
 2. Pilih **System generated** (hanya tipe ini yang didukung), beri nama mis. `AlphaLens read-only`, selesaikan
@@ -398,12 +444,13 @@ tercakup paket gratis otomatis lewat Routescan (tanpa kunci).
 > (`.env` tidak ikut di-commit). Kunci ini hanya dipakai membaca daftar kontrak aset; saldo akun di respons Binance
 > diabaikan, dan kunci tidak pernah dipakai untuk order atau penarikan.
 
-### c. Isi `.env`
+### d. Isi `.env`
 
 `config/.env.example` sudah memuat baris kosongnya; bila `.env` Anda disalin dari versi lama, tambahkan sendiri:
 
 ```dotenv
 ETHERSCAN_API_KEY=
+# Opsional: kosong = daftar kontrak dari endpoint publik Binance (binance-public)
 BINANCE_API_KEY=
 BINANCE_API_SECRET=
 # Opsional: kunci gratis Routescan menaikkan kuota Routescan
@@ -416,18 +463,19 @@ BINANCE_API_SECRET=
 | --- | --- |
 | Kosong atau `auto` (bawaan) | Otomatis mengikuti kunci yang terisi (tabel berikut) |
 | `off` | Fitur mati: tidak ada sinkronisasi; halaman menampilkan "Belum ada sumber data" |
-| Daftar dipisah koma, mis. `etherscan,routescan,geckoterminal,binance-mapping` | Hanya provider itu; urutan = prioritas |
+| Daftar dipisah koma, mis. `etherscan,routescan,geckoterminal,binance-public` (atau `binance-mapping` bila kunci Binance terisi) | Hanya provider itu; urutan = prioritas |
 | `fixture` | Data SIMULASI untuk tes — ditolak di produksi |
 
 | Kunci terisi (mode otomatis) | Provider aktif | Hasil |
 | --- | --- | --- |
-| `ETHERSCAN_API_KEY` | `etherscan` + `routescan` + `geckoterminal` | Riwayat transfer wallet EVM; penemuan wallet dari trade pool |
-| `BINANCE_API_KEY` **dan** `BINANCE_API_SECRET` | `binance-mapping` | Kontrak → pasar Binance: status MATCHED, tautan ke LONG Scanner, token untuk penemuan wallet |
-| Keduanya (disarankan) | Semua di atas | Alur lengkap |
+| `ETHERSCAN_API_KEY` saja | `etherscan` + `routescan` + `geckoterminal` + `binance-public` | **Alur lengkap**: riwayat transfer wallet EVM, penemuan wallet, kontrak → pasar Binance (daftar publik, tanpa kunci), tautan ke LONG Scanner |
+| `ETHERSCAN_API_KEY` + `BINANCE_API_KEY` **dan** `BINANCE_API_SECRET` | `etherscan` + `routescan` + `geckoterminal` + `binance-mapping` | Alur lengkap; pemetaan kontrak lewat API resmi Binance (didahulukan, `binance-public` tidak dipakai) |
+| Hanya kunci Binance (tanpa Etherscan) | Tidak ada | Tidak ada sumber riwayat wallet → "Belum ada sumber data" |
 | Tidak ada | Tidak ada | Tidak ada panggilan jaringan; "Belum ada sumber data"; tidak pernah data simulasi |
 
-> Penemuan wallet otomatis butuh token MATCHED dari pemetaan Binance. **Tanpa kunci Binance, hanya wallet di watchlist
-> yang dilacak** dan tidak ada tautan ke LONG Scanner.
+> Penemuan wallet otomatis memakai token MATCHED dari pemetaan Binance — publik tanpa kunci atau lewat kunci read-only.
+> Bila belum ada token MATCHED, dipakai cadangan token trending GeckoTerminal (§5a). Tautan ke LONG Scanner hanya untuk
+> token MATCHED.
 
 | Variabel lain (opsional) | Bawaan | Rentang | Fungsi |
 | --- | --- | --- | --- |
@@ -438,12 +486,24 @@ BINANCE_API_SECRET=
 
 `.env` hanya dibaca saat start: bila server sedang berjalan, hentikan (Ctrl+C) lalu `npm start` lagi.
 
-### d. Cek koneksi: `npm run smart-money:check`
+### e. Cek koneksi: `npm run smart-money:check`
 
 Baca saja (hanya GET) dan kunci tidak pernah dicetak. Bisa makan beberapa menit — bagian GeckoTerminal sengaja lambat.
-Yang dicek: Etherscan & Routescan per chain, GeckoTerminal (id jaringan, penemuan pembeli PEPE, harga), pemetaan Binance
-(izin kunci, jumlah kontrak, PEPE → `1000PEPEUSDT` ×1000), harga koin native per jam, lalu ringkasan chain yang bisa
-dipakai untuk riwayat wallet.
+Yang dicek: Etherscan & Routescan per chain, GeckoTerminal (id jaringan, penemuan pembeli PEPE, token trending
+ethereum, harga), pemetaan Binance **publik** tanpa kunci (jumlah baris kontrak, chain, PEPE → `1000PEPEUSDT` ×1000),
+pemetaan Binance berkunci (izin kunci, jumlah kontrak; ⏭ bila kunci kosong — normal karena opsional), harga koin
+native per jam, lalu ringkasan chain yang bisa dipakai untuk riwayat wallet.
+
+Bagian akhir **— Jalur Etherscan-saja (tanpa kunci Binance) —** merangkum apa yang jalan hanya dengan
+`ETHERSCAN_API_KEY`:
+
+| Baris | Arti bila ✅ | Bila ❌ / ⏭ |
+| --- | --- | --- |
+| *Riwayat wallet & skor: …* | Daftar chain yang riwayat wallet-nya bisa diambil (Etherscan + Routescan) | `ETHERSCAN_API_KEY` kosong/ditolak atau tidak ada chain yang berhasil |
+| *Pemetaan kontrak → pasar Binance (publik): N baris* | Daftar publik Binance terbaca: status MATCHED, tautan LONG Scanner, dan token penemuan tersedia tanpa kunci | Endpoint publik gagal/berubah — penemuan memakai cadangan trending; pertimbangkan kunci read-only (§5c) |
+| *Penemuan wallet dari pembeli besar di DEX (GeckoTerminal)* | Trade pool GeckoTerminal terbaca | Penemuan wallet tidak dapat berjalan |
+| *Cadangan token trending GeckoTerminal: N token* | Pool trending terbaca (dipakai hanya bila tidak ada token MATCHED) | Tidak ada cadangan bila pemetaan publik juga gagal |
+| *➡️ Penemuan wallet otomatis AKTIF …, sumber token: …* | Penemuan berjalan tanpa kunci Binance; sumbernya *token yang listing di Binance (mapping publik)* atau *token trending GeckoTerminal (belum tentu listing Binance)* | *BELUM bisa jalan* — juga dicatat di *Masalah yang perlu diperbaiki* (kode keluar 1) |
 
 | Tanda | Arti | Tindakan |
 | --- | --- | --- |
@@ -459,7 +519,7 @@ perlu diperbaiki*. **Tempel seluruh output ke thread** bila ada ❌, ⚠️, ℹ
 catatan "field hilang"/"field baru" (bentuk respons live berbeda dari dokumentasi — adapter perlu disesuaikan). Output
 tidak memuat kunci; tetap periksa sebelum menempel, dan jangan pernah menempel isi `.env`.
 
-### e. Menjalankan
+### f. Menjalankan
 
 1. `npm start` (migrasi `007` diterapkan otomatis).
 2. Pilih salah satu:
@@ -473,15 +533,16 @@ tidak memuat kunci; tetap periksa sebelum menempel, dan jangan pernah menempel i
      (berulang sampai Ctrl+C); tambah `--verbose` untuk log lengkap. Putaran terminal tidak pernah berjalan bersamaan
      dengan worker atau tombol **Sync sekarang** (yang datang belakangan dilewati), tetapi jangan biarkan `--loop`
      hidup bersama worker: jadwalnya jadi dobel dan kuota API habis dua kali lebih cepat.
-3. Putaran awal: pemetaan Binance → penemuan wallet (4 token MATCHED per putaran, bergiliran) → riwayat 180 hari per
-   wallet. Radar baru terisi setelah ada wallet **eligible**; di awal "Belum ada akumulasi pada jendela ini" itu normal.
+3. Putaran awal: pemetaan Binance (publik atau berkunci) → penemuan wallet (4 token MATCHED per putaran, bergiliran;
+   tanpa token MATCHED: token trending GeckoTerminal di satu chain) → riwayat 180 hari per wallet. Radar baru terisi setelah ada wallet **eligible**; di awal "Belum ada akumulasi pada jendela ini" itu normal.
    Pantau progres di Wallet Discovery dengan *Hanya eligible* dimatikan.
 
 Ringkasan `smart-money:sync` memuat baris *Wallet* (dilacak · dipilih · tersinkron · gagal · ditunda), *Transfer*,
 *Alert baru*, *Penemuan wallet*, *Pemetaan Binance diperbarui*, dan *Provider …: OK/DEGRADED/DOWN* — satu provider gagal
-tidak menghentikan yang lain.
+tidak menghentikan yang lain. Jalur penemuan (token listing Binance / token trending GeckoTerminal) tampil di catatan
+run dan di baris hasil halaman Radar (§2.1).
 
-### f. Atribusi wajib
+### g. Atribusi wajib
 
 Syarat pemakaian API gratis: strip **Sumber data** di setiap halaman Smart Money menampilkan atribusi provider aktif —
 "Data riwayat transaksi: Etherscan API (Powered by Etherscan)", "Data riwayat transaksi: Routescan", dan "Powered by
@@ -503,6 +564,7 @@ CoinGecko / GeckoTerminal". Jangan dihapus bila tampilan diubah, dan biarkan ter
 | "Belum ada sumber data" padahal kunci terisi | Server belum di-restart setelah `.env` diubah, `SMART_MONEY_PROVIDERS=off`, atau nama variabel salah ketik. |
 | Tombol **Sync sekarang** abu-abu | *Hanya admin…*: masuk sebagai admin. *Belum ada sumber data*: lihat baris di atas. Hitung mundur: jeda 30 detik setelah putaran terakhir. |
 | "Sinkronisasi terjadwal dari worker scanner sedang berjalan" | Putaran otomatis worker sedang jalan; tombol menampilkan progresnya. Tunggu sampai selesai — hasilnya tampil di tempat yang sama. |
-| Sync **Berhasil** tetapi Radar tetap kosong | Belum ada wallet *eligible*: tanpa kunci Binance tidak ada penemuan wallet (catatan "pemetaan Binance belum aktif"). Isi kunci Binance read-only (§5b) atau ikuti wallet lewat Watchlist, lalu sync lagi. |
+| Sync **Berhasil** tetapi Radar tetap kosong | Belum ada wallet *eligible* — wallet baru butuh beberapa putaran (riwayat 180 hari, ≥ 10 trade tertutup). Bila *Penemuan wallet* selalu 0 atau catatan menyebut "pemetaan Binance belum aktif"/"token trending tidak tersedia", jalankan `npm run smart-money:check` dan baca bagian *Jalur Etherscan-saja*; sementara itu ikuti wallet lewat Watchlist. |
+| Binance publik `❌ BAD_RESPONSE` / `UNAVAILABLE` | Endpoint publik Binance (tidak resmi) berubah atau diblokir. Penemuan otomatis tetap jalan lewat token trending GeckoTerminal. Untuk status MATCHED & tautan LONG Scanner, isi kunci read-only (§5c) dan tempel output cek ke thread. |
 | Sync berstatus **Gagal** | Kesalahan internal (bukan provider); detailnya ada di log terminal `npm start`. Tempel baris log `smart-money` ke thread. |
 | Badge BASI terus | Tidak ada sinkron sukses > 60 menit: scanner mati/Mac tidur, atau semua provider gagal. Lihat log `smart-money` atau jalankan `npm run smart-money:sync`. |

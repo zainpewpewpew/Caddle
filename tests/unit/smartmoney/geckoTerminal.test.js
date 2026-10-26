@@ -282,6 +282,83 @@ describe('GeckoTerminal — penemuan kandidat wallet', () => {
   });
 });
 
+describe('GeckoTerminal — token trending (cadangan tanpa mapping Binance)', () => {
+  const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+  const MOG = fakeEvmAddress('gt-trend-mog');
+  const T3 = fakeEvmAddress('gt-trend-t3');
+  const T4 = fakeEvmAddress('gt-trend-t4');
+  const T5 = fakeEvmAddress('gt-trend-t5');
+  const pool = (label, base, quote, name) => gtPool({ network: NET, address: fakeEvmAddress(`gt-trend-pool-${label}`), base, quote, name });
+  const trendingRoutes = (body) => ({ [`/networks/${NET}/trending_pools`]: body });
+  const TRENDING = gtList([
+    pool('pepe', upperHex(PEPE), WETH, 'PEPE / WETH 0.3%'),
+    pool('mog', WETH, MOG, 'WETH / MOG'), // base = aset quote → token quote pool yang diambil
+    pool('stable', WETH, USDC, 'WETH / USDC'), // dua-duanya aset quote → dilewati
+    pool('pepe-usdc', PEPE, USDC, 'PEPE / USDC'), // alamat sudah diambil → dilewati
+    { ...pool('norel', T5, WETH, 'T5 / WETH'), relationships: undefined }, // tanpa relationships → dilewati
+    pool('zero', ZERO_ADDRESS, WETH, 'NOL / WETH'), // alamat nol → dilewati
+    'bukan-objek',
+    pool('t3', T3, WETH, '<T3> / WETH'),
+    pool('t4', T4, WETH, 'T4 / WETH'),
+  ]);
+
+  it('UNIT-SM-GTK-009 token base pool trending (quote bila base aset quote); aset quote, alamat nol, & duplikat dilewati; urutan trending', async () => {
+    const { gt, calls } = setup(trendingRoutes(TRENDING));
+    const tokens = await gt.trendingTokens({ chain: 'ethereum' });
+    expect(tokens).toEqual([
+      { chain: 'ethereum', address: PEPE, symbol: 'PEPE' },
+      { chain: 'ethereum', address: MOG, symbol: 'MOG' },
+      { chain: 'ethereum', address: T3, symbol: 'T3' }, // simbol dibersihkan dari karakter asing
+      { chain: 'ethereum', address: T4, symbol: 'T4' },
+    ]);
+    expect(calls.map((c) => c.url.pathname)).toEqual([`/api/v2/networks/${NET}/trending_pools`]);
+    expect(calls[0].init.headers['x-api-key']).toBeUndefined();
+    expect(Object.keys(tokens)).not.toContain('diagnostics');
+    expect(tokens.diagnostics).toMatchObject({
+      provider: 'geckoterminal', method: 'trendingTokens', chain: 'ethereum', network: NET, pools: 9, skipped: 5, tokens: 4, notes: [],
+    });
+    expect(gt.lastDiagnostics()).toEqual(tokens.diagnostics);
+  });
+
+  it('EDGE-SM-GTK-003 trendingTokens: limit memotong (default 10, tidak valid → 10, maks 50); tanpa token non-quote → [] + catatan', async () => {
+    const { gt, calls } = setup(trendingRoutes(TRENDING));
+    const two = await gt.trendingTokens({ chain: 'ethereum', limit: 2 });
+    expect(two.map((t) => t.address)).toEqual([PEPE, MOG]);
+    expect(two.diagnostics).toMatchObject({ pools: 2, skipped: 0, tokens: 2 });
+    for (const limit of [0, -1, 1.5, '3']) {
+      expect(await gt.trendingTokens({ chain: 'ethereum', limit })).toHaveLength(4);
+    }
+    expect(calls).toHaveLength(5); // tanpa cache: satu panggilan per pemanggilan
+
+    const many = gtList(Array.from({ length: 60 }, (_, i) => pool(`m${i}`, fakeEvmAddress(`gt-trend-many-${i}`), WETH, `M${i} / WETH`)));
+    const { gt: gtMany } = setup(trendingRoutes(many));
+    expect(await gtMany.trendingTokens({ chain: 'ethereum' })).toHaveLength(10);
+    expect(await gtMany.trendingTokens({ chain: 'ethereum', limit: 500 })).toHaveLength(50);
+
+    const { gt: gtQuote } = setup(trendingRoutes(gtList([pool('only-stable', WETH, USDC, 'WETH / USDC')])));
+    const none = await gtQuote.trendingTokens({ chain: 'ethereum' });
+    expect(none).toEqual([]);
+    expect(none.diagnostics).toMatchObject({ pools: 1, skipped: 1, tokens: 0, notes: ['Tidak ada token non-quote di pool trending.'] });
+    const { gt: gtEmpty } = setup(trendingRoutes(gtList([])));
+    expect(await gtEmpty.trendingTokens({ chain: 'ethereum' })).toEqual([]);
+  });
+
+  it('NEG-SM-GTK-003 trendingTokens: body tanpa array data / 404 → BAD_RESPONSE; 429 → RATE_LIMITED; chain tak didukung → NOT_SUPPORTED', async () => {
+    for (const body of [{ data: 'bukan-array' }, { data: null }, [], 'teks']) {
+      const { gt } = setup(trendingRoutes(body));
+      await expect(gt.trendingTokens({ chain: 'ethereum' })).rejects.toMatchObject({ name: 'ProviderError', code: 'BAD_RESPONSE', provider: 'geckoterminal' });
+    }
+    const { gt: missing } = setup({});
+    await expect(missing.trendingTokens({ chain: 'ethereum' })).rejects.toMatchObject({ code: 'BAD_RESPONSE' });
+    const limited = jsonResponse(429, { status: { error_code: 429, error_message: 'Rate limit' } }, { 'retry-after': '30' });
+    const { gt: rl } = setup(trendingRoutes(limited));
+    await expect(rl.trendingTokens({ chain: 'ethereum' })).rejects.toMatchObject({ code: 'RATE_LIMITED', retryAfterMs: 30_000 });
+    const { gt, calls } = setup(trendingRoutes(TRENDING));
+    await expect(gt.trendingTokens({ chain: 'dogechain' })).rejects.toMatchObject({ code: 'NOT_SUPPORTED' });
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe('GeckoTerminal — harga token', () => {
   it('UNIT-SM-GTK-006 harga dibatch ≤ 30 alamat per panggilan; alamat dinormalisasi; harga tak terbaca dilewati (tidak jadi 0)', async () => {
     const addrs = Array.from({ length: 65 }, (_, i) => fakeEvmAddress(`gt-price-${i}`));
