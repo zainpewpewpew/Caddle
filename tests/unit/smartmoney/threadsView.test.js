@@ -58,6 +58,9 @@ describe('Peta Benang — renderer', () => {
     const svg = el.querySelector('svg.sm-thr__svg');
     expect(svg.getAttribute('viewBox')).toMatch(/^0 0 900 \d+$/);
     expect(svg.getAttribute('role')).toBe('group');
+    // <svg> sendiri bukan tab stop: tanpa tabindex dan tanpa pendengar fokus (Chromium menjadikannya fokusabel).
+    expect(svg.hasAttribute('tabindex')).toBe(false);
+    for (const type of ['focus', 'blur', 'focusin', 'focusout']) expect(svg.listeners[type] ?? []).toHaveLength(0);
     expect(texts(svg.querySelector('title'))).toBe('Peta Benang: wallet → token');
     expect(texts(svg.querySelector('desc'))).toContain('aktivitas on-chain publik');
     expect(texts(svg.querySelector('desc'))).toContain('DATA SIMULASI');
@@ -221,6 +224,13 @@ describe('Peta Benang — renderer', () => {
     expect(svg.getAttribute('width')).toBe('100%');
     expect(el.querySelectorAll('.sm-thr-chip')).toHaveLength(0); // label pihak ketiga hanya di tooltip/bukti
     expect(texts(node(el, 'wallet', `ethereum:${W1}`))).toContain('0xaa…aaaa');
+    // Tidak terpotong tepi viewBox: tag klaster ≥ 0; teks token bertumpuk (SIMULASI di baris chain, Binance di baris sendiri).
+    const tags = el.querySelectorAll('.sm-thr-tag rect');
+    expect(tags.length).toBeGreaterThan(0);
+    for (const rect of tags) expect(Number(rect.getAttribute('x'))).toBeGreaterThanOrEqual(0);
+    const lines = (id) => node(el, 'token', id).querySelectorAll('text').map(texts);
+    expect(lines(`base:${T2}`)).toEqual(['PEPE·1111', 'Keluar 30', 'BaseSIMULASI', '⚠ simbol sama']);
+    expect(lines(`ethereum:${T1}`)).toEqual(['PEPE·1933', 'Akumulasi 64', 'Ethereum', 'Binance ✓']);
 
     const empty = threadsView([], meta(), { now: NOW });
     expect(texts(empty)).toContain('Belum ada benang untuk ditampilkan');

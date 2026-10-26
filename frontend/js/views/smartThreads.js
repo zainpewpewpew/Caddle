@@ -79,8 +79,9 @@ export function threadsGeometry(layout, width) {
     compact,
     rowH,
     r: compact ? 5 : 5.5,
-    xW: compact ? 104 : Math.min(300, Math.max(236, Math.round(W * 0.3))),
-    xT: compact ? W - 112 : W - Math.min(280, Math.max(222, Math.round(W * 0.27))),
+    // Ringkas (ponsel): kolom teks diberi ruang cukup agar tag klaster & teks token tidak terpotong tepi viewBox.
+    xW: compact ? 112 : Math.min(300, Math.max(236, Math.round(W * 0.3))),
+    xT: compact ? W - 120 : W - Math.min(280, Math.max(222, Math.round(W * 0.27))),
     y: (u) => padY + u * rowH,
   };
 }
@@ -182,17 +183,18 @@ function walletNode(w, g, strandCount) {
   const addrRight = g.xW - (g.compact ? 30 : 34);
   const addrWidth = Array.from(addr).length * (g.compact ? 6 : 6.6);
   const tagW = g.compact ? 18 : 22;
-  const tagRight = addrRight - addrWidth - 6;
+  // Tag klaster tidak pernah keluar dari tepi kiri viewBox.
+  const tagX = Math.max(1, addrRight - addrWidth - (g.compact ? 5 : 6) - tagW);
   const parts = [];
   if (w.group) {
     parts.push(svg('g', { class: 'sm-thr-tag', 'aria-hidden': 'true' },
-      svg('rect', { x: px(tagRight - tagW), y: px(cy - 8), width: tagW, height: 16, rx: 4 }),
-      svg('text', { x: px(tagRight - tagW / 2), y: px(cy), dy: '0.35em', 'text-anchor': 'middle' }, w.group)));
+      svg('rect', { x: px(tagX), y: px(cy - 8), width: tagW, height: 16, rx: 4 }),
+      svg('text', { x: px(tagX + tagW / 2), y: px(cy), dy: '0.35em', 'text-anchor': 'middle' }, w.group)));
   }
   if (!g.compact && w.label?.label) {
     const chipText = clip(w.label.label, 14);
     const chipW = Array.from(chipText).length * 5.8 + 12;
-    const chipRight = (w.group ? tagRight - tagW : addrRight - addrWidth) - 6;
+    const chipRight = (w.group ? tagX : addrRight - addrWidth) - 6;
     parts.push(svg('g', { class: 'sm-thr-chip', 'data-sourced': w.label.source ? 'true' : 'false', 'aria-hidden': 'true' },
       svg('rect', { x: px(chipRight - chipW), y: px(cy - 8), width: px(chipW), height: 16, rx: 4 }),
       svg('text', { x: px(chipRight - chipW / 2), y: px(cy), dy: '0.35em', 'text-anchor': 'middle' }, chipText)));
@@ -218,15 +220,19 @@ function tokenNode(t, g) {
   const st = stateLabel(t.state);
   const binance = binanceShort(t.binance, g.compact);
   const matchStatus = matchBadge(t.binance).status;
-  const sim = t.isSimulated ? svg('tspan', { class: 'sm-thr-token__sim', dx: 6 }, 'SIMULASI') : null;
+  const sim = t.isSimulated ? svg('tspan', { class: 'sm-thr-token__sim', dx: g.compact ? 4 : 6 }, 'SIMULASI') : null;
+  // Ringkas: simbol / status + keyakinan / chain + SIMULASI / status Binance — tiap baris muat ±105px.
+  const top = cy - (binance ? 15 : 9);
   const lines = g.compact
     ? [
-      svg('text', { class: 'sm-thr-token__l1', x, y: px(cy - 9) }, svg('tspan', { class: 'sm-thr-token__sym' }, name), sim),
-      svg('text', { class: 'sm-thr-token__l2', x, y: px(cy + 4) },
+      svg('text', { class: 'sm-thr-token__l1', x, y: px(top) }, svg('tspan', { class: 'sm-thr-token__sym' }, name)),
+      svg('text', { class: 'sm-thr-token__l2', x, y: px(top + 13) },
         svg('tspan', { class: 'sm-thr-token__state' }, st.label), ' ', svg('tspan', { class: 'sm-thr-token__conv' }, t.conviction === null ? EMPTY : String(t.conviction))),
-      svg('text', { class: 'sm-thr-token__l3', x, y: px(cy + 16) },
-        svg('tspan', null, clip(chainName(t.chain), 9)),
-        binance ? svg('tspan', { class: 'sm-thr-token__match', 'data-status': matchStatus, dx: 4 }, binance) : null),
+      svg('text', { class: 'sm-thr-token__l3', x, y: px(top + 25) }, svg('tspan', null, clip(chainName(t.chain), 9)), sim),
+      binance
+        ? svg('text', { class: 'sm-thr-token__l3', x, y: px(top + 37) },
+          svg('tspan', { class: 'sm-thr-token__match', 'data-status': matchStatus }, binance))
+        : null,
     ]
     : [
       svg('text', { class: 'sm-thr-token__l1', x, y: px(cy - 4) },
@@ -572,24 +578,6 @@ export function threadsView(items, meta, { now = Date.now(), width, maxTokens, m
       if (el) setRoving(el);
     }
 
-    root.addEventListener('keydown', onKey);
-    root.addEventListener('click', (e) => {
-      const el = e.target?.closest?.('[data-thr="strand"]');
-      if (el) select(el.dataset.id);
-    });
-    root.addEventListener('focusin', (e) => {
-      const el = e.target?.closest?.('[data-thr]');
-      if (!el) return;
-      setRoving(el);
-      focusEl = el;
-      if (el.dataset.thr === 'strand') select(el.dataset.id);
-      else paint();
-    });
-    root.addEventListener('focusout', (e) => {
-      if (e.relatedTarget && root.contains(e.relatedTarget)) return;
-      focusEl = null;
-      paint();
-    });
     for (const el of [...map.wallet.values(), ...map.token.values(), ...map.strand.values()]) {
       el.addEventListener('pointerenter', (e) => {
         if (e.pointerType === 'touch') return;
@@ -613,6 +601,27 @@ export function threadsView(items, meta, { now = Date.now(), width, maxTokens, m
     paint();
     return g.W;
   }
+
+  // Delegasi di wadah HTML, bukan di <svg>: Chromium menjadikan elemen SVG yang punya pendengar focus/focusin
+  // bisa difokus lewat Tab — <svg> akan menjadi tab stop kosong sebelum node pertama.
+  frame.addEventListener('keydown', onKey);
+  frame.addEventListener('click', (e) => {
+    const el = e.target?.closest?.('[data-thr="strand"]');
+    if (el) select(el.dataset.id);
+  });
+  frame.addEventListener('focusin', (e) => {
+    const el = e.target?.closest?.('[data-thr]');
+    if (!el) return;
+    setRoving(el);
+    focusEl = el;
+    if (el.dataset.thr === 'strand') select(el.dataset.id);
+    else paint();
+  });
+  frame.addEventListener('focusout', (e) => {
+    if (e.relatedTarget && frame.contains(e.relatedTarget)) return;
+    focusEl = null;
+    paint();
+  });
 
   let builtWidth = build(isNum(width) && width > 0 ? width : estimateWidth());
 
