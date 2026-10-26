@@ -246,7 +246,7 @@ yang diuji melipatgandakan angka ini (±2×). Karena itu aturan #1 (≥ 500) ada
 | --- | --- | --- |
 | **0 (PR ini)** | Lab meta-labeling di backtest, aturan adopsi, dokumen ini. Scanner live tidak berubah | — |
 | 1 (Anda, di Mac) | Jalankan `--ml` pada data Binance nyata ≥ 1,5 tahun, 15m & 1h, ≥ 20 simbol; kirim bagian "Lab meta-labeling" | — |
-| 2 | Bila **ditolak**: tetap pakai kalibrasi skor; perbaikan yang lebih bernilai menurut literatur adalah filter biaya (jarak stop minimum relatif biaya), entri open berikutnya, dan kalibrasi Platt/Beta | — |
+| 2 | Bila **ditolak**: tetap pakai kalibrasi skor; perbaikan yang lebih bernilai menurut literatur adalah filter biaya (jarak stop minimum relatif biaya), entri open berikutnya, dan kalibrasi Platt/Beta. **Hasil Mac 26-10-2026: ditolak → dikerjakan di PR #15** (lihat docs/13 §4a) | — |
 | 2' | Bila **lolos**: uji ulang pada periode baru (forward 1–3 bulan) tanpa mengubah apa pun | Lolos lagi |
 | 3 | Integrasi live **opsional**: model disimpan ke `config/meta-model.json` (dilatih hanya pada data train), ditampilkan sebagai "peluang ML" berdampingan dengan skor & tier, dengan interval dan jumlah sampel; bisa dimatikan | Persetujuan Anda |
 | 4 | Data ortogonal: funding rate, open interest, basis, rezim BTC sebagai fitur | Fitur baru lolos aturan yang sama |

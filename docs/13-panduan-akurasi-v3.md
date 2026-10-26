@@ -76,6 +76,27 @@ Laporan muncul di `reports/backtest-<waktu>.md` (dan `.json`). Cara membacanya:
 Setelah `config/calibration.json` ditulis, restart scanner (Hentikan → Jalankan). Worker memuatnya otomatis; tanpa
 file itu peluang historis tidak ditampilkan.
 
+### 4a. Entri realistis, filter biaya, dan kalibrasi Platt (sejak PR #15)
+
+- **Entri = open candle berikutnya** (bawaan). Live, order baru bisa dikirim setelah candle sinyal tutup, jadi harga
+  nyata adalah open candle sesudahnya. Bila open itu sudah melewati level invalidasi, sinyal dilewati dan jumlahnya
+  ditulis di bagian *Parameter*. Perilaku lama (masuk di close candle sinyal) tetap tersedia: `--entry close`.
+- **Varian "v3 + filter biaya"** (bagian *Filter biaya (eksperimen)*): sinyal v3 yang sama, tetapi dilewati bila
+  perkiraan biaya pulang-pergi saat entri (2 × (fee 4 + slippage 2 bps) × harga / jarak stop) melebihi `--max-cost-r`
+  (bawaan 0,15R ≈ stop minimal ±80 bps). Stop yang terlalu sempit memakan expectancy karena biaya dalam satuan R
+  membengkak. Filter ini **belum dipakai scanner live**; aktifkan nanti hanya bila expectancy out-of-sample-nya naik
+  pada data nyata. Coba beberapa ambang (mis. 0,1 / 0,15 / 0,25), tetapi ingat: makin banyak ambang dicoba, makin besar
+  peluang "menang karena kebetulan".
+- **Kalibrasi Platt** (bawaan untuk `--write-calibration`): regresi logistik 2 parameter atas skor, lebih stabil
+  daripada isotonik pada sampel kecil. Laporan selalu membandingkan Platt vs isotonik pada data uji yang sama
+  (log-loss, Brier, ECE). Bila isotonik konsisten lebih baik, tulis dengan `--calibration-method isotonic`. Format file
+  sama, jadi worker tidak perlu diubah.
+
+```bash
+npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01 --max-cost-r 0.15
+npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01 --write-calibration config/calibration.json
+```
+
 ## 5. Hasil yang sudah diverifikasi di cloud (data sintetis — BUKAN akurasi pasar nyata)
 
 - **Uji kebocoran (random walk murni, 4 simbol × 1.600 candle):** tidak ada edge positif signifikan pada v2 maupun
