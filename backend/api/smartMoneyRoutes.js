@@ -139,6 +139,10 @@ const alertsReadBodySchema = {
   },
 };
 
+// Endpoint tanpa parameter: query apa pun ditolak (400), sama seperti parameter asing di endpoint lain.
+const noQuerySchema = { type: 'object', additionalProperties: false, properties: {} };
+const NO_QUERY = { schema: { querystring: noQuerySchema } };
+
 // Amplop saja; isi preferensi divalidasi validateAlertPrefs (pesan per field Bahasa Indonesia, kunci tak dikenal ditolak).
 const prefsBodySchema = {
   type: 'object',
@@ -446,7 +450,7 @@ export async function smartMoneyRoutes(app, { repo, signals, registry, config, c
 
   // ------------------------------------------------------------------ status
 
-  app.get(`${PREFIX}/status`, async () => {
+  app.get(`${PREFIX}/status`, NO_QUERY, async () => {
     const now = nowMs();
     const rows = new Map((await repo.listProviderStatus()).map((r) => [r.provider, r]));
     const active = registry.list();
@@ -677,7 +681,7 @@ export async function smartMoneyRoutes(app, { repo, signals, registry, config, c
 
   // ------------------------------------------------------------------ watchlist
 
-  app.get(`${PREFIX}/watchlist`, async (request) => {
+  app.get(`${PREFIX}/watchlist`, NO_QUERY, async (request) => {
     const now = nowMs();
     const { items } = await watchSets(request.auth.user.id);
     const tokenItems = items.filter((i) => i.kind === 'TOKEN');
@@ -773,7 +777,7 @@ export async function smartMoneyRoutes(app, { repo, signals, registry, config, c
 
   // ------------------------------------------------------------------ preferensi notifikasi
 
-  app.get(`${PREFIX}/alert-prefs`, async (request) => {
+  app.get(`${PREFIX}/alert-prefs`, NO_QUERY, async (request) => {
     const saved = await repo.getAlertPrefs(request.auth.user.id);
     const valid = saved !== null && validateAlertPrefs(saved).length === 0;
     return { prefs: normalizePrefs(valid ? saved : null), isDefault: !valid };
@@ -797,7 +801,7 @@ export async function smartMoneyRoutes(app, { repo, signals, registry, config, c
   // ------------------------------------------------------------------ LONG Scanner & evaluasi
 
   // Selalu 200: tanpa provider / tanpa data → { meta, items: {} } (chip tidak tampil, bukan error).
-  app.get(`${PREFIX}/screener-links`, async () => {
+  app.get(`${PREFIX}/screener-links`, NO_QUERY, async () => {
     const now = nowMs();
     const { radar, simulatedTokens, truncated } = await computeRadar({ now, windowMs: RADAR_WINDOWS['24h'] });
     const items = {};
@@ -816,7 +820,7 @@ export async function smartMoneyRoutes(app, { repo, signals, registry, config, c
     return { meta, items };
   });
 
-  app.get(`${PREFIX}/evaluation`, async () => {
+  app.get(`${PREFIX}/evaluation`, NO_QUERY, async () => {
     const now = nowMs();
     const ev = await repo.latestEvaluation();
     if (!ev) return { meta: await buildMeta({ now }), available: false };
