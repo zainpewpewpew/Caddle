@@ -27,8 +27,23 @@ const FRONTEND_ROOT = fileURLToPath(new URL('../../frontend/', import.meta.url))
 const SESSION_PURGE_INTERVAL_MS = 15 * 60_000;
 // Library grafik (TradingView Lightweight Charts, Apache-2.0 — lihat THIRD_PARTY_NOTICES.md). Hanya SATU file build
 // standalone produksi yang disajikan di path tetap; direktori node_modules tidak pernah dibuka untuk umum.
-const CHART_VENDOR_DIR = path.join(path.dirname(createRequire(import.meta.url).resolve('lightweight-charts/package.json')), 'dist');
 const CHART_VENDOR_FILE = 'lightweight-charts.standalone.production.js';
+const CHART_VENDOR_MISSING = 'Library grafik (lightweight-charts) belum terpasang — jalankan `npm ci` lalu start ulang server. '
+  + 'Server tetap berjalan tanpa grafik koin.';
+
+/**
+ * Direktori dist library grafik, atau null bila paketnya belum terpasang (mis. `git pull` tanpa `npm ci`).
+ * Paket yang hilang tidak boleh menggagalkan start server: fitur lain tetap jalan, grafik menampilkan petunjuknya.
+ */
+function resolveChartVendorDir() {
+  try {
+    return path.join(path.dirname(createRequire(import.meta.url).resolve('lightweight-charts/package.json')), 'dist');
+  } catch (err) {
+    if (err?.code !== 'MODULE_NOT_FOUND') throw err;
+    return null;
+  }
+}
+const CHART_VENDOR_DIR = resolveChartVendorDir();
 
 /**
  * Merakit aplikasi Fastify. Seluruh dependensi diinjeksi agar dapat diuji tanpa jaringan.
@@ -158,8 +173,14 @@ export async function buildApp({
 
   // File vendor grafik: publik seperti aset statis lain (kode open-source, tanpa data), header cache & tipe konten
   // sama dengan handler statis (@fastify/static). Dimuat malas oleh frontend/js/lib/chart.js, tidak oleh login.
-  app.get('/vendor/lightweight-charts.js', { config: { public: true } }, async (request, reply) => (
-    reply.sendFile(CHART_VENDOR_FILE, CHART_VENDOR_DIR)));
+  // Paket belum terpasang → 503 dengan petunjuk (tanpa cache) dan peringatan di log startup, bukan server gagal start.
+  if (CHART_VENDOR_DIR === null) app.log.warn(CHART_VENDOR_MISSING);
+  app.get('/vendor/lightweight-charts.js', { config: { public: true } }, async (request, reply) => {
+    if (CHART_VENDOR_DIR === null) {
+      return reply.code(503).header('Cache-Control', 'no-store').type('text/plain; charset=utf-8').send(CHART_VENDOR_MISSING);
+    }
+    return reply.sendFile(CHART_VENDOR_FILE, CHART_VENDOR_DIR);
+  });
 
   app.get('/', { config: { public: true } }, async (request, reply) => {
     if (!request.auth) return reply.redirect('/login.html', 302);

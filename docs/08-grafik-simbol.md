@@ -56,6 +56,8 @@ Respons `200`:
 - **Penyajian:** hanya `node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js` di path tetap
   `GET /vendor/lightweight-charts.js` lewat `reply.sendFile` @fastify/static — satu berkas, tanpa directory listing,
   tipe konten & `Cache-Control` sama dengan aset JS lain. Publik seperti aset statis lain (kode open-source tanpa data).
+  Bila paketnya belum terpasang (mis. `git pull` tanpa `npm ci`), server **tetap start**: log startup memperingatkan
+  dan rute menjawab 503 teks berisi petunjuk `npm ci`; panel grafik menampilkan pesan gagal muat dengan petunjuk yang sama.
 - **Pemuatan malas:** `loadChartLibrary()` menyisipkan satu `<script src="/vendor/lightweight-charts.js">` saat grafik
   pertama dibuat dan menunggu event `load`. `login.html`, Overview, dan halaman lain tanpa grafik tidak memuatnya.
   Gagal dimuat → panel menampilkan error dengan tombol "Coba lagi".

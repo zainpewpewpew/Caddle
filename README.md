@@ -48,6 +48,8 @@ npm run user:create -- --username mary --role admin   # opsional (lihat Login pr
 npm start                            # http://127.0.0.1:8080
 ```
 
+> **Setelah `git pull`:** jalankan `npm ci` lagi bila `package.json`/`package-lock.json` berubah (mis. library grafik `lightweight-charts`). Server tetap start tanpa paket itu, tetapi grafik koin tidak tersedia dan log startup memperingatkan.
+
 Cukup **satu terminal**: login sebagai admin, buka **System Health**, lalu tekan **Jalankan scanner**. Server menjalankan worker scanner (discovery simbol, candle REST/WebSocket, analisis pola) sebagai proses terpisah, dan log worker tampil di terminal `npm start` yang sama. Lihat [Scanner (worker)](#scanner-worker).
 
 Pendaftaran publik sengaja tidak ada. Maksimal dua pengguna (`MAX_USERS=2`) dibuat lewat CLI di server; batas ini berlaku juga bila beberapa `user:create` berjalan bersamaan. Kata sandi minimal 12 karakter (kecuali kata sandi akun default prototipe di bawah, yang dipilih pemilik).
