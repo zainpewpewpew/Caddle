@@ -1,4 +1,4 @@
-import { badge, callout, dataTable, emptyState, inputField, page, panel, score, segmented, selectField, stage, stat, statusPill, toggle } from '../lib/components.js';
+import { animateNumber, badge, callout, dataTable, emptyState, inputField, page, panel, score, segmented, selectField, stage, stat, statusPill, toast, toggle } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { directionBadge, patternBadge, signalStage } from './signalFormat.js';
 
@@ -9,7 +9,49 @@ const COLORS = [
   ['Background', '--lr-bg'], ['Surface', '--lr-surface'], ['Surface elevated', '--lr-surface-2'], ['Border', '--lr-border'],
   ['Teks utama', '--lr-text'], ['Teks sekunder', '--lr-text-2'], ['Bullish', '--lr-bull'], ['Warning', '--lr-warn'],
   ['Bearish', '--lr-bear'], ['Accent', '--lr-accent'],
+  ['Neural cyan', '--lr-neural-cyan'], ['Neural violet', '--lr-neural-violet'], ['Kaca', '--lr-glass'], ['Kaca pekat', '--lr-glass-strong'],
 ];
+
+const TIMELINE = [
+  ['done', 'Langkah selesai', 'Titik emerald + garis bergradien'],
+  ['active', 'Langkah aktif', 'Titik cyan bercahaya dengan cincin berdenyut'],
+  ['todo', 'Langkah berikutnya', 'Belum dimulai'],
+];
+
+/** Panel contoh gaya Neural Aurora. Semua angka di sini ilustratif dan diberi label jelas. */
+function neuralPanel() {
+  const counter = h('span', { class: 'stat__value' }, '0');
+  const replay = () => animateNumber(counter, 128, { format: (n) => Math.round(n).toLocaleString('id-ID') });
+  replay();
+  return panel({ title: 'Neural Aurora', actions: badge('Contoh ilustratif', 'warn') },
+    h('div', { class: 'stack' },
+      h('p', { class: 'muted' }, h('strong', { class: 'gradient-text' }, 'Kaca gelap · border gradien · glow lembut. '),
+        'Gerak dekoratif mati bila "Animasi latar" dimatikan atau OS meminta reduced motion.'),
+      h('div', { class: 'cluster' },
+        h('button', { class: 'btn btn--primary', type: 'button' }, 'Primer (bullish)'),
+        h('button', { class: 'btn btn--neural', type: 'button' }, 'Neural'),
+        h('button', { class: 'btn', type: 'button', on: { click: replay } }, 'Ulangi count-up'),
+        h('button', { class: 'btn btn--ghost', type: 'button', on: { click: () => toast('Toast contoh (accent).') } }, 'Toast'),
+        h('button', { class: 'btn btn--ghost', type: 'button', on: { click: () => toast('Toast contoh (bull).', 'bull') } }, 'Toast bull'),
+        h('button', { class: 'btn btn--ghost', type: 'button', on: { click: () => toast('Toast contoh (bear).', 'bear') } }, 'Toast bear')),
+      h('div', { class: 'cluster' },
+        badge('Model', 'violet'),
+        h('span', { class: 'status' }, h('span', { class: 'live-dot', 'aria-hidden': 'true' }), 'live-dot'),
+        h('span', { class: 'status' }, h('span', { class: 'live-dot', 'data-tone': 'bear', 'aria-hidden': 'true' }), 'live-dot bear'),
+        stage('BREAKOUT'), stage('BREAKDOWN')),
+      h('div', { class: 'grid grid--kpi' },
+        h('div', { class: 'stat', 'data-tone': 'accent' }, h('span', { class: 'stat__label' }, 'Count-up (contoh)'), counter, h('span', { class: 'stat__hint' }, 'animateNumber() → nilai akhir persis')),
+        stat({ label: 'Tone bull', value: '—', muted: true, tone: 'bull', hint: 'data-tone="bull"' }),
+        stat({ label: 'Tone bear', value: '—', muted: true, tone: 'bear', hint: 'data-tone="bear"' })),
+      h('div', { class: 'glass lr-scanline', 'data-scanning': 'true' },
+        h('div', { class: 'panel__body' }, h('span', { class: 'muted' }, '.glass.lr-scanline[data-scanning="true"] — garis pindai (hanya saat scanner NYATA berjalan)'))),
+      h('div', { class: 'stack' },
+        h('span', { class: 'skeleton' }), h('span', { class: 'skeleton' }), h('span', { class: 'skeleton' })),
+      callout('Callout bull: kondisi terkonfirmasi.', 'bull'),
+      h('ol', { class: 'timeline' }, TIMELINE.map(([state, title, text]) => h('li', { class: 'timeline__item', 'data-state': state },
+        h('span', { class: 'timeline__dot', 'aria-hidden': 'true' }),
+        h('div', null, h('div', { class: 'timeline__title' }, title), h('div', { class: 'timeline__text' }, text)))))));
+}
 
 const TYPE = [
   ['2xl · KPI', '--lr-text-2xl', '26px / 600'], ['xl · Judul halaman', '--lr-text-xl', '20px / 600'],
@@ -32,8 +74,9 @@ export async function designSystemView() {
 
   return page({
     title: 'Design System',
-    subtitle: 'Referensi token dan komponen. Semua nilai berasal dari css/tokens.css.',
+    subtitle: 'Referensi token dan komponen gaya Neural Aurora. Semua nilai berasal dari css/tokens.css.',
   },
+  neuralPanel(),
   panel({ title: 'Warna' },
     h('div', { class: 'swatches' }, COLORS.map(([name, token]) => h('div', { class: 'swatch' },
       h('div', { class: 'swatch__color', style: { '--lr-swatch': `var(${token})` } }),

@@ -23,10 +23,13 @@ export function historyRow(signal) {
   };
 }
 
+/** Stagger masuk dibatasi pada N baris pertama. */
+const STAGGER_MAX = 18;
+
 export async function signalsView() {
   const { items } = await api('/api/signals/history?limit=200');
   const rows = items.map(historyRow);
-  return page({
+  const el = page({
     title: 'Signal History',
     subtitle: 'Riwayat setiap sinyal LONG dan SHORT: deteksi pertama, transisi tahap, invalidasi, dan kedaluwarsa.',
   },
@@ -49,9 +52,16 @@ export async function signalsView() {
       { key: 'confirmedAt', label: 'Breakout/Breakdown', render: (r) => formatUtc(r.confirmedAt) },
       { key: 'invalidatedAt', label: 'Invalidasi', render: (r) => formatUtc(r.invalidatedAt) },
       { key: 'expiredAt', label: 'Kedaluwarsa', render: (r) => formatUtc(r.expiredAt) },
-      { key: 'move', label: 'Pergerakan', numeric: true, render: (r) => formatPercent(r.move) },
+      { key: 'move', label: 'Pergerakan', numeric: true, render: (r) => h('span', { class: 'signal-move', 'data-direction': r.direction }, formatPercent(r.move)) },
     ],
     rows,
     empty: emptyState({ iconName: 'signals', title: 'Belum ada riwayat sinyal', text: 'Setiap transisi state machine dipersistensi saat worker berjalan. Tidak ada data contoh yang ditampilkan.' }),
   })));
+  el.classList.add('page--scanner', 'page--signals');
+  // Stagger masuk baris (CSS scanner.css); murni dekoratif, isi sel tidak berubah.
+  el.querySelectorAll('tbody tr').forEach((tr, i) => {
+    tr.classList.add('scan-row');
+    tr.style.setProperty('--i', String(Math.min(i, STAGGER_MAX)));
+  });
+  return el;
 }

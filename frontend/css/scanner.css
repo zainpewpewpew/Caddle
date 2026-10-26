@@ -1,0 +1,424 @@
+/* AlphaLens — LONG/SHORT Scanner, Signal History, kontrol scanner persisten, dan proses sync (rombak UI "Neural Aurora").
+ *
+ * Semua gerak di sini DEKORATIF dan terikat pada state nyata:
+ * - radar header & garis scan berputar/bergerak hanya bila data-active="true" (state supervisor dari API);
+ * - sorotan baris (data-flash) hanya dari diff dua respons API nyata pada filter yang sama (screener.js);
+ * - partikel bar sync hanya ada di dalam bar ratio yang lebarnya = progres backfill nyata.
+ * Dimatikan untuk prefers-reduced-motion dan :root[data-motion="off"|"reduced"] (blok terakhir file ini).
+ * Token baru belum tentu ada di tokens.css → selalu dengan fallback var().
+ */
+
+/* ---------- Radar header (page actions) ---------- */
+.scan-radar {
+  --lr-radar-color: var(--lr-neural-cyan, #38e1ff);
+  --lr-radar-soft: var(--lr-neural-cyan-soft, rgb(56 225 255 / 0.12));
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  padding: var(--lr-space-1) var(--lr-space-3) var(--lr-space-1) var(--lr-space-1);
+  border: 1px solid var(--lr-glass-border, var(--lr-border));
+  border-radius: var(--lr-radius-pill);
+  /* Tanpa backdrop-filter: chip berada di dalam halaman/panel kaca (blur bersarang mahal). */
+  background: var(--lr-glass-strong, var(--lr-surface));
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+  white-space: nowrap;
+}
+
+.scan-radar[data-direction="SHORT"] {
+  --lr-radar-color: var(--lr-bear);
+  --lr-radar-soft: var(--lr-bear-soft);
+}
+
+.scan-radar[data-active="true"] {
+  border-color: color-mix(in srgb, var(--lr-radar-color) 40%, transparent);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--lr-radar-color) 22%, transparent);
+  color: var(--lr-text);
+}
+
+.scan-radar__dish {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--lr-radar-color) 45%, transparent);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, transparent 0 30%, color-mix(in srgb, var(--lr-radar-color) 25%, transparent) 31% 33%, transparent 34% 62%,
+      color-mix(in srgb, var(--lr-radar-color) 20%, transparent) 63% 65%, transparent 66%),
+    var(--lr-radar-soft);
+}
+
+/* Silang tengah tipis */
+.scan-radar__dish::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, transparent calc(50% - 0.5px), color-mix(in srgb, var(--lr-radar-color) 22%, transparent) 50%, transparent calc(50% + 0.5px)),
+    linear-gradient(0deg, transparent calc(50% - 0.5px), color-mix(in srgb, var(--lr-radar-color) 22%, transparent) 50%, transparent calc(50% + 0.5px));
+}
+
+.scan-radar__sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg 280deg, color-mix(in srgb, var(--lr-radar-color) 15%, transparent) 300deg,
+    color-mix(in srgb, var(--lr-radar-color) 75%, transparent) 358deg, transparent 360deg);
+  opacity: 0;
+  transition: opacity var(--lr-dur-slow) var(--lr-ease);
+}
+
+.scan-radar[data-active="true"] .scan-radar__sweep {
+  opacity: 1;
+  animation: lr-scanner-sweep 2.6s linear infinite;
+}
+
+.scan-radar__blip {
+  position: absolute;
+  top: 28%;
+  left: 62%;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--lr-radar-color);
+  box-shadow: 0 0 6px var(--lr-radar-color);
+  opacity: 0;
+}
+
+.scan-radar__blip--2 {
+  top: 64%;
+  left: 30%;
+}
+
+.scan-radar[data-active="true"] .scan-radar__blip {
+  animation: lr-scanner-blip 2.6s ease-out infinite;
+}
+
+.scan-radar[data-active="true"] .scan-radar__blip--2 {
+  animation-delay: 1.4s;
+}
+
+@keyframes lr-scanner-sweep {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes lr-scanner-blip {
+  0%, 30% { opacity: 0; transform: scale(0.6); }
+  38% { opacity: 1; transform: scale(1.3); }
+  100% { opacity: 0; transform: scale(1); }
+}
+
+/* ---------- Tabel kandidat & riwayat ---------- */
+.page--scanner .scan-row {
+  animation: lr-scanner-row-in var(--lr-dur-page, 420ms) var(--lr-ease-out-expo, var(--lr-ease)) both;
+  animation-delay: calc(var(--i, 0) * 26ms);
+}
+
+@keyframes lr-scanner-row-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Sorotan diff antarpolling (screener.js: diffRows). Kandidat baru: nada arah halaman; skor naik/turun: bull/bear. */
+.page--scanner tr[data-flash] > td {
+  animation: lr-scanner-flash 1.2s var(--lr-ease) both;
+}
+
+.page--scanner tr[data-flash="new"] > td,
+.page--scanner tr[data-flash="up"] > td {
+  --lr-flash-color: var(--lr-bull-soft);
+  --lr-flash-edge: var(--lr-bull);
+}
+
+.page--scanner[data-direction="SHORT"] tr[data-flash="new"] > td,
+.page--scanner tr[data-flash="down"] > td {
+  --lr-flash-color: var(--lr-bear-soft);
+  --lr-flash-edge: var(--lr-bear);
+}
+
+.page--scanner tr[data-flash] > td:first-child {
+  box-shadow: inset 2px 0 0 var(--lr-flash-edge);
+}
+
+@keyframes lr-scanner-flash {
+  0% { background-color: transparent; }
+  15% { background-color: var(--lr-flash-color); }
+  60% { background-color: var(--lr-flash-color); }
+  100% { background-color: transparent; }
+}
+
+/* Meter skor bergradien dengan cahaya lembut di ujung isian. */
+.page--scanner .score__track {
+  height: 5px;
+  border-radius: var(--lr-radius-pill);
+  background: color-mix(in srgb, var(--lr-surface-3) 80%, transparent);
+}
+
+.page--scanner .score__fill {
+  border-radius: inherit;
+  background: var(--lr-gradient-brand, var(--lr-accent));
+  box-shadow: 0 0 6px var(--lr-neural-glow, transparent);
+  transform-origin: left center;
+  animation: lr-scanner-meter var(--lr-dur-page, 420ms) var(--lr-ease-out-expo, var(--lr-ease)) both;
+}
+
+.page--scanner .score[data-tone="bull"] .score__fill {
+  background: var(--lr-gradient-bull, var(--lr-bull));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--lr-bull) 45%, transparent);
+}
+
+.page--scanner .score[data-tone="bear"] .score__fill {
+  background: var(--lr-gradient-bear, var(--lr-bear));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--lr-bear) 45%, transparent);
+}
+
+@keyframes lr-scanner-meter {
+  from { transform: scaleX(0); }
+  to { transform: none; }
+}
+
+.signal-move {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Tahap konfirmasi (BREAKOUT / BREAKDOWN): cincin yang memancar dari titik tahap (hanya transform + opacity). */
+.stage--hot {
+  position: relative;
+}
+
+.stage--hot::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  animation: lr-scanner-stage-pulse 2.4s ease-out infinite;
+}
+
+@keyframes lr-scanner-stage-pulse {
+  0% { opacity: 0.7; transform: scale(1); }
+  70%, 100% { opacity: 0; transform: scale(2.4); }
+}
+
+/* ---------- Kontrol scanner (persisten + kartu System Health) ---------- */
+.scan-control {
+  position: relative;
+  isolation: isolate;
+}
+
+.worker-bar.scan-control {
+  border-color: var(--lr-glass-border, var(--lr-border));
+  /* Tanpa backdrop-filter (blur bersarang): kaca pekat cukup menjaga kontras di atas animasi latar. */
+  background: var(--lr-glass-strong, var(--lr-surface));
+  transition: border-color var(--lr-dur-slow) var(--lr-ease), box-shadow var(--lr-dur-slow) var(--lr-ease);
+}
+
+.worker-bar.scan-control[data-active="true"] {
+  border-left-color: var(--lr-neural-cyan, var(--lr-accent));
+  box-shadow: 0 0 22px var(--lr-neural-cyan-soft, transparent);
+}
+
+/* Lapisan garis scan: dipotong mengikuti radius kontrol tanpa memotong cincin fokus tombol di dalamnya. */
+.scan-control__line {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.scan-control__line::before,
+.scan-control__line::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 40%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--lr-neural-cyan, var(--lr-accent)), var(--lr-neural-violet, var(--lr-accent)), transparent);
+  opacity: 0;
+  transform: translateX(-100%);
+}
+
+.scan-control__line::before { top: 0; }
+
+.scan-control__line::after {
+  bottom: 0;
+  animation-delay: -1.6s;
+}
+
+.scan-control[data-active="true"] .scan-control__line::before,
+.scan-control[data-active="true"] .scan-control__line::after {
+  opacity: 1;
+  animation: lr-scanner-line 3.2s linear infinite;
+}
+
+.scan-control[data-active="true"] .scan-control__line::after {
+  animation-delay: -1.6s;
+  animation-direction: reverse;
+}
+
+@keyframes lr-scanner-line {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+/* Ring berdenyut sesaat setelah scanner BENAR-BENAR mulai/berhenti (workerControl.js: activityTracker). */
+.scan-control.is-pulsing {
+  animation: lr-scanner-ring 1.3s var(--lr-ease-out-expo, var(--lr-ease)) 1;
+}
+
+.scan-control.is-pulsing[data-active="false"] {
+  --lr-ring-color: var(--lr-warn);
+}
+
+@keyframes lr-scanner-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--lr-ring-color, var(--lr-neural-cyan, var(--lr-accent))) 60%, transparent); }
+  100% { box-shadow: 0 0 0 12px transparent; }
+}
+
+/* Bar indeterminate di kontrol scanner: kilau gradien cyan → violet. */
+.scan-control .progress-indeterminate::before {
+  background: linear-gradient(90deg, transparent, var(--lr-neural-cyan, var(--lr-accent)), var(--lr-neural-violet, var(--lr-accent)));
+  box-shadow: 0 0 8px var(--lr-neural-glow, transparent);
+}
+
+/* ---------- Proses sync ---------- */
+.sync-bar {
+  background: color-mix(in srgb, var(--lr-neural-cyan, var(--lr-accent)) 12%, transparent);
+}
+
+.sync-bar__fill {
+  position: relative;
+  overflow: hidden;
+  background: var(--lr-gradient-brand, var(--lr-accent));
+  box-shadow: 0 0 10px var(--lr-neural-glow, transparent);
+}
+
+/* Partikel mengalir di dalam isian (lebar isian = progres nyata). Lapisan selebar isian + satu periode pola (16px)
+   digeser dengan transform sejauh satu periode → loop mulus tanpa menganimasikan background-position. */
+.sync-bar__fill::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -16px;
+  width: calc(100% + 16px);
+  background-image:
+    radial-gradient(circle at 4px 50%, color-mix(in srgb, var(--lr-text) 85%, transparent) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 12px 30%, color-mix(in srgb, var(--lr-text) 55%, transparent) 0 0.8px, transparent 1.4px);
+  background-size: 16px 100%;
+  background-repeat: repeat-x;
+  will-change: transform;
+  animation: lr-scanner-flow 1.4s linear infinite;
+}
+
+@keyframes lr-scanner-flow {
+  from { transform: translateX(0); }
+  to { transform: translateX(16px); }
+}
+
+.sync-step[data-state="active"] .sync-step__marker {
+  box-shadow: 0 0 10px var(--lr-neural-glow, transparent);
+}
+
+.sync-step[data-state="live"] .sync-step__marker {
+  box-shadow: 0 0 10px color-mix(in srgb, var(--lr-bull) 40%, transparent);
+}
+
+.sync-step[data-state="done"]:not(:last-child)::before {
+  background: linear-gradient(180deg, var(--lr-neural-cyan, var(--lr-accent)), var(--lr-neural-violet, var(--lr-accent)));
+}
+
+/* ---------- Gerak dimatikan ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .scan-radar__sweep,
+  .scan-radar__blip,
+  .page--scanner .scan-row,
+  .page--scanner .score__fill,
+  .page--scanner tr[data-flash] > td,
+  .stage--hot::after,
+  .scan-control.is-pulsing,
+  .scan-control__line::before,
+  .scan-control__line::after,
+  .sync-bar__fill::after {
+    animation: none !important;
+  }
+
+  /* Radar statis: sapuan tetap terlihat (tanpa rotasi) sebagai penanda "aktif". */
+  .scan-control[data-active="true"] .scan-control__line::before {
+    width: 100%;
+    transform: none;
+    opacity: 0.5;
+  }
+
+  .scan-control[data-active="true"] .scan-control__line::after { opacity: 0; }
+
+  /* Sorotan diff tetap tersampaikan tanpa gerak: tepi kiri berwarna selama data-flash ada. */
+  .page--scanner tr[data-flash] > td { background-color: var(--lr-flash-color); }
+}
+
+:root[data-motion="off"] .scan-radar__sweep,
+:root[data-motion="off"] .scan-radar__blip,
+:root[data-motion="off"] .page--scanner .scan-row,
+:root[data-motion="off"] .page--scanner .score__fill,
+:root[data-motion="off"] .stage--hot::after,
+:root[data-motion="off"] .scan-control.is-pulsing,
+:root[data-motion="off"] .scan-control__line::before,
+:root[data-motion="off"] .scan-control__line::after,
+:root[data-motion="off"] .sync-bar__fill::after,
+:root[data-motion="reduced"] .scan-radar__sweep,
+:root[data-motion="reduced"] .scan-radar__blip,
+:root[data-motion="reduced"] .page--scanner .scan-row,
+:root[data-motion="reduced"] .page--scanner .score__fill,
+:root[data-motion="reduced"] .stage--hot::after,
+:root[data-motion="reduced"] .scan-control.is-pulsing,
+:root[data-motion="reduced"] .scan-control__line::before,
+:root[data-motion="reduced"] .scan-control__line::after,
+:root[data-motion="reduced"] .sync-bar__fill::after {
+  animation: none !important;
+}
+
+:root[data-motion="off"] .scan-control[data-active="true"] .scan-control__line::before,
+:root[data-motion="reduced"] .scan-control[data-active="true"] .scan-control__line::before {
+  width: 100%;
+  transform: none;
+  opacity: 0.5;
+}
+
+:root[data-motion="off"] .scan-control[data-active="true"] .scan-control__line::after,
+:root[data-motion="reduced"] .scan-control[data-active="true"] .scan-control__line::after {
+  opacity: 0;
+}
+
+@media (max-width: 640px) {
+  .scan-radar__label {
+    max-width: 9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* ---------- Tier keyakinan & konfluensi (signalFormat.js: tierBadge) ---------- */
+.tier-badge {
+  font-family: var(--lr-font-mono);
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: 0.02em;
+}
+
+/* Tier A: emerald dengan glow cyan halus (statis, tanpa animasi). */
+.tier-badge--a {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--lr-bull) 35%, transparent), 0 0 10px var(--lr-neural-glow, transparent);
+}
+
+.confluence-score .score__fill {
+  background: var(--lr-gradient-brand, var(--lr-accent));
+}

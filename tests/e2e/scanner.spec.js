@@ -152,9 +152,25 @@ test('E2E-SUP-004 tombol nonaktif selama request; penolakan server (worker di lu
 const RUNNING = { enabled: true, state: 'running', startedAt: Date.UTC(2026, 9, 25, 12), stoppedAt: null, exitCode: null, signal: null };
 const CRASHED = { ...RUNNING, state: 'crashed', stoppedAt: Date.UTC(2026, 9, 25, 12, 0, 1), exitCode: 1 };
 
+/**
+ * Umpan sync (GET /api/system/sync) memuat snapshot supervisor yang sama dengan GET /api/system/worker, dan UI
+ * mengadopsinya (onSyncData). Agar tiruan konsisten, `worker` di payload sync NYATA diganti snapshot tiruan yang sama
+ * — kalau tidak, server E2E (yang tidak pernah benar-benar menjalankan worker) melaporkan "stopped" dan menimpa tiruan.
+ */
+async function mockSyncWorker(page, snapshot) {
+  await page.route('**/api/system/sync*', async (route) => {
+    const worker = snapshot();
+    if (!worker) return route.fallback();
+    const response = await route.fetch();
+    const json = await response.json();
+    return route.fulfill({ response, json: { ...json, worker } });
+  });
+}
+
 /** Server "menjalankan" worker yang langsung crash: POST start → running, GET status berikutnya → crashed. */
 async function mockCrashAfterSpawn(page) {
   let started = false;
+  await mockSyncWorker(page, () => (started ? CRASHED : null));
   await page.route('**/api/system/worker/start', async (route) => {
     started = true;
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(RUNNING) });
@@ -230,6 +246,7 @@ async function mockHeldStartThenCrash(page) {
   let release;
   const held = new Promise((resolve) => { release = resolve; });
   let started = false;
+  await mockSyncWorker(page, () => (started ? CRASHED : null));
   await page.route('**/api/system/worker/start', async (route) => {
     await held;
     started = true;

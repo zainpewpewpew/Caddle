@@ -1,6 +1,6 @@
 # 04 — Design System
 
-Arah visual: terminal intelijen trading institusional — latar charcoal hampir hitam, permukaan graphite, garis tipis, aksen emerald untuk bullish, amber untuk kewaspadaan, merah redup untuk risiko. Padat informasi, tenang, tanpa neon, tanpa gradien berat. Terinspirasi kecanggihan visual Saraf, **tanpa menyalin** aset, logo, atau antarmuka proprietary. Logo lensa dan seluruh ikon digambar khusus untuk proyek ini.
+Arah visual: terminal intelijen trading institusional bergaya **Neural Aurora** — latar hampir hitam kebiruan dengan canvas jaringan saraf animasi di belakang aplikasi, panel kaca gelap, border gradien halus cyan → violet, aksen emerald untuk bullish, amber untuk kewaspadaan, merah redup untuk risiko. Tetap padat informasi seperti terminal; glow hanya lembut dan bermakna (lihat §7). Terinspirasi kecanggihan visual Saraf, **tanpa menyalin** aset, logo, atau antarmuka proprietary. Logo lensa dan seluruh ikon digambar khusus untuk proyek ini.
 
 Referensi hidup: layar **Design System** di aplikasi (`#/design-system`).
 
@@ -15,7 +15,7 @@ Referensi hidup: layar **Design System** di aplikasi (`#/design-system`).
 | `css/login.css` | Halaman login |
 | `js/lib/components.js` | Pembuat komponen di JavaScript (aman XSS) |
 
-Aturan: komponen hanya merujuk variabel `--lr-*`. Tidak ada warna heksadesimal di luar `tokens.css` kecuali state hover tombol primer.
+Aturan: komponen hanya merujuk variabel `--lr-*`. Tidak ada warna heksadesimal di luar `tokens.css` kecuali atribusi TradingView (disalin apa adanya, syarat lisensi). Token Neural Aurora di `components.css` selalu dirujuk dengan fallback `var(--lr-x, nilai)`.
 
 ## 2. Warna & kontras
 
@@ -89,8 +89,8 @@ Angka finansial memakai `font-variant-numeric: tabular-nums` agar kolom sejajar.
 
 - Spasi basis 4px: `--lr-space-1` (4) … `--lr-space-12` (48).
 - Radius: 3 / 5 / 8 / 12px; pill untuk chip pengguna.
-- Elevasi: garis 1px + bayangan halus (`--lr-shadow-1..3`), tanpa glow.
-- Gerak: 120/180/280ms dengan easing `cubic-bezier(0.2, 0.7, 0.2, 1)`. Animasi hanya untuk masuk halaman, toast, pulse status live, dan transisi hover. `prefers-reduced-motion: reduce` menonaktifkan semuanya.
+- Elevasi: garis 1px + bayangan halus (`--lr-shadow-1..3`) + glow lembut saat hover (`--lr-glow-*`).
+- Gerak: 120/180/280/420ms dengan easing `cubic-bezier(0.2, 0.7, 0.2, 1)` / `--lr-ease-out-expo`. Rincian dan aturan mematikan gerak di §7.
 
 ## 5. Komponen
 
@@ -122,3 +122,52 @@ Route `#/short-scanner` (ikon `i-screener-short`, cermin vertikal `i-screener`),
 - Header tabel sortable adalah tombol yang dapat dioperasikan keyboard, dengan `aria-sort`.
 - Toast memakai `role="status"` + `aria-live="polite"`; error login `role="alert"`.
 - Responsif: sidebar menjadi laci di ≤820px, KPI 2 kolom, tabel scroll horizontal di dalam panel (halaman tidak overflow — diverifikasi tes `E2E-UI-002` di viewport 390px).
+
+## 7. Neural Aurora
+
+Lapisan gaya di atas token lama. Semantik warna **tidak berubah**: emerald = LONG/bullish, rose = SHORT/bearish, amber = waspada. Cyan (`--lr-neural-cyan`) dan violet (`--lr-neural-violet`) hanya aksen netral (fokus, judul, meter, garis pindai), tidak pernah menandakan arah pasar.
+
+### Permukaan kaca
+
+| Elemen | Gaya |
+|---|---|
+| `.panel`, `.stat`, `.glass`, `.callout` | Latar `--lr-glass` (alfa 0,74) + `backdrop-filter: var(--lr-blur)`; border 1px `--lr-glass-border`; border gradien via `::before` + `mask-composite: exclude` (opasitas 0,55 → 1 saat hover); highlight atas 1px via `::after`; glow cyan lembut saat hover |
+| `.table thead th` | Kaca pekat `--lr-glass-strong` + blur, sticky; garis bawah aksen tipis |
+| `.toast` | Kaca pekat + `--lr-blur-strong`, slide-in dari kanan, bar sisa waktu 4 detik di tepi bawah |
+| Tanpa `backdrop-filter` | `@supports not` → `--lr-glass-strong` (0,88) agar teks tetap ≥ AA di atas canvas |
+| ≤ 820px | Blur diturunkan ke 8px agar gulir tetap mulus |
+
+Alfa kaca ≥ 0,72 sehingga, terhadap titik canvas paling terang, latar efektif tetap gelap dan seluruh rasio teks pada §2 bertahan (≥ 4,5:1).
+
+### Komponen & kelas baru
+
+| Kelas / helper | Kegunaan |
+|---|---|
+| `.btn--primary` | Kini gradien emerald (`--lr-gradient-bull`), tetap aksi bullish/positif. Teks gelap 5,9:1 di ujung tergelap |
+| `.btn--neural` | Aksi utama netral (bukan arah pasar): gradien cyan → violet, teks gelap ≥ 5,2:1 |
+| `.btn::after` | Kilau menyapu saat hover (dekoratif) |
+| `.badge--violet` | Label metadata/model (bukan arah). Badge bernada kini punya glow halus sewarna teks |
+| `.stage[data-stage="BREAKOUT"/"BREAKDOWN"]` | Titik berdenyut halus + label tebal; tahap lain bertitik bercahaya statis |
+| `.score__fill` | Gradien per tone + animasi isi `scaleX(0 → 1)` menuju lebar NYATA `--lr-score`. Di tabel hanya beranimasi pada baris yang baru masuk |
+| `.stat[data-tone]` | `stat({ tone })`: garis aksen bawah bull/bear/warn/accent |
+| `stat({ countTo, format })`, `animateNumber(el, to, { format, duration, from })` | Count-up dari 0 ke angka NYATA dari API; frame terakhir selalu persis `format(to)`; langsung ditulis bila gerak mati/reduced atau tab tersembunyi; selama berjalan `data-counting` (glow teks) |
+| `motionMode()` | `'on' / 'off' / 'reduced'` dari `data-motion` pada `<html>` + `prefers-reduced-motion` |
+| `dataTable({ animateRows })` | Default true: baris render pertama mendapat `data-enter` + `--i` → masuk bertahap (24ms/baris, maks. 16 langkah). Urut ulang tidak beranimasi; halaman yang membuat ulang tabel tiap polling memberi `false` saat penyegaran |
+| Hover baris | Latar cyan tipis + garis aksen kiri 2px; baris terpilih tetap aksen biru + bayangan dalam |
+| `.empty__visual`, `.empty__node` | `emptyState()` kini membungkus ikon dengan orbit putus-putus dan tiga node mengorbit (cyan, violet, emerald) — `aria-hidden`, tanpa angka |
+| `.skeleton` | Shimmer cyan (`lr-skeleton-shimmer`) |
+| `.callout--bull` | Callout bernada emerald; semua callout kini kaca + gradien tone dari kiri |
+| `.timeline__item[data-state="active"]` | Titik cyan bercahaya + cincin berdenyut; garis item selesai bergradien emerald |
+| `.lr-scanline[data-scanning="true"]` / `.is-scanning` | Garis cahaya bergerak di tepi atas — **hanya** dipasang saat scanner NYATA berjalan |
+| `.live-dot[data-tone]` | Titik live berdenyut untuk aliran data nyata |
+| `.gradient-text` | Teks bergradien cyan → violet (mode warna paksa → `CanvasText`) |
+| `.panel--bull`, `.panel--bear` | Border gradien bernada arah |
+
+### Aturan gerak
+
+| Jenis | Contoh | `data-motion="off"` | `prefers-reduced-motion` |
+|---|---|---|---|
+| Dekoratif | kilau tombol, denyut BREAKOUT/BREAKDOWN, node empty state, stagger baris, isi meter, garis pindai, slide toast/panel grafik | mati | mati |
+| Fungsional | `.progress-indeterminate` (`lr-indeterminate`), cincin langkah sync, shimmer skeleton | tetap | statis |
+
+Angka tidak pernah dianimasikan menuju nilai rekaan: count-up hanya dari 0 ke angka yang diterima dari API, dan nilai kosong tetap `—`.

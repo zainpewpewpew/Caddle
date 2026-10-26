@@ -7,7 +7,7 @@ import { callout, panel, toast } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { formatUtc } from '../lib/format.js';
 import { requestSyncRefresh, syncProgressInline } from './syncProgress.js';
-import { canStartWorker, isWorkerTransitional, workerControlLabel, workerControlPill } from './workerFormat.js';
+import { canStartWorker, isWorkerActive, isWorkerTransitional, workerControlLabel, workerControlPill } from './workerFormat.js';
 
 const POLL_MS = 2_000;
 /**
@@ -16,6 +16,39 @@ const POLL_MS = 2_000;
  * dalam beberapa detik, bukan menunggu auto-refresh halaman.
  */
 const SETTLE_MS = 10_000;
+
+/** Durasi kelas `is-pulsing` (ring berdenyut) setelah scanner benar-benar mulai/berhenti. */
+const PULSE_MS = 1_400;
+
+/**
+ * Pelacak peralihan aktif ↔ tidak aktif dari state supervisor NYATA (respons API). Hanya peralihan yang menjalankan
+ * efek: state awal halaman tidak memicu apa pun, sehingga navigasi tidak menghasilkan pulsa palsu.
+ * Peralihan → event global `lr:activity` (accent; level 0.8 saat berjalan, 0.25 saat berhenti) yang diteruskan app.js ke
+ * animasi latar, plus kelas `is-pulsing` sesaat pada `el` (ring berdenyut di CSS).
+ * @param {HTMLElement} el
+ * @returns {(status: object|null) => void}
+ */
+function activityTracker(el) {
+  let last = null;
+  let pulseTimer = null;
+  return (status) => {
+    const active = isWorkerActive(status);
+    el.dataset.active = String(active);
+    if (status?.state) el.dataset.workerState = status.state;
+    if (last === null || last === active) {
+      last = active;
+      return;
+    }
+    last = active;
+    window.dispatchEvent(new CustomEvent('lr:activity', { detail: { kind: 'accent', level: active ? 0.8 : 0.25 } }));
+    el.classList.remove('is-pulsing');
+    // Reflow agar animasi dapat diulang bila peralihan terjadi beruntun.
+    void el.offsetWidth;
+    el.classList.add('is-pulsing');
+    clearTimeout(pulseTimer);
+    pulseTimer = setTimeout(() => el.classList.remove('is-pulsing'), PULSE_MS);
+  };
+}
 
 /** Pesan error yang dapat dipahami pengguna; pesan server (Bahasa Indonesia) dipakai bila ada. */
 export function workerErrorMessage(err) {
@@ -95,6 +128,9 @@ export function workerControlCard({ user, status: initial }) {
 
   const body = h('div', { class: 'worker-control', tabindex: '-1' }, stateEl, progressEl, descEl, controls, confirmEl, errorEl);
   const el = panel({ title: 'Kontrol scanner', id: 'worker-control' }, body);
+  body.classList.add('scan-control');
+  body.append(h('span', { class: 'scan-control__line', 'aria-hidden': 'true' }));
+  const track = activityTracker(body);
 
   function showError(message) {
     errorEl.textContent = message ?? '';
@@ -109,6 +145,7 @@ export function workerControlCard({ user, status: initial }) {
       stateEl.replaceChildren(workerControlPill(status));
     }
     descEl.textContent = describe(status);
+    track(status);
     body.setAttribute('aria-busy', String(pending || isWorkerTransitional(status)));
     progressEl.hidden = !(pending || isWorkerTransitional(status) || settling());
     startBtn.disabled = pending || !canStartWorker(status);
@@ -260,10 +297,12 @@ const STOP_LABEL_STATES = new Set(['running', 'starting', 'external']);
  * Selama transisi/pemantauan GET /api/system/worker dipantau tiap POLL_MS (latar), selain itu tiap STEADY_POLL_MS.
  * Halaman pemakainya tidak punya cleanup: polling berhenti sendiri bila elemen sudah tidak ada di halaman. Karena itu
  * elemen dibuat setelah seluruh await view selesai, tepat sebelum halaman dipasang.
- * @param {{ user: { role: string }, status: object|null }} options
+ * `onState(status)` (opsional) dipanggil setiap render dengan snapshot supervisor nyata yang sedang ditampilkan — dipakai
+ * halaman scanner untuk radar header dan untuk memutuskan apakah daftar kandidat perlu disegarkan.
+ * @param {{ user: { role: string }, status: object|null, onState?: (status: object) => void }} options
  * @returns {HTMLElement|null} null hanya bila kontrol dari website nonaktif (WORKER_CONTROL=false) atau status gagal dibaca.
  */
-export function workerControlBar({ user, status: initial }) {
+export function workerControlBar({ user, status: initial, onState }) {
   if (!initial?.enabled) return null;
   const isAdmin = user?.role === 'admin';
   let status = initial;
@@ -299,8 +338,11 @@ export function workerControlBar({ user, status: initial }) {
     h('a', { href: '#/health' }, 'Lihat proses sync di System Health'));
   const content = h('div', { class: 'callout__content' }, stateEl, message, progressEl, syncRow, errorEl);
   const el = callout([content]);
-  el.classList.add('callout--action', 'worker-bar');
+  el.classList.add('callout--action', 'worker-bar', 'scan-control');
   el.dataset.testid = 'worker-callout';
+  // Garis scan dekoratif (bergerak di CSS hanya saat data-active="true" = scanner benar-benar berjalan).
+  el.prepend(h('span', { class: 'scan-control__line', 'aria-hidden': 'true' }));
+  const track = activityTracker(el);
 
   const toggle = isAdmin
     ? h('button', { class: 'btn btn--sm btn--primary', type: 'button', 'aria-describedby': 'worker-bar-message', on: { click: () => onToggle() } }, 'Jalankan scanner')
@@ -330,6 +372,8 @@ export function workerControlBar({ user, status: initial }) {
       stateEl.replaceChildren(workerControlPill(status));
       message.replaceChildren(...barMessage(status, isAdmin));
     }
+    track(status);
+    if (onState) onState(status);
     const crashed = status?.state === 'crashed';
     el.classList.toggle('callout--bear', crashed);
     el.classList.toggle('callout--warn', !crashed && canStartWorker(status));

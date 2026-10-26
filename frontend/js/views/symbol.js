@@ -2,11 +2,14 @@
 // kondisinya, transisi tahap, dan riwayat sinyal simbol (GET /api/signals/history?symbol=…).
 // Parameter dari hash: #/symbol?s=BTCUSDT&tf=15m&dir=LONG&signal=12 — semuanya opsional kecuali s, dan divalidasi.
 import { api } from '../lib/api.js';
-import { callout, dataTable, emptyState, page, panel } from '../lib/components.js';
+import { badge, callout, dataTable, emptyState, page, panel, stat } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { formatPrice, formatUtc } from '../lib/format.js';
 import { hashQuery } from '../lib/router.js';
-import { patternBadge } from './signalFormat.js';
+import { synapseArt } from './roadmap.js';
+import {
+  confluenceBreakdown, confluenceValue, formatWinProbability, patternBadge, tierBadge,
+} from './signalFormat.js';
 import {
   CHART_TIMEFRAMES, createSymbolChartPanel, directionBadge, isValidSymbol, normalizeDirection, normalizeTimeframe,
   signalLevels, signalMarkers, signalStage, signalSummary, symbolDetailHref,
@@ -80,10 +83,75 @@ function searchForm(current) {
   return form;
 }
 
+const QUOTES = ['USDT', 'USDC', 'FDUSD', 'BUSD'];
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+
+/** BTCUSDT → ['BTC', 'USDT']; simbol tanpa quote dikenal → [simbol, null]. */
+export function splitPair(symbol) {
+  const quote = QUOTES.find((q) => symbol.endsWith(q) && symbol.length > q.length);
+  return quote ? [symbol.slice(0, -quote.length), quote] : [symbol, null];
+}
+
+/** Kartu metrik kaca; nilai skor diberi meter 0–100 dari nilai nyata, nilai kosong → '—' redup. */
+function heroStat({ label, value, hint, meter, tone, testId }) {
+  const card = stat({ label, value: value ?? '—', hint, muted: value === null || value === undefined, testId });
+  card.classList.add('hero-stat');
+  if (tone) card.dataset.tone = tone;
+  if (isNum(meter)) {
+    const clamped = Math.max(0, Math.min(100, meter));
+    card.append(h('span', { class: 'hero-stat__meter', 'aria-hidden': 'true' },
+      h('span', { class: 'hero-stat__fill', style: { '--lr-meter': String(clamped / 100) } })));
+  }
+  return card;
+}
+
+/**
+ * Hero simbol: nama pasangan bergradien + badge arah/pola/tahap + kartu metrik dari sinyal fokus. Semua angka berasal
+ * dari riwayat sinyal API; tanpa sinyal, kartu menampilkan '—'. Ilustrasi jaringan di belakang murni dekoratif.
+ */
+function symbolHero({ symbol, focused, signals, direction, timeframe, historyError }) {
+  const [base, quote] = splitPair(symbol);
+  const dir = focused ? directionOf(focused) : direction;
+  const tone = dir === 'SHORT' ? 'bear' : 'bull';
+  const roundScore = (v) => (isNum(v) ? String(Math.round(Math.max(0, Math.min(100, v)))) : null);
+  return h('section', { class: 'symbol-hero', 'data-direction': dir, 'aria-label': `Ringkasan ${symbol}`, 'data-testid': 'symbol-hero' },
+    h('div', { class: 'symbol-hero__art', 'aria-hidden': 'true' }, synapseArt(tone)),
+    h('div', { class: 'symbol-hero__id' },
+      h('span', { class: 'symbol-hero__eyebrow' }, 'Binance USDT-M · candle tertutup'),
+      h('h2', { class: 'symbol-hero__ticker' },
+        h('span', { class: 'symbol-hero__base' }, base),
+        quote ? h('span', { class: 'symbol-hero__quote' }, `/${quote}`) : null),
+      h('div', { class: 'cluster symbol-hero__badges' },
+        directionBadge(dir),
+        focused ? patternBadge(focused.classification, dir) : null,
+        focused && typeof focused.state === 'string' ? signalStage(focused.state, dir) : null,
+        focused ? tierBadge(focused.confidenceTier) : null,
+        badge(`TF ${timeframe}`))),
+    h('div', { class: 'symbol-hero__metrics' },
+      heroStat({ label: 'Pattern Score', value: roundScore(focused?.patternScore), meter: focused?.patternScore, hint: 'Kecocokan aturan, bukan peluang profit', tone: 'accent' }),
+      // Konfluensi & peluang historis hanya bila sinyal membawanya (sinyal lama → kartu tidak ada sama sekali).
+      confluenceValue(focused?.confluenceScore) !== null
+        ? heroStat({ label: 'Konfluensi', value: String(confluenceValue(focused.confluenceScore)), meter: focused.confluenceScore, hint: 'Kesepakatan komponen analisis', tone: 'accent', testId: 'symbol-confluence' })
+        : null,
+      formatWinProbability(focused?.winProbability) !== null
+        ? heroStat({ label: 'Peluang historis', value: formatWinProbability(focused.winProbability), hint: 'Terkalibrasi backtest — bukan jaminan', tone, testId: 'symbol-win-probability' })
+        : null,
+      heroStat({ label: 'Early Score', value: roundScore(focused?.earlyScore), meter: focused?.earlyScore, hint: 'Dinilai terpisah', tone }),
+      heroStat({ label: 'Harga deteksi', value: focused && isNum(focused.firstDetectedPrice) ? formatPrice(focused.firstDetectedPrice) : null, hint: focused ? formatUtc(focused.firstDetectedAt) : 'Belum ada sinyal' }),
+      heroStat({ label: 'Invalidasi', value: focused && isNum(focused.invalidationPrice) ? formatPrice(focused.invalidationPrice) : null, hint: 'Level batal pola', tone: 'bear' }),
+      heroStat({
+        label: 'Sinyal tercatat',
+        value: historyError ? null : String(signals.length),
+        hint: historyError ? 'Riwayat gagal dimuat' : `Dari ≤ ${HISTORY_LIMIT} sinyal terakhir`,
+        testId: 'symbol-signal-count',
+      })));
+}
+
 function noSymbolState(invalid) {
   return [
     invalid ? callout('Simbol di URL tidak valid. Gunakan 2–30 huruf kapital/angka, mis. BTCUSDT.', 'warn') : null,
     panel({ title: 'Grafik simbol' },
+      h('div', { class: 'symbol-empty-art', 'aria-hidden': 'true' }, synapseArt('accent')),
       emptyState({
         iconName: 'symbol',
         title: 'Pilih koin terlebih dahulu',
@@ -110,8 +178,44 @@ function factorValue(f) {
     `${points < 0 ? '−' : '+'}${Math.abs(points).toFixed(1)}`);
 }
 
+/** Panel konfluensi: bar kontribusi per komponen + konfirmasi (emerald) & konflik (rose). null bila tanpa data. */
+function confluencePanel(signal) {
+  const { components, confirms, conflicts, tier } = confluenceBreakdown(signal?.explanation);
+  const score = confluenceValue(signal?.confluenceScore);
+  if (!components.length && !confirms.length && !conflicts.length && score === null) return null;
+  const maxAbs = Math.max(1, ...components.map((c) => Math.abs(c.contribution ?? 0)));
+  const signed = (v) => `${v < 0 ? '−' : '+'}${Math.abs(v).toFixed(1)}`;
+  const notes = (items, tone, title) => (items.length
+    ? h('div', { class: 'confluence__group', 'data-tone': tone },
+      h('h3', { class: 'confluence__heading' }, title),
+      h('ul', { class: 'confluence__notes' }, items.map((n) => h('li', { class: 'confluence__note' },
+        h('span', { class: 'confluence__note-dot', 'aria-hidden': 'true' }),
+        h('span', null, n.detail ?? '—'),
+        n.contribution !== null ? h('span', { class: 'confluence__note-value num' }, signed(n.contribution)) : null))))
+    : null);
+  return panel({ title: 'Konfluensi', actions: [tierBadge(signal.confidenceTier), score !== null ? badge(`Skor ${score}`, 'accent') : null] },
+    h('div', { class: 'stack', 'data-testid': 'symbol-confluence-panel' },
+      components.length
+        ? h('ul', { class: 'confluence__bars', 'aria-label': 'Kontribusi per komponen' }, components.map((c) => {
+          const v = c.contribution;
+          return h('li', { class: 'confluence__bar', 'data-sign': v !== null && v < 0 ? 'negative' : 'positive' },
+            h('span', { class: 'confluence__label' }, c.label),
+            h('span', { class: 'confluence__track', 'aria-hidden': 'true' },
+              h('span', { class: 'confluence__fill', style: { '--lr-meter': String(v === null ? 0 : Math.abs(v) / maxAbs) } })),
+            h('span', { class: 'confluence__value num' }, v === null ? '—' : signed(v)),
+            c.detail ? h('span', { class: 'confluence__detail' }, c.detail) : null);
+        }))
+        : null,
+      notes(confirms, 'bull', 'Konfirmasi'),
+      notes(conflicts, 'bear', 'Konflik'),
+      tier?.detail ? h('p', { class: 'chart-note' }, tier.detail) : null,
+      h('p', { class: 'chart-note' }, 'Konfluensi = seberapa banyak komponen analisis sepakat dengan arah sinyal. Tier adalah peringkat aturan, bukan probabilitas profit.')));
+}
+
 function explanationPanel(signal, emptyText) {
-  const factors = Array.isArray(signal?.explanation) ? signal.explanation : [];
+  // Faktor CONFLUENCE:* ditampilkan di panel Konfluensi tersendiri.
+  const factors = (Array.isArray(signal?.explanation) ? signal.explanation : [])
+    .filter((f) => !String(f?.factor ?? '').startsWith('CONFLUENCE:'));
   return panel({ title: 'Penjelasan kondisi' },
     factors.length
       ? h('div', { class: 'stack' },
@@ -246,9 +350,10 @@ export async function symbolView() {
       ? callout(`Sinyal #${params.signalId} dari URL tidak ditemukan di ${HISTORY_LIMIT} sinyal terakhir ${symbol}`
         + (focused ? '; yang ditampilkan adalah sinyal terakhir.' : '.'), 'warn')
       : null,
-    h('div', { class: 'grid grid--main-side' },
+    symbolHero({ symbol, focused, signals, direction, timeframe, historyError }),
+    h('div', { class: 'grid grid--main-side symbol-layout' },
       chartPanel.el,
-      h('div', { class: 'stack' }, summaryPanel, explanationPanel(focused, emptyText), transitionsPanel(focused, emptyText))),
+      h('div', { class: 'stack' }, summaryPanel, confluencePanel(focused), explanationPanel(focused, emptyText), transitionsPanel(focused, emptyText))),
     historyPanel(symbol, signals, focused, historyError));
 
   return { el, cleanup: () => chartPanel.destroy() };

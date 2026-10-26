@@ -141,20 +141,23 @@ function readTheme(el) {
     return value && CSS.supports('color', value) ? value : fallback;
   };
   return {
-    surface: color('--lr-surface', '#10151d'),
+    // Tema "Neural Aurora": latar kanvas transparan agar panel kaca (dan gradien halus .chart__canvas) terlihat.
+    background: color('--lr-chart-bg', 'transparent'),
     surface3: color('--lr-surface-3', '#1d2531'),
     // Teks sumbu memakai --lr-text: library memilih varian logo atribusi gelap/terang dari kecerahan textColor
     // (> 160 = tema gelap); --lr-text-2 (151) membuat logo varian terang yang nyaris tak terlihat di latar gelap.
     text: color('--lr-text', '#eaf0f6'),
-    grid: color('--lr-border-subtle', '#1b222c'),
-    border: color('--lr-border', '#27303b'),
-    strong: color('--lr-border-strong', '#364250'),
+    grid: color('--lr-chart-grid', 'rgb(148 178 220 / 0.05)'),
+    border: color('--lr-glass-border', 'rgb(148 178 220 / 0.12)'),
+    crosshair: color('--lr-neural-cyan', '#38e1ff'),
+    crosshairLabel: color('--lr-chart-crosshair-label', 'rgb(16 64 84 / 0.96)'),
+    watermark: color('--lr-chart-watermark', 'rgb(56 225 255 / 0.06)'),
     bull: color('--lr-bull', '#21c58e'),
     bear: color('--lr-bear', '#f16b75'),
     bullLine: color('--lr-bull-line', 'rgb(33 197 142 / 0.35)'),
     bearLine: color('--lr-bear-line', 'rgb(241 107 117 / 0.35)'),
-    ema7: color('--lr-accent', '#69a8ff'),
-    ema25: color('--lr-warn', '#f4b860'),
+    ema7: color('--lr-neural-cyan', '#38e1ff'),
+    ema25: color('--lr-neural-violet', '#7c6cff'),
     font: css.getPropertyValue('--lr-font-sans').trim() || 'system-ui, sans-serif',
     token: (name, fallback) => color(name, fallback),
   };
@@ -225,8 +228,10 @@ export async function createCandleChart(container, { candles = [], timeframe, sy
   const canvasHost = h('div', { class: 'chart__canvas', role: 'figure', 'data-testid': 'candle-chart' });
   const swatch = (label, key) => h('span', { class: 'chart__legend-item' },
     h('span', { class: 'chart__swatch', 'data-series': key }), label);
+  // OHLC candle di bawah crosshair (default: candle tertutup terakhir) — nilai nyata dari data yang sedang tampil.
+  const ohlc = h('span', { class: 'chart__ohlc num', 'data-testid': 'candle-chart-ohlc' });
   const legend = h('div', { class: 'chart__legend', 'aria-hidden': 'true' },
-    swatch('EMA7', 'ema7'), swatch('EMA25', 'ema25'), swatch('Volume', 'volume'), h('span', { class: 'chart__legend-note' }, 'Waktu UTC'));
+    ohlc, swatch('EMA7', 'ema7'), swatch('EMA25', 'ema25'), swatch('Volume', 'volume'), h('span', { class: 'chart__legend-note' }, 'Waktu UTC'));
   const summary = h('p', { class: 'sr-only', 'data-testid': 'candle-chart-summary' });
   container.classList.add('chart');
   container.replaceChildren(canvasHost, legend, summary);
@@ -235,7 +240,7 @@ export async function createCandleChart(container, { candles = [], timeframe, sy
   const chart = LWC.createChart(canvasHost, {
     width: canvasHost.clientWidth || 600,
     height: canvasHost.clientHeight || 360,
-    layout: { background: { type: LWC.ColorType.Solid, color: theme.surface }, textColor: theme.text, fontFamily: theme.font, fontSize: 11, attributionLogo: true },
+    layout: { background: { type: LWC.ColorType.Solid, color: theme.background }, textColor: theme.text, fontFamily: theme.font, fontSize: 11, attributionLogo: true },
     rightPriceScale: { borderColor: theme.border, scaleMargins: { top: 0.08, bottom: 0.26 } },
     timeScale: { borderColor: theme.border, timeVisible: true, secondsVisible: false, rightOffset: 4, barSpacing: 7 },
     crosshair: { mode: LWC.CrosshairMode.Normal },
@@ -253,18 +258,29 @@ export async function createCandleChart(container, { candles = [], timeframe, sy
   const ema7Series = chart.addSeries(LWC.LineSeries, lineOptions);
   const ema25Series = chart.addSeries(LWC.LineSeries, lineOptions);
   const markerPlugin = LWC.createSeriesMarkers(candleSeries, []);
+  // Tanda air dekoratif: hanya nama simbol & timeframe yang sedang ditampilkan (bukan data).
+  const watermarkText = [symbol, timeframe].filter(Boolean).join(' · ');
+  const watermark = watermarkText && typeof LWC.createTextWatermark === 'function'
+    ? LWC.createTextWatermark(chart.panes()[0], { horzAlign: 'center', vertAlign: 'center', lines: [] })
+    : null;
 
   function applyTheme() {
     chart.applyOptions({
-      layout: { background: { type: LWC.ColorType.Solid, color: theme.surface }, textColor: theme.text, fontFamily: theme.font },
+      layout: { background: { type: LWC.ColorType.Solid, color: theme.background }, textColor: theme.text, fontFamily: theme.font },
       grid: { vertLines: { color: theme.grid }, horzLines: { color: theme.grid } },
       rightPriceScale: { borderColor: theme.border },
       timeScale: { borderColor: theme.border },
-      crosshair: { vertLine: { color: theme.strong, labelBackgroundColor: theme.surface3 }, horzLine: { color: theme.strong, labelBackgroundColor: theme.surface3 } },
+      crosshair: {
+        vertLine: { color: theme.crosshair, width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: theme.crosshairLabel },
+        horzLine: { color: theme.crosshair, width: 1, style: LWC.LineStyle.Dashed, labelBackgroundColor: theme.crosshairLabel },
+      },
     });
     candleSeries.applyOptions({ upColor: theme.bull, downColor: theme.bear, wickUpColor: theme.bull, wickDownColor: theme.bear });
     ema7Series.applyOptions({ color: theme.ema7 });
     ema25Series.applyOptions({ color: theme.ema25 });
+    watermark?.applyOptions({
+      lines: [{ text: watermarkText, color: theme.watermark, fontSize: 44, fontStyle: '600', fontFamily: theme.font }],
+    });
     for (const [key, value] of Object.entries({ ema7: theme.ema7, ema25: theme.ema25, volume: theme.bullLine })) {
       legend.querySelector(`[data-series="${key}"]`)?.style.setProperty('--lr-chart-swatch', value);
     }
@@ -324,7 +340,26 @@ export async function createCandleChart(container, { candles = [], timeframe, sy
     markerPlugin.setMarkers(mapped.sort((a, b) => a.time - b.time));
   }
 
+  let byTime = new Map();
+  function showOhlc(candle) {
+    if (!candle) {
+      ohlc.replaceChildren();
+      return;
+    }
+    const part = (k, text) => h('span', { class: 'chart__ohlc-part' }, h('span', { class: 'chart__ohlc-key' }, k), text);
+    ohlc.dataset.dir = candle.close >= candle.open ? 'up' : 'down';
+    ohlc.replaceChildren(part('O', formatPrice(candle.open)), part('H', formatPrice(candle.high)),
+      part('L', formatPrice(candle.low)), part('C', formatPrice(candle.close)), part('V', formatCompact(candle.volume)));
+  }
+  chart.subscribeCrosshairMove((param) => {
+    if (destroyed) return;
+    const hovered = param?.time !== undefined ? byTime.get(param.time) : null;
+    showOhlc(hovered ?? data.at(-1));
+  });
+
   function paintData() {
+    byTime = new Map(data.map((c) => [toTime(c.openTime), c]));
+    showOhlc(data.at(-1));
     const first = data[0];
     if (first) candleSeries.applyOptions({ priceFormat: { type: 'custom', formatter: formatPrice, minMove: minMoveFor(first.close) } });
     candleSeries.setData(data.map((c) => ({ time: toTime(c.openTime), open: c.open, high: c.high, low: c.low, close: c.close })));

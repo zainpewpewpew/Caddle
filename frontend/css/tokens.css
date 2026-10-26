@@ -2,25 +2,26 @@
  * AlphaLens — design tokens.
  * Satu-satunya sumber nilai visual. Komponen hanya boleh merujuk variabel di bawah.
  * Kontras teks utama/sekunder terhadap --lr-bg diverifikasi ≥ AA (lihat docs/04-design-system.md).
+ * Gaya "Neural Aurora": latar hampir hitam kebiruan, panel kaca gelap, aksen cyan → violet.
  */
 :root {
   color-scheme: dark;
 
   /* ---- Warna dasar ---- */
-  --lr-bg: #080b10;
-  --lr-bg-sunken: #05070a;
-  --lr-surface: #10151d;
-  --lr-surface-2: #171e28;
-  --lr-surface-3: #1d2531;
-  --lr-surface-hover: #1a222d;
-  --lr-border: #27303b;
-  --lr-border-subtle: #1b222c;
-  --lr-border-strong: #364250;
+  --lr-bg: #05070d;
+  --lr-bg-sunken: #03050a;
+  --lr-surface: #0b111b;
+  --lr-surface-2: #111925;
+  --lr-surface-3: #172131;
+  --lr-surface-hover: #142030;
+  --lr-border: #222f42;
+  --lr-border-subtle: #172233;
+  --lr-border-strong: #33445c;
 
   --lr-text: #eaf0f6;
-  --lr-text-2: #8b98a8;
-  --lr-text-3: #7a8696;
-  --lr-text-inverse: #080b10;
+  --lr-text-2: #93a1b4;
+  --lr-text-3: #7d8a9d;
+  --lr-text-inverse: #05070d;
 
   /* ---- Semantik pasar ---- */
   --lr-bull: #21c58e;
@@ -32,10 +33,54 @@
   --lr-bear: #f16b75;
   --lr-bear-soft: rgb(241 107 117 / 0.12);
   --lr-bear-line: rgb(241 107 117 / 0.35);
-  --lr-accent: #69a8ff;
-  --lr-accent-soft: rgb(105 168 255 / 0.12);
-  --lr-accent-line: rgb(105 168 255 / 0.4);
+  --lr-accent: #5cb8ff;
+  --lr-accent-soft: rgb(92 184 255 / 0.12);
+  --lr-accent-line: rgb(92 184 255 / 0.4);
   --lr-neutral-soft: rgb(139 152 168 / 0.12);
+
+  /* ---- Neural Aurora: aksen jaringan saraf ---- */
+  --lr-neural-cyan: #38e1ff;
+  --lr-neural-violet: #7c6cff;
+  --lr-neural-emerald: #21c58e;
+  --lr-neural-glow: rgb(56 225 255 / 0.35);
+  --lr-neural-glow-violet: rgb(124 108 255 / 0.32);
+  --lr-neural-cyan-soft: rgb(56 225 255 / 0.12);
+  --lr-neural-violet-soft: rgb(124 108 255 / 0.14);
+  --lr-neural-bg: #05070d;
+  --lr-neural-line: rgb(56 225 255 / 0.28);
+  --lr-neural-glow-soft: rgb(56 225 255 / 0.08);
+  --lr-neural-glow-mid: rgb(56 225 255 / 0.16);
+  --lr-neural-scrim: rgb(5 7 13 / 0.78);
+
+  /* ---- Kaca (glassmorphism). Alfa ≥ 0.72 agar teks tetap ≥ AA di atas animasi latar. ---- */
+  --lr-glass: rgb(10 15 25 / 0.78);
+  --lr-glass-strong: rgb(8 12 21 / 0.88);
+  --lr-glass-soft: rgb(14 21 34 / 0.8);
+  --lr-glass-border: rgb(148 178 220 / 0.12);
+  --lr-glass-border-strong: rgb(148 178 220 / 0.2);
+  --lr-glass-highlight: rgb(255 255 255 / 0.05);
+  --lr-blur: blur(12px) saturate(140%);
+  --lr-blur-strong: blur(16px) saturate(150%);
+  /* Alias yang dipakai login.css (nilai = fallback di sana). */
+  --lr-glass-bg: rgb(10 14 24 / 0.78);
+  --lr-glass-bg-strong: rgb(9 13 22 / 0.86);
+  --lr-glass-input: rgb(5 7 13 / 0.8);
+
+  /* ---- Gradien ---- */
+  --lr-gradient-brand: linear-gradient(135deg, var(--lr-neural-cyan) 0%, var(--lr-neural-violet) 100%);
+  --lr-gradient-brand-soft: linear-gradient(135deg, rgb(56 225 255 / 0.16) 0%, rgb(124 108 255 / 0.16) 100%);
+  --lr-gradient-bull: linear-gradient(135deg, #4fe0ae 0%, #21c58e 55%, #149e70 100%);
+  --lr-gradient-bear: linear-gradient(135deg, #ff9aa2 0%, #f16b75 55%, #c94450 100%);
+  --lr-gradient-aurora: radial-gradient(60% 50% at 15% 0%, rgb(56 225 255 / 0.10) 0%, transparent 70%),
+    radial-gradient(50% 45% at 85% 10%, rgb(124 108 255 / 0.10) 0%, transparent 70%),
+    radial-gradient(60% 50% at 50% 100%, rgb(33 197 142 / 0.06) 0%, transparent 70%);
+  --lr-gradient-border: linear-gradient(135deg, rgb(56 225 255 / 0.35), rgb(124 108 255 / 0.12) 40%, rgb(148 178 220 / 0.06) 70%, rgb(124 108 255 / 0.25));
+
+  /* ---- Glow ---- */
+  --lr-glow-accent: 0 0 0 1px rgb(56 225 255 / 0.25), 0 0 18px rgb(56 225 255 / 0.22);
+  --lr-glow-bull: 0 0 0 1px rgb(33 197 142 / 0.3), 0 0 18px rgb(33 197 142 / 0.25);
+  --lr-glow-bear: 0 0 0 1px rgb(241 107 117 / 0.3), 0 0 18px rgb(241 107 117 / 0.25);
+  --lr-glow-violet: 0 0 0 1px rgb(124 108 255 / 0.28), 0 0 18px rgb(124 108 255 / 0.24);
 
   /* ---- Tahapan sinyal (state machine) ---- */
   --lr-stage-quiet: var(--lr-text-2);
@@ -101,6 +146,10 @@
   --lr-dur-fast: 120ms;
   --lr-dur: 180ms;
   --lr-dur-slow: 280ms;
+  --lr-dur-page: 420ms;
+  --lr-dur-ambient: 2400ms;
+  --lr-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --lr-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* ---- Tata letak ---- */
   --lr-sidebar-w: 232px;
@@ -110,6 +159,8 @@
   --lr-row-h: 34px;
   --lr-row-h-compact: 28px;
 
+  --lr-z-bg: 0;
+  --lr-z-app: 1;
   --lr-z-sticky: 10;
   --lr-z-nav: 20;
   --lr-z-overlay: 40;
@@ -121,6 +172,38 @@
     --lr-dur-fast: 0ms;
     --lr-dur: 0ms;
     --lr-dur-slow: 0ms;
+    --lr-dur-page: 0ms;
+    --lr-dur-ambient: 0ms;
+  }
+}
+
+/* Pengguna mematikan "Animasi latar" (app.js menulis data-motion pada <html>):
+   durasi transisi UI tetap pendek, animasi dekoratif dimatikan (lihat base.css). */
+:root[data-motion="off"],
+:root[data-motion="reduced"] {
+  --lr-dur-page: 0ms;
+  --lr-dur-ambient: 0ms;
+}
+
+/* Tanpa dukungan backdrop-filter: kaca dibuat lebih pekat agar teks tetap terbaca di atas animasi. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --lr-glass: rgb(8 12 21 / 0.88);
+    --lr-glass-soft: rgb(8 12 21 / 0.88);
+    --lr-glass-bg: rgb(9 13 22 / 0.86);
+  }
+}
+
+/* Pengguna meminta transparansi dikurangi: panel opak. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --lr-glass: #0b111b;
+    --lr-glass-strong: #080d16;
+    --lr-glass-soft: #111925;
+    --lr-glass-bg: #0b111b;
+    --lr-glass-bg-strong: #080d16;
+    --lr-glass-input: #05070d;
+    --lr-neural-scrim: #05070d;
   }
 }
 
