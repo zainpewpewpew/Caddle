@@ -1,4 +1,25 @@
 // Router berbasis hash: #/overview, #/screener, ...
+// Query opsional setelah path (#/symbol?s=BTCUSDT&tf=15m) tidak ikut dicocokkan ke route; view membacanya
+// lewat hashQuery(). Pindah query pada route yang sama tetap memicu hashchange → view dirender ulang.
+
+/**
+ * Memisahkan hash menjadi path route dan query-nya.
+ * @param {string} hash contoh '#/symbol?s=BTCUSDT&tf=15m'
+ * @returns {{ path: string, query: URLSearchParams }}
+ */
+export function splitHash(hash) {
+  const raw = String(hash ?? '').replace(/^#/, '');
+  const mark = raw.indexOf('?');
+  return {
+    path: mark === -1 ? raw : raw.slice(0, mark),
+    query: new URLSearchParams(mark === -1 ? '' : raw.slice(mark + 1)),
+  };
+}
+
+/** Query dari hash saat ini (default: window.location.hash). Nilai tetap harus divalidasi pemanggil. */
+export function hashQuery(hash = window.location.hash) {
+  return splitHash(hash).query;
+}
 
 /**
  * Menerjemahkan hash menjadi route. Hash kosong → fallback; path tak dikenal → fallback.
@@ -9,7 +30,7 @@
  */
 export function resolveRoute(hash, routes, fallback) {
   if (hash && !hash.startsWith('#/')) return null;
-  const path = hash.replace(/^#/, '') || fallback;
+  const path = splitHash(hash).path || fallback;
   return routes.find((r) => r.path === path) ?? routes.find((r) => r.path === fallback);
 }
 

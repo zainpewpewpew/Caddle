@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
@@ -6,6 +8,7 @@ import Fastify from 'fastify';
 
 import { authRoutes } from '../api/authRoutes.js';
 import { healthRoutes } from '../api/healthRoutes.js';
+import { marketRoutes } from '../api/marketRoutes.js';
 import { settingsRoutes } from '../api/settingsRoutes.js';
 import { signalRoutes } from '../api/signalRoutes.js';
 import { systemRoutes } from '../api/systemRoutes.js';
@@ -22,6 +25,10 @@ import { WORKER_SCRIPT_PATH, WorkerSupervisorError, createWorkerSupervisor } fro
 
 const FRONTEND_ROOT = fileURLToPath(new URL('../../frontend/', import.meta.url));
 const SESSION_PURGE_INTERVAL_MS = 15 * 60_000;
+// Library grafik (TradingView Lightweight Charts, Apache-2.0 — lihat THIRD_PARTY_NOTICES.md). Hanya SATU file build
+// standalone produksi yang disajikan di path tetap; direktori node_modules tidak pernah dibuka untuk umum.
+const CHART_VENDOR_DIR = path.join(path.dirname(createRequire(import.meta.url).resolve('lightweight-charts/package.json')), 'dist');
+const CHART_VENDOR_FILE = 'lightweight-charts.standalone.production.js';
 
 /**
  * Merakit aplikasi Fastify. Seluruh dependensi diinjeksi agar dapat diuji tanpa jaringan.
@@ -138,6 +145,7 @@ export async function buildApp({
   });
   await app.register(workerRoutes, { supervisor, enabled: config.workerControl, audit: repos.audit, clock });
   await app.register(signalRoutes, { signals: repos.signals, candles: repos.candles });
+  await app.register(marketRoutes, { candles: repos.candles });
 
   // Frontend statis. index.html hanya disajikan lewat route '/' yang memeriksa sesi.
   await app.register(fastifyStatic, {
@@ -147,6 +155,11 @@ export async function buildApp({
     dotfiles: 'deny',
     allowedPath: (pathName) => pathName !== '/index.html',
   });
+
+  // File vendor grafik: publik seperti aset statis lain (kode open-source, tanpa data), header cache & tipe konten
+  // sama dengan handler statis (@fastify/static). Dimuat malas oleh frontend/js/lib/chart.js, tidak oleh login.
+  app.get('/vendor/lightweight-charts.js', { config: { public: true } }, async (request, reply) => (
+    reply.sendFile(CHART_VENDOR_FILE, CHART_VENDOR_DIR)));
 
   app.get('/', { config: { public: true } }, async (request, reply) => {
     if (!request.auth) return reply.redirect('/login.html', 302);
