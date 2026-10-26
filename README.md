@@ -114,6 +114,10 @@ Selain kandidat **LONG** (struktur bullish), worker yang sama memindai kandidat 
 
 Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
 
+## Insider / Smart Money Radar (baca saja)
+
+- Menu **Smart Money** (Radar, Wallet Discovery, Watchlist & Alerts) menunjukkan token yang sedang dibeli **lewat swap** oleh beberapa wallet on-chain berkualitas yang saling independen, dengan bukti tx, flag risiko, dan tautan ke LONG Scanner (chip **SM ×N**) bila kontraknya cocok persis dengan pasar Binance. Hanya alamat publik — tidak pernah meminta seed phrase/private key; skor bukan probabilitas. Data live gratis aktif otomatis setelah `ETHERSCAN_API_KEY` dan kunci Binance **read-only** diisi di `.env`. Panduan lengkap: [docs/16](docs/16-panduan-smart-money.md). Perintah: `npm run smart-money:check` (cek koneksi & izin kunci), `npm run smart-money:sync` (sinkron sekali; `-- --loop` berulang), `npm run smart-money:evaluate` (evaluasi historis tanpa look-ahead).
+
 ## Perintah
 
 | Perintah | Fungsi |
