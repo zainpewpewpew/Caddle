@@ -161,17 +161,27 @@ export function computeFeatures(candles) {
 
 /**
  * Struktur higher-low dalam `window` candle terakhir.
- * Bila swing low terkonfirmasi terbaru berada di jendela dan close masih di atasnya (struktur
- * belum patah): anchor = swing low itu (dasar invalidasi), higherLows = jumlah higher low
- * berurutan, startIndex/startPrice = swing low pertama rantai tersebut (awal struktur, dasar
- * earlyScore; boleh berada di luar jendela). Selain itu: anchor = awal = low terendah jendela,
- * higherLows = 0.
+ * Bila swing low terkonfirmasi terbaru berada di jendela, close masih di atasnya, dan TIDAK ada
+ * low candle sesudahnya yang menembus swing low itu (struktur belum patah): anchor = swing low itu
+ * (dasar invalidasi), higherLows = jumlah higher low berurutan, startIndex/startPrice = swing low
+ * pertama rantai tersebut (awal struktur, dasar earlyScore; boleh berada di luar jendela).
+ * Selain itu: anchor = awal = low terendah jendela, higherLows = 0.
+ *
+ * Penembusan hanya mungkin terjadi pada `right` candle terakhir (lower low yang belum
+ * terkonfirmasi sebagai swing): low lebih rendah di indeks lebih awal pasti sudah menjadi swing
+ * low terkonfirmasi tersendiri. Tanpa pemeriksaan ini sinyal bisa terbit dengan level invalidasi
+ * yang SUDAH ditembus wick candle terakhir, dan chart menampilkan lower low padahal pola
+ * mengklaim higher low masih utuh.
  */
 export function analyzeStructure(candles, features, window) {
   const { last, close, swingLows } = features;
   const from = Math.max(0, last - window + 1);
   const lastLow = swingLows.at(-1);
-  if (lastLow && lastLow.index >= from && close > lastLow.price) {
+  const intact = (low) => {
+    for (let i = low.index + 1; i <= last; i += 1) if (candles[i].low < low.price) return false;
+    return close > low.price;
+  };
+  if (lastLow && lastLow.index >= from && intact(lastLow)) {
     const chain = trailingHigherLows(swingLows);
     const startLow = swingLows[swingLows.length - 1 - chain];
     return {
