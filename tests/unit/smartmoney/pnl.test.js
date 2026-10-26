@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { tokenKey } from '../../../backend/smartmoney/contracts.js';
-import { STALE_PRICE_MS, computeWalletPnl } from '../../../backend/smartmoney/pnl.js';
+import { ROUND_TRIP_DUST_RATIO, STALE_PRICE_MS, computeWalletPnl } from '../../../backend/smartmoney/pnl.js';
 
 const addr = (c) => `0x${c.repeat(40)}`;
 const W = addr('1');
@@ -97,7 +97,7 @@ describe('pnl.computeWalletPnl — FIFO', () => {
     expect(pos(mixed, K_PEPE)).toMatchObject({ realizedPnlUsd: 100, unknownCostSoldQty: 100, completeness: 'PARTIAL' });
     expect(mixed.summary.completenessRatio).toBe(0.5);
     expect(mixed.summary.completeness).toBe('PARTIAL');
-    expect(mixed.summary.notes.join(' ')).toMatch(/50% kuantitas jual/);
+    expect(mixed.summary.notes.join(' ')).toMatch(/50% nilai jual \(USD\)/);
   });
 
   it('UNIT-SM-PNL-005 airdrop dijual: dilaporkan terpisah (airdropRealizedUsd), bukan realized trading', () => {
@@ -256,5 +256,127 @@ describe('pnl.computeWalletPnl — FIFO', () => {
     const snapshot = structuredClone(acts);
     computeWalletPnl(acts, { now: NOW });
     expect(acts).toEqual(snapshot);
+  });
+});
+
+describe('pnl.computeWalletPnl — round trip tingkat posisi, kelengkapan USD, urutan dalam detik yang sama', () => {
+  const D = 24 * H;
+  const MEME = addr('7');
+  const BIG = addr('8');
+  const K_MEME = tokenKey('ethereum', MEME);
+
+  it('UNIT-SM-PNL-019 potongan lot FIFO ≠ trade: 10 beli kecil + 1 jual = 1 round trip; 1 beli + 10 jual parsial = 1 round trip', () => {
+    const scaleIn = [];
+    for (let i = 0; i < 10; i += 1) scaleIn.push(act('SWAP_BUY', PEPE, 100, 100, T0 + i * 60_000));
+    scaleIn.push(act('SWAP_SELL', PEPE, 1000, 10_000, T0 + 5 * D));
+    const a = computeWalletPnl(scaleIn, { now: NOW + 10 * D });
+    expect(a.closedTrades).toHaveLength(10);
+    expect(a.roundTrips).toHaveLength(1);
+    expect(a.roundTrips[0]).toMatchObject({
+      tokenKey: K_PEPE, openAt: T0, closeAt: T0 + 5 * D, qty: 1000, costUsd: 1000, proceedsUsd: 10_000, pnlUsd: 9000,
+      returnPct: 900, fragments: 10, sellCount: 1, closedFlat: true,
+    });
+    // lama pegang berbobot biaya: rata-rata (5 hari − i menit)
+    expect(a.roundTrips[0].holdMs).toBeCloseTo(5 * D - 4.5 * 60_000, 6);
+    expect(a.summary).toMatchObject({ closedTradesCount: 10, roundTripsCount: 1 });
+
+    const scaleOut = [act('SWAP_BUY', PEPE, 1000, 1000, T0)];
+    for (let i = 0; i < 10; i += 1) scaleOut.push(act('SWAP_SELL', PEPE, 100, 150, T0 + D + i * 60_000));
+    const b = computeWalletPnl(scaleOut, { now: NOW + 10 * D });
+    expect(b.closedTrades).toHaveLength(10);
+    expect(b.roundTrips).toEqual([expect.objectContaining({ costUsd: 1000, proceedsUsd: 1500, returnPct: 50, sellCount: 10, closedFlat: true })]);
+  });
+
+  it('UNIT-SM-PNL-020 round trip: posisi belum datar → per transaksi jual; masuk lagi setelah datar → round trip baru; sisa debu digabung', () => {
+    const open = computeWalletPnl([
+      act('SWAP_BUY', PEPE, 1000, 1000, T0),
+      act('SWAP_SELL', PEPE, 300, 600, T0 + D),
+      act('SWAP_SELL', PEPE, 300, 300, T0 + 2 * D),
+    ], { now: NOW + 10 * D });
+    expect(open.roundTrips.map((r) => [r.closeAt, r.returnPct, r.closedFlat, r.sellCount])).toEqual([
+      [T0 + D, 100, false, 1],
+      [T0 + 2 * D, 0, false, 1],
+    ]);
+    const reentry = computeWalletPnl([
+      act('SWAP_BUY', PEPE, 100, 100, T0),
+      act('SWAP_SELL', PEPE, 100, 120, T0 + D),
+      act('SWAP_BUY', PEPE, 100, 100, T0 + 2 * D),
+      act('SWAP_SELL', PEPE, 100, 80, T0 + 3 * D),
+    ], { now: NOW + 10 * D });
+    expect(reentry.roundTrips.map((r) => r.pnlUsd)).toEqual([20, -20]);
+    // jual 99,5 % → episode ditutup (sisa ≤ 1 % puncak); jual sisa debu belakangan tidak menambah round trip
+    expect(ROUND_TRIP_DUST_RATIO).toBe(0.01);
+    const dust = computeWalletPnl([
+      act('SWAP_BUY', PEPE, 1000, 1000, T0),
+      act('SWAP_SELL', PEPE, 995, 1990, T0 + D),
+      act('SWAP_SELL', PEPE, 5, 50, T0 + 9 * D),
+    ], { now: NOW + 10 * D });
+    expect(dust.closedTrades).toHaveLength(2);
+    expect(dust.roundTrips).toHaveLength(1);
+    expect(dust.roundTrips[0]).toMatchObject({ closeAt: T0 + D, qty: 1000, costUsd: 1000, proceedsUsd: 2040, pnlUsd: 1040, sellCount: 2, closedFlat: true });
+    // posisi dipindah keluar seluruhnya tanpa realisasi → tidak ada round trip
+    const moved = computeWalletPnl([act('SWAP_BUY', PEPE, 100, 100, T0), act('TRANSFER_OUT', PEPE, 100, null, T0 + D)], { now: NOW });
+    expect(moved.roundTrips).toEqual([]);
+  });
+
+  it('UNIT-SM-PNL-021 completenessRatio berbobot USD — kuantitas tidak dijumlahkan lintas token', () => {
+    // A: $100k token berbiaya tidak diketahui dijual + round trip $500 pada 1e9 unit token murah → hampir semua tidak lengkap.
+    const a = computeWalletPnl([
+      act('CEX_WITHDRAWAL', BIG, 100, null, T0),
+      act('SWAP_SELL', BIG, 100, 100_000, T0 + D),
+      act('SWAP_BUY', MEME, 1e9, 500, T0 + 2 * D),
+      act('SWAP_SELL', MEME, 1e9, 900, T0 + 3 * D),
+    ], { now: NOW + 10 * D });
+    expect(a.summary.completenessRatio).toBeCloseTo(900 / 100_900, 12);
+    expect(a.summary.completenessBasis).toBe('USD');
+    // B (kebalikan): round trip $100k lengkap + 1e9 unit token transfer masuk dijual $5 → hampir lengkap.
+    const b = computeWalletPnl([
+      act('SWAP_BUY', BIG, 100, 50_000, T0),
+      act('SWAP_SELL', BIG, 100, 100_000, T0 + D),
+      act('TRANSFER_IN', MEME, 1e9, null, T0 + 2 * D),
+      act('SWAP_SELL', MEME, 1e9, 5, T0 + 3 * D),
+    ], { now: NOW + 10 * D });
+    expect(b.summary.completenessRatio).toBeCloseTo(100_000 / 100_005, 12);
+    // penjualan tanpa nilai USD → rata-rata rasio per token (bukan Σ kuantitas lintas token)
+    const c = computeWalletPnl([
+      act('SWAP_BUY', BIG, 100, 50_000, T0),
+      act('SWAP_SELL', BIG, 100, null, T0 + D),
+      act('SWAP_BUY', MEME, 1e9, 500, T0 + 2 * D),
+      act('SWAP_SELL', MEME, 1e9, 900, T0 + 3 * D),
+    ], { now: NOW + 10 * D });
+    expect(c.summary).toMatchObject({ completenessRatio: 0.5, completenessBasis: 'TOKEN_AVERAGE' });
+    expect(c.summary.notes.join(' ')).toMatch(/rata-rata per token/);
+    expect(computeWalletPnl([act('SWAP_BUY', MEME, 1, 1, T0)], { now: NOW }).summary).toMatchObject({ completenessRatio: 1, completenessBasis: 'NONE' });
+    expect(pos(c, K_MEME).realizedPnlUsd).toBe(400);
+  });
+
+  it('UNIT-SM-PNL-022 beli & jual di detik yang sama: urut blockNumber/logIndex, tanpa itu MASUK sebelum KELUAR (bukan teks txHash)', () => {
+    const t = T0 + H;
+    // id jual (0x00…) < id beli (0xff…) — urutan teks id akan memproses jual lebih dulu (oversold palsu).
+    const buy = { ...act('SWAP_BUY', PEPE, 100, 100, t, { n: 999_999 }), id: `ethereum:0x${'f'.repeat(64)}:${W}:${PEPE}` };
+    const sell = { ...act('SWAP_SELL', PEPE, 100, 130, t, { n: 0 }), id: `ethereum:0x${'0'.repeat(64)}:${W}:${PEPE}` };
+    const noBlock = computeWalletPnl([sell, buy], { now: NOW });
+    expect(pos(noBlock, K_PEPE)).toMatchObject({ qtyHeld: 0, realizedPnlUsd: 30, unknownCostSoldQty: 0 });
+    expect(noBlock.summary.completenessRatio).toBe(1);
+    // urutan on-chain diketahui (blok & logIndex) → diikuti, walau jual dulu (histori terpotong yang sebenarnya)
+    const sellFirst = computeWalletPnl([
+      { ...buy, blockNumber: 50, logIndex: 9 },
+      { ...sell, blockNumber: 50, logIndex: 2 },
+    ], { now: NOW });
+    expect(pos(sellFirst, K_PEPE)).toMatchObject({ qtyHeld: 100, unknownCostSoldQty: 100, realizedPnlUsd: 0 });
+    const byBlock = computeWalletPnl([{ ...buy, blockNumber: 49, logIndex: 9 }, { ...sell, blockNumber: 50, logIndex: 2 }], { now: NOW });
+    expect(pos(byBlock, K_PEPE).realizedPnlUsd).toBe(30);
+    // logIndex sintetis (≥ 1e15) tidak dipakai sebagai urutan → kembali ke MASUK sebelum KELUAR
+    const synthetic = computeWalletPnl([
+      { ...buy, blockNumber: 50, logIndex: 1e15 + 9 },
+      { ...sell, blockNumber: 50, logIndex: 2 },
+    ], { now: NOW });
+    expect(pos(synthetic, K_PEPE).realizedPnlUsd).toBe(30);
+    // sebagian tanpa blockNumber → seluruh kelompok memakai aturan arah; hasil tidak bergantung urutan masukan
+    const third = { ...act('SWAP_SELL', PEPE, 50, 60, t, { n: 5 }), blockNumber: 50, logIndex: 1 };
+    const mixedA = computeWalletPnl([{ ...buy, blockNumber: 50, logIndex: 9 }, sell, third], { now: NOW });
+    const mixedB = computeWalletPnl([third, sell, { ...buy, blockNumber: 50, logIndex: 9 }], { now: NOW });
+    expect(mixedB).toEqual(mixedA);
+    expect(pos(mixedA, K_PEPE).knownCostQty).toBe(0);
   });
 });

@@ -119,4 +119,21 @@ describe('linkToScreener', () => {
     expect(failed).toEqual([PATTERN_LABELS.SA]);
     expect(signalPatterns({})).toEqual([]);
   });
+
+  it('UNIT-SM-SCR-007 radar EXITING/DISTRIBUTING tidak pernah TINGGI/SEDANG: dibatasi RENDAH dengan alasan', () => {
+    const signals = [signalRow({ symbol: '1000PEPEUSDT', timeframe: '1h', tier: 'A' })];
+    const link = (t) => linkToScreener([t], { matches: matchesFor([t]), activeSignals: signals })[0].screener;
+    expect(link(radarToken(PEPE_ADDR, 85)).relevance).toBe('TINGGI'); // kontrol: ACCUMULATING
+    const exiting = link({ ...radarToken(PEPE_ADDR, 85), state: 'EXITING' });
+    expect(exiting.relevance).toBe('RENDAH');
+    expect(exiting.relevanceReason).toBe('Status radar EXITING (wallet berkualitas keluar dari posisi) — relevansi dibatasi RENDAH '
+      + 'walau ada keyakinan 85 dan sinyal LONG tier A (1h)');
+    const distributing = link({ ...radarToken(PEPE_ADDR, 30), state: 'DISTRIBUTING' });
+    expect(distributing.relevance).toBe('RENDAH');
+    expect(distributing.relevanceReason).toMatch(/^Status radar DISTRIBUTING .* dibatasi RENDAH walau ada sinyal LONG tier A \(1h\)$/);
+    expect(link({ ...radarToken(PEPE_ADDR, 85), state: 'MIXED' }).relevance).toBe('TINGGI');
+    // tidak MATCHED tetap TIDAK_TERHUBUNG
+    const fake = { ...radarToken(FAKE_ADDR, 85), state: 'EXITING' };
+    expect(linkToScreener([fake], { matches: new Map(), activeSignals: signals })[0].screener.relevance).toBe('TIDAK_TERHUBUNG');
+  });
 });

@@ -2,31 +2,64 @@
 // `clusters.js`). Fungsi murni: tanpa I/O, tanpa waktu sistem. Hasilnya dipakai radar agar banyak wallet milik
 // satu pihak tidak dihitung sebagai banyak pembeli independen.
 //
+// ─── Wallet yang tidak ikut penautan ─────────────────────────────────────────────────────────────────
+// Kandidat dengan `flags` (WalletFlag[], aditif) yang mengecualikan (walletFlags.isExcluded: CEX, MARKET_MAKER, BOT,
+// MEV, CONTRACT, DEX_INFRA ber-severity HIGH), ATAU penanda BOT/MEV dengan severity apa pun, ATAU `excluded: true`,
+// tidak ikut penautan sama sekali — bukan anggota tautan dan bukan "jembatan": tidak menjadi pihak transfer langsung
+// atau kontrak perantaranya, tidak dihitung sebagai pendana bersama atau alamat deposit bersama, dan pembeliannya
+// tidak dihitung ko-trading. Wallet tersebut tetap muncul sebagai klaster beranggota satu.
+//
 // ─── Tepi (union-find) ───────────────────────────────────────────────────────────────────────────────
 // DIRECT_TRANSFER  transfer langsung antar-kandidat (RawTransfer from/to keduanya kandidat, atau aktivitas
 //                  TRANSFER_IN/TRANSFER_OUT dengan counterparty kandidat). Diabaikan bila salah satu pihak,
 //                  `txMeta.toContract`, atau label lawan aktivitas berkategori cex/cex_deposit/bridge.
 // COMMON_FUNDER    pendana pertama yang sama: transfer token native PERTAMA yang masuk ke wallet (dari
-//                  `transfers`, jika tidak dari aktivitas IN bertoken native). Pendana berlabel cex/cex_deposit/
-//                  bridge diabaikan — penarikan exchange/bridge bukan sinyal pemilik yang sama. Pendana
-//                  ZERO_ADDRESS juga diabaikan.
+//                  `transfers`, jika tidak dari aktivitas IN bertoken native; hasil swap bukan pendanaan). Wallet TIDAK
+//                  mendapat tautan ini bila pendana pertamanya:
+//                  - ZERO_ADDRESS, atau wallet itu sendiri;
+//                  - berlabel infrastruktur/layanan (dari `labels` atau `counterpartyLabel`): cex, cex_deposit, bridge,
+//                    dex_router, dex_pool, contract, lp_token, airdrop_distributor, mev_bot, market_maker;
+//                  - kontrak aset quote (WETH/stablecoin — mis. unwrap WETH mengirim ETH dari kontrak WETH);
+//                  - kandidat yang tidak ikut penautan (lihat di atas);
+//                  - aktivitas CEX_WITHDRAWAL/BRIDGE_IN, atau transfer ber-`txMeta.providerCategory` bridge/deposit/withdraw;
+//                  - "fan-out" > maxFunderFanOut (default 10): alamat yang pernah mengirim token native (bukan swap) ke
+//                    lebih dari N wallet kandidat berbeda adalah layanan (faucet, refuel, distributor), bukan pemilik.
 // SHARED_DEPOSIT   mengirim ke alamat deposit exchange yang sama (label `cex_deposit`; alamat deposit bersifat per
 //                  pengguna, hot wallet `cex` TIDAK dipakai).
 // CO_TRADING       kedua wallet SWAP_BUY token yang sama dalam ≤ 60 dtk, pada ≥ 3 token berbeda (aset quote diabaikan).
+//                  Aturan hub (coTradeHubFilter, default aktif): wallet yang ko-trading dengan ≥ 2 mitra yang TIDAK saling
+//                  terkait (tanpa ko-trading di antara keduanya dan tidak satu klaster menurut tiga tepi di atas) adalah
+//                  hub — front-runner, copy-trader, atau bot yang belum ditandai. Semua tautan ko-trading hub dibuang agar
+//                  wallet yang tidak berhubungan tidak tergabung transitif lewat satu wallet. Konsekuensi yang disengaja:
+//                  rantai ko-trading tak lengkap (A–B dan B–C tanpa A–C, tanpa bukti lain) tidak digabung — ko-trading
+//                  adalah bukti terlemah, sehingga ragu-ragu → tidak digabung.
 //
 // Alamat EVM dibandingkan huruf kecil; alamat Solana peka huruf besar/kecil (apa adanya).
 // `id` klaster = `chain:alamat-terkecil` (perbandingan kode karakter, bukan locale) → deterministik.
 
 import { ZERO_ADDRESS, isEvmChain, isQuoteAsset, NATIVE_TOKEN } from './contracts.js';
+import { isExcluded } from './walletFlags.js';
 
 export const LINK_TYPES = Object.freeze(['DIRECT_TRANSFER', 'COMMON_FUNDER', 'SHARED_DEPOSIT', 'CO_TRADING']);
 
 export const DEFAULT_CLUSTER_PARAMS = Object.freeze({
   coTradeWindowMs: 60_000,
   coTradeMinTokens: 3,
+  /** Pendana yang mengirim token native ke > N wallet kandidat berbeda = layanan, bukan pemilik. */
+  maxFunderFanOut: 10,
+  /** Buang tautan ko-trading milik wallet hub (mitra-mitranya tidak saling terkait). */
+  coTradeHubFilter: true,
 });
 
 const EXCHANGE_OR_BRIDGE = new Set(['cex', 'cex_deposit', 'bridge']);
+/** Kategori label infrastruktur/layanan: dana dari alamat ini bukan sinyal pemilik yang sama. */
+const INFRA_FUNDER_CATEGORIES = new Set([
+  'cex', 'cex_deposit', 'bridge', 'dex_router', 'dex_pool', 'contract', 'lp_token', 'airdrop_distributor', 'mev_bot',
+  'market_maker',
+]);
+const SERVICE_PROVIDER_CATEGORIES = new Set(['bridge', 'deposit', 'withdraw']);
+/** Penanda yang membuat wallet tidak ikut penautan pada severity apa pun (selain isExcluded). */
+const UNLINKABLE_FLAG_CODES = new Set(['BOT', 'MEV']);
 
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -49,6 +82,13 @@ function labelOf(labels, chain, address) {
 function hasCategory(labels, chain, address, categories) {
   const list = labelOf(labels, chain, address);
   return Boolean(list && list.some((l) => categories.has(l.category)));
+}
+
+/** True bila kandidat tidak boleh ikut penautan (dikecualikan, BOT/MEV, atau `excluded: true`). */
+function isUnlinkable(w) {
+  if (w?.excluded === true) return true;
+  const flags = Array.isArray(w?.flags) ? w.flags : [];
+  return isExcluded(flags) || flags.some((f) => f && UNLINKABLE_FLAG_CODES.has(f.code));
 }
 
 class UnionFind {
@@ -80,8 +120,9 @@ class UnionFind {
 
 /**
  * Tautkan wallet kandidat menjadi klaster.
- * @param {{ chain: string, wallets: Array<{ address: string, activities?: object[], transfers?: object[] }>,
- *   labels?: Map<string, object>|object[] }} input
+ * @param {{ chain: string, wallets: Array<{ address: string, activities?: object[], transfers?: object[],
+ *   flags?: object[], excluded?: boolean }>, labels?: Map<string, object>|object[] }} input `flags`/`excluded`
+ *   (aditif): kandidat yang dikecualikan atau ditandai BOT/MEV tidak ikut penautan (lihat header).
  * @param {Partial<typeof DEFAULT_CLUSTER_PARAMS>} [params]
  * @returns {{ clusters: Array<{ id: string, members: string[], reasons: object[] }>, clusterOf: Map<string, string>,
  *   links: Array<{ type: string, a: string, b: string, evidence: object }> }}
@@ -92,14 +133,20 @@ export function linkWallets({ chain, wallets = [], labels } = {}, params = {}) {
   for (const w of wallets) {
     const addr = canon(chain, w?.address);
     if (!addr) continue;
-    const entry = byAddr.get(addr) ?? { address: addr, activities: [], transfers: [] };
-    if (Array.isArray(w.activities)) entry.activities.push(...w.activities);
-    if (Array.isArray(w.transfers)) entry.transfers.push(...w.transfers);
+    const entry = byAddr.get(addr) ?? { address: addr, activities: [], transfers: [], unlinkable: false };
+    // Loop, bukan push(...arr): spread argumen gagal (RangeError) di atas ~125 ribu elemen.
+    if (Array.isArray(w.activities)) for (const a of w.activities) entry.activities.push(a);
+    if (Array.isArray(w.transfers)) for (const t of w.transfers) entry.transfers.push(t);
+    if (isUnlinkable(w)) entry.unlinkable = true;
     byAddr.set(addr, entry);
   }
   const addresses = [...byAddr.keys()].sort(cmp);
   const candidates = new Set(addresses);
+  const linkable = new Set(addresses.filter((a) => !byAddr.get(a).unlinkable));
+  /** Kandidat yang tidak ikut penautan (juga tidak boleh menjadi jembatan antar-wallet lain). */
+  const isBlockedCandidate = (a) => candidates.has(a) && !linkable.has(a);
   const isExBridge = (a) => hasCategory(labels, chain, a, EXCHANGE_OR_BRIDGE);
+  const isInfra = (a) => hasCategory(labels, chain, a, INFRA_FUNDER_CATEGORIES);
   const linkMap = new Map();
 
   const addLink = (type, x, y, evidence) => {
@@ -115,16 +162,16 @@ export function linkWallets({ chain, wallets = [], labels } = {}, params = {}) {
     for (const t of w.transfers) {
       const from = canon(chain, t?.from);
       const to = canon(chain, t?.to);
-      if (!candidates.has(from) || !candidates.has(to) || from === to) continue;
+      if (!linkable.has(from) || !linkable.has(to) || from === to) continue;
       const via = canon(chain, t.txMeta?.toContract ?? null);
-      if (isExBridge(from) || isExBridge(to) || (via && via !== to && isExBridge(via))) continue;
+      if (isExBridge(from) || isExBridge(to) || (via && via !== to && (isExBridge(via) || isBlockedCandidate(via)))) continue;
       if (t.txMeta?.providerCategory === 'bridge' || t.txMeta?.providerCategory === 'deposit' || t.txMeta?.providerCategory === 'withdraw') continue;
       direct.push({ from, to, txHash: t.txHash ?? null, token: t.token?.address ?? null, at: t.blockTime ?? null });
     }
     for (const a of w.activities) {
       if (a?.type !== 'TRANSFER_IN' && a?.type !== 'TRANSFER_OUT') continue;
       const other = canon(chain, a.counterparty);
-      if (!candidates.has(other) || other === w.address) continue;
+      if (!linkable.has(w.address) || !linkable.has(other) || other === w.address) continue;
       if (a.counterpartyLabel && EXCHANGE_OR_BRIDGE.has(a.counterpartyLabel.category)) continue;
       if (isExBridge(other) || isExBridge(w.address)) continue;
       const [from, to] = a.type === 'TRANSFER_OUT' ? [w.address, other] : [other, w.address];
@@ -136,30 +183,46 @@ export function linkWallets({ chain, wallets = [], labels } = {}, params = {}) {
 
   // 2. Pendana pertama yang sama.
   const funderOf = new Map();
+  const fundedBy = new Map(); // pendana → Set<kandidat yang pernah menerima token native (bukan swap) darinya>
+  const noteFunding = (funder, wallet) => {
+    if (!funder) return;
+    const set = fundedBy.get(funder) ?? new Set();
+    set.add(wallet);
+    fundedBy.set(funder, set);
+  };
   for (const w of byAddr.values()) {
     const ins = [];
     for (const t of w.transfers) {
       if (canon(chain, t?.to) !== w.address || t.token?.address !== NATIVE_TOKEN || !isNum(t.blockTime)) continue;
-      ins.push({ funder: canon(chain, t.from), txHash: t.txHash ?? null, at: t.blockTime, idx: Number.isInteger(t.logIndex) ? t.logIndex : 0 });
+      const funder = canon(chain, t.from);
+      noteFunding(funder, w.address);
+      ins.push({
+        funder, txHash: t.txHash ?? null, at: t.blockTime, idx: Number.isInteger(t.logIndex) ? t.logIndex : 0,
+        service: SERVICE_PROVIDER_CATEGORIES.has(t.txMeta?.providerCategory),
+      });
     }
     for (const a of w.activities) {
       if (a?.direction !== 'IN' || a.token?.address !== NATIVE_TOKEN || !isNum(a.blockTime) || !a.counterparty) continue;
       if (a.type === 'SWAP_BUY' || a.type === 'SWAP_SELL') continue;
-      ins.push({ funder: canon(chain, a.counterparty), txHash: a.txHash ?? null, at: a.blockTime, idx: 0, act: a });
+      const funder = canon(chain, a.counterparty);
+      noteFunding(funder, w.address);
+      ins.push({ funder, txHash: a.txHash ?? null, at: a.blockTime, idx: 0, act: a });
     }
-    if (ins.length === 0) continue;
+    if (ins.length === 0 || !linkable.has(w.address)) continue;
     ins.sort((x, y) => x.at - y.at || cmp(String(x.txHash), String(y.txHash)) || x.idx - y.idx);
     const first = ins[0];
     if (!first.funder || first.funder === ZERO_ADDRESS || first.funder === w.address) continue;
-    if (isExBridge(first.funder)) continue;
+    if (first.service || isInfra(first.funder) || isQuoteAsset(chain, first.funder) || isBlockedCandidate(first.funder)) continue;
     if (first.act && (first.act.type === 'CEX_WITHDRAWAL' || first.act.type === 'BRIDGE_IN'
-      || (first.act.counterpartyLabel && EXCHANGE_OR_BRIDGE.has(first.act.counterpartyLabel.category)))) continue;
+      || (first.act.counterpartyLabel && INFRA_FUNDER_CATEGORIES.has(first.act.counterpartyLabel.category)))) continue;
     funderOf.set(w.address, first);
   }
   const byFunder = new Map();
   for (const addr of addresses) {
     const f = funderOf.get(addr);
     if (!f) continue;
+    // Fan-out besar → layanan (faucet/refuel/distributor), bukan pemilik bersama.
+    if ((fundedBy.get(f.funder)?.size ?? 0) > p.maxFunderFanOut) continue;
     const list = byFunder.get(f.funder) ?? [];
     list.push({ addr, ...f });
     byFunder.set(f.funder, list);
@@ -182,14 +245,16 @@ export function linkWallets({ chain, wallets = [], labels } = {}, params = {}) {
   };
   const isDepositAddr = (a) => hasCategory(labels, chain, a, new Set(['cex_deposit']));
   for (const w of byAddr.values()) {
+    if (!linkable.has(w.address)) continue;
     for (const t of w.transfers) {
       if (canon(chain, t?.from) !== w.address) continue;
       const to = canon(chain, t.to);
-      if (to && isDepositAddr(to)) noteDeposit(w.address, to, t.txHash ?? null, t.blockTime ?? null);
+      if (to && !isBlockedCandidate(to) && isDepositAddr(to)) noteDeposit(w.address, to, t.txHash ?? null, t.blockTime ?? null);
     }
     for (const a of w.activities) {
       if (a?.direction !== 'OUT' || !a.counterparty) continue;
       const to = canon(chain, a.counterparty);
+      if (isBlockedCandidate(to)) continue;
       if (a.counterpartyLabel?.category === 'cex_deposit' || isDepositAddr(to)) noteDeposit(w.address, to, a.txHash ?? null, a.blockTime ?? null);
     }
   }
@@ -202,9 +267,10 @@ export function linkWallets({ chain, wallets = [], labels } = {}, params = {}) {
     }
   }
 
-  // 4. Ko-trading.
+  // 4. Ko-trading (hanya kandidat yang ikut penautan — tidak pernah lewat wallet yang dikecualikan).
   const buysByToken = new Map();
   for (const w of byAddr.values()) {
+    if (!linkable.has(w.address)) continue;
     for (const a of w.activities) {
       if (a?.type !== 'SWAP_BUY' || !isNum(a.blockTime) || !a.token?.address) continue;
       const tok = canon(chain, a.token.address);
@@ -228,10 +294,12 @@ export function linkWallets({ chain, wallets = [], labels } = {}, params = {}) {
       }
     }
   }
-  for (const key of [...pairTokens.keys()].sort(cmp)) {
+  const coPairs = [...pairTokens.keys()].sort(cmp).filter((key) => pairTokens.get(key).size >= p.coTradeMinTokens);
+  const hubs = p.coTradeHubFilter === false ? new Set() : coTradeHubs(coPairs, linkMap, addresses);
+  for (const key of coPairs) {
     const m = pairTokens.get(key);
-    if (m.size < p.coTradeMinTokens) continue;
     const [a, b] = key.split('|');
+    if (hubs.has(a) || hubs.has(b)) continue;
     const items = [...m.values()].sort((x, y) => cmp(x.token, y.token));
     addLink('CO_TRADING', a, b, {
       token: items[0].token, at: items[0].at, txHash: items[0].txHashes[0],
@@ -261,6 +329,39 @@ export function linkWallets({ chain, wallets = [], labels } = {}, params = {}) {
   }
   clusters.sort((x, y) => cmp(x.id, y.id));
   return { clusters, clusterOf, links };
+}
+
+/**
+ * Wallet hub ko-trading: punya ≥ 2 mitra ko-trading yang tidak saling terkait — tanpa ko-trading di antara keduanya
+ * dan tidak satu klaster menurut tepi kuat (DIRECT_TRANSFER/COMMON_FUNDER/SHARED_DEPOSIT) yang sudah ditemukan.
+ * Dihitung sekali atas graf awal (tidak iteratif) → deterministik.
+ * @param {string[]} coPairs kunci `a|b` pasangan yang memenuhi syarat ko-trading
+ * @param {Map<string, { a: string, b: string }>} strongLinks tautan non-ko-trading
+ * @param {string[]} addresses semua kandidat
+ * @returns {Set<string>}
+ */
+function coTradeHubs(coPairs, strongLinks, addresses) {
+  const strong = new UnionFind(addresses);
+  for (const l of strongLinks.values()) strong.union(l.a, l.b);
+  const partners = new Map();
+  const edges = new Set(coPairs);
+  for (const key of coPairs) {
+    const [a, b] = key.split('|');
+    if (!partners.has(a)) partners.set(a, []);
+    if (!partners.has(b)) partners.set(b, []);
+    partners.get(a).push(b);
+    partners.get(b).push(a);
+  }
+  const related = (x, y) => edges.has(cmp(x, y) <= 0 ? `${x}|${y}` : `${y}|${x}`) || strong.find(x) === strong.find(y);
+  const hasUnrelatedPair = (list) => {
+    for (let i = 0; i < list.length; i += 1) {
+      for (let j = i + 1; j < list.length; j += 1) if (!related(list[i], list[j])) return true;
+    }
+    return false;
+  };
+  const hubs = new Set();
+  for (const [w, list] of partners) if (list.length >= 2 && hasUnrelatedPair(list)) hubs.add(w);
+  return hubs;
 }
 
 /**

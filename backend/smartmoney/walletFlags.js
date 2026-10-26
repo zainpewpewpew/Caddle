@@ -20,7 +20,9 @@
 //                  HIGH bila realized PnL airdrop (pnl.summary.airdropRealizedUsd) juga mendominasi PnL trading;
 //                  MEDIUM bila PnL trading swap tetap dominan atau PnL tidak tersedia.
 //   LOW_HISTORY    riwayat < 30 hari atau < 10 trade tertutup (MEDIUM — tidak mengecualikan, mengurangi skor).
-//   INCOMPLETE_PNL pnl.summary.completenessRatio < 0,5 (MEDIUM).
+//                  Trade tertutup = round trip posisi (`pnl.roundTrips`, lihat pnl.js), BUKAN potongan lot FIFO
+//                  `pnl.closedTrades` (10 beli kecil + 1 jual = 1 trade). PnlResult tanpa `roundTrips` → closedTrades.
+//   INCOMPLETE_PNL pnl.summary.completenessRatio < 0,5 (MEDIUM). Rasio berbobot nilai USD hasil jual (pnl.js).
 //
 // Catatan kontrak: signature menambah argumen opsional `pnl` (PnlResult) dan `now`, karena AIRDROP_FARMER,
 // LOW_HISTORY, dan INCOMPLETE_PNL membutuhkan data PnL. Tanpa `pnl`, jumlah trade tertutup didekati dengan jumlah
@@ -270,6 +272,15 @@ function detectAirdropFarmer(activities, pnl, p) {
   };
 }
 
+/** Jumlah trade tertutup tingkat posisi: roundTrips → closedTrades (PnlResult lama) → ringkasan → jumlah SWAP_SELL. */
+function closedTradeCount(pnl, acts) {
+  if (Array.isArray(pnl?.roundTrips)) return pnl.roundTrips.length;
+  if (Array.isArray(pnl?.closedTrades)) return pnl.closedTrades.length;
+  if (isNum(pnl?.summary?.roundTripsCount)) return pnl.summary.roundTripsCount;
+  if (isNum(pnl?.summary?.closedTradesCount)) return pnl.summary.closedTradesCount;
+  return acts.filter((a) => a.type === 'SWAP_SELL').length;
+}
+
 /**
  * Deteksi penanda risiko wallet dari label bersumber dan heuristik aktivitas.
  * @param {{ chain: string, address: string, activities?: object[], labels?: Map<string, object>|object[],
@@ -312,14 +323,16 @@ export function detectWalletFlags({ chain, address, activities = [], labels, txT
   const farmer = detectAirdropFarmer(acts, pnl, p);
   if (farmer) flags.push(farmer);
 
-  // LOW_HISTORY
-  const times = acts.map((a) => a.blockTime);
-  const first = times.length ? Math.min(...times) : null;
-  const end = isNum(now) ? now : times.length ? Math.max(...times) : null;
+  // LOW_HISTORY — loop, bukan Math.min/max(...arr): spread argumen gagal (RangeError) di atas ~125 ribu elemen.
+  let first = null;
+  let last = null;
+  for (const a of acts) {
+    if (first === null || a.blockTime < first) first = a.blockTime;
+    if (last === null || a.blockTime > last) last = a.blockTime;
+  }
+  const end = isNum(now) ? now : last;
   const historyDays = first !== null && end !== null ? (end - first) / DAY_MS : 0;
-  const closedTrades = Array.isArray(pnl?.closedTrades)
-    ? pnl.closedTrades.length
-    : isNum(pnl?.summary?.closedTradesCount) ? pnl.summary.closedTradesCount : acts.filter((a) => a.type === 'SWAP_SELL').length;
+  const closedTrades = closedTradeCount(pnl, acts);
   if (historyDays < p.lowHistoryDays || closedTrades < p.lowHistoryClosedTrades) {
     const parts = [];
     if (historyDays < p.lowHistoryDays) parts.push(`riwayat ${round(historyDays, 1)} hari (< ${p.lowHistoryDays})`);
@@ -336,7 +349,9 @@ export function detectWalletFlags({ chain, address, activities = [], labels, txT
   if (isNum(ratio) && ratio < p.incompletePnlRatio) {
     flags.push({
       code: 'INCOMPLETE_PNL', severity: 'MEDIUM', source: 'heuristik',
-      reason: `PnL tidak lengkap: hanya ${Math.round(ratio * 100)}% jumlah jual yang harga belinya diketahui`,
+      reason: pnl.summary.completenessBasis === 'TOKEN_AVERAGE'
+        ? `PnL tidak lengkap: rata-rata per token hanya ${Math.round(ratio * 100)}% kuantitas jual yang harga belinya diketahui`
+        : `PnL tidak lengkap: hanya ${Math.round(ratio * 100)}% nilai jual (USD) yang harga belinya diketahui`,
       evidence: { completenessRatio: ratio, completeness: pnl.summary.completeness ?? null },
     });
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { linkWallets, linkedFlag } from '../../../backend/smartmoney/clusters.js';
-import { T0, addr, labelMap, makeActivity, makeLabel, tokenAddr, txh } from '../../helpers/smartMoneyBuilders.js';
+import { DEFAULT_CLUSTER_PARAMS, linkWallets, linkedFlag } from '../../../backend/smartmoney/clusters.js';
+import { DAY, T0, addr, labelMap, makeActivity, makeLabel, tokenAddr, txh } from '../../helpers/smartMoneyBuilders.js';
 
 const A = addr(0xa1);
 const B = addr(0xb2);
@@ -231,6 +231,135 @@ describe('clusters — transitif, deterministik, Solana', () => {
   it('UNIT-SM-CL-033 input kosong & wallet tanpa tautan', () => {
     expect(linkWallets({ chain: 'ethereum', wallets: [] })).toEqual({ clusters: [], clusterOf: new Map(), links: [] });
     const r = linkWallets({ chain: 'ethereum', wallets: [{ address: A }] });
+    expect(r.clusters).toEqual([{ id: `ethereum:${A}`, members: [A], reasons: [] }]);
+  });
+});
+
+describe('clusters — pencegahan penggabungan berlebih', () => {
+  const SVC = addr(0x5e5);
+  const flag = (code, severity = 'HIGH') => ({ code, severity, reason: 'uji', evidence: {}, source: 'heuristik' });
+  /** A & B sama-sama menerima token native pertama dari `funder`. */
+  const fundBoth = (funder, labels = new Map(), extra = {}) => linkWallets({
+    chain: 'ethereum', labels,
+    wallets: [
+      { address: A, transfers: [nativeTransfer({ from: funder, to: A, at: T0, n: 1, ...extra })] },
+      { address: B, transfers: [nativeTransfer({ from: funder, to: B, at: T0 + 10, n: 2, ...extra })] },
+    ],
+  });
+
+  it('UNIT-SM-CL-034 pendana berlabel infrastruktur/layanan atau kontrak aset quote (unwrap WETH) → TIDAK tertaut; EOA biasa tetap', () => {
+    for (const category of ['dex_router', 'dex_pool', 'contract', 'lp_token', 'airdrop_distributor', 'mev_bot', 'market_maker', 'bridge', 'cex', 'cex_deposit']) {
+      expect(fundBoth(SVC, labelMap([makeLabel({ address: SVC, category, label: 'Layanan' })])).links, category).toEqual([]);
+    }
+    expect(fundBoth('0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2').links).toEqual([]); // kontrak WETH (unwrap)
+    expect(fundBoth(SVC, new Map(), { providerCategory: 'withdraw' }).links).toEqual([]); // penarikan exchange
+    // label dari counterpartyLabel aktivitas (probe p5: kontrak layanan berlabel dex_router)
+    const viaAct = (w, n) => makeActivity({
+      wallet: w, type: 'TRANSFER_IN', token: 'native', symbol: 'ETH', counterparty: SVC, usdValue: null, txHash: txh(n, 5),
+      blockTime: T0 + n, counterpartyLabel: { label: 'Router/Service', category: 'dex_router', source: 'manual' },
+    });
+    const p5 = linkWallets({ chain: 'ethereum', wallets: [A, B, C].map((w, i) => ({ address: w, activities: [viaAct(w, i + 1)] })) });
+    expect(p5.links).toEqual([]);
+    expect(p5.clusters).toHaveLength(3);
+    // kontrol: EOA tanpa label dan label non-infrastruktur (fund) tetap pendana bersama
+    expect(fundBoth(SVC).links.map((l) => l.type)).toEqual(['COMMON_FUNDER']);
+    expect(fundBoth(SVC, labelMap([makeLabel({ address: SVC, category: 'fund', label: 'Dana' })])).links.map((l) => l.type)).toEqual(['COMMON_FUNDER']);
+  });
+
+  it('UNIT-SM-CL-035 pendana dengan fan-out > 10 wallet kandidat = layanan → tidak menautkan; ≤ 10 tetap; parameter dapat diubah', () => {
+    expect(DEFAULT_CLUSTER_PARAMS.maxFunderFanOut).toBe(10);
+    const FAUCET = addr(0xfa0);
+    const fundedBy = (k) => Array.from({ length: k }, (_, i) => ({
+      address: addr(0x1000 + i), transfers: [nativeTransfer({ from: FAUCET, to: addr(0x1000 + i), at: T0 + i, n: 100 + i })],
+    }));
+    const eleven = linkWallets({ chain: 'ethereum', wallets: fundedBy(11) });
+    expect(eleven.links).toEqual([]);
+    expect(eleven.clusters).toHaveLength(11);
+    const ten = linkWallets({ chain: 'ethereum', wallets: fundedBy(10) });
+    expect(ten.links).toHaveLength(9);
+    expect(ten.clusters).toHaveLength(1);
+    expect(linkWallets({ chain: 'ethereum', wallets: fundedBy(11) }, { maxFunderFanOut: 20 }).clusters).toHaveLength(1);
+    // fan-out menghitung SEMUA kiriman native ke kandidat, bukan hanya pendanaan pertama
+    const others = Array.from({ length: 9 }, (_, i) => ({
+      address: addr(0x2000 + i),
+      transfers: [
+        nativeTransfer({ from: addr(0x3000 + i), to: addr(0x2000 + i), at: T0, n: 200 + i }),
+        nativeTransfer({ from: FAUCET, to: addr(0x2000 + i), at: T0 + DAY, n: 300 + i }),
+      ],
+    }));
+    const pair = [A, B].map((w, i) => ({ address: w, transfers: [nativeTransfer({ from: FAUCET, to: w, at: T0 + i, n: 400 + i })] }));
+    expect(linkWallets({ chain: 'ethereum', wallets: [...pair, ...others] }).links).toEqual([]);
+  });
+
+  it('UNIT-SM-CL-036 wallet dikecualikan atau ditandai BOT/MEV tidak ikut penautan — bukan anggota, bukan jembatan', () => {
+    // (a) transfer langsung dengan wallet BOT (severity MEDIUM pun) → tidak tertaut, tetap klaster sendiri
+    const direct = linkWallets({ chain: 'ethereum', wallets: [
+      { address: A, transfers: [nativeTransfer({ from: A, to: B, at: T0, n: 1 })] },
+      { address: B, flags: [flag('BOT', 'MEDIUM')] },
+    ] });
+    expect(direct.links).toEqual([]);
+    expect(direct.clusters.map((c) => c.members)).toEqual([[A], [B]]);
+    // (b) kandidat dikecualikan (CEX HIGH) sebagai pendana A & C → tidak menjembatani
+    const funder = linkWallets({ chain: 'ethereum', wallets: [
+      { address: B, flags: [flag('CEX')] },
+      { address: A, transfers: [nativeTransfer({ from: B, to: A, at: T0, n: 1 })] },
+      { address: C, transfers: [nativeTransfer({ from: B, to: C, at: T0 + 5, n: 2 })] },
+    ] });
+    expect(funder.links).toEqual([]);
+    // (c) ko-trading dengan wallet MEV → tidak tertaut
+    const toks = [tokenAddr(1), tokenAddr(2), tokenAddr(3)];
+    const buys = (wallet, offset, base) => toks.map((tok, i) => buy(wallet, tok, T0 + i * 3_600_000 + offset, base + i));
+    const co = linkWallets({ chain: 'ethereum', wallets: [{ address: D, activities: buys(D, 0, 1), flags: [flag('MEV')] }, { address: A, activities: buys(A, 20_000, 10) }] });
+    expect(co.links).toEqual([]);
+    // (d) excluded: true juga; penanda ringan (LOW_HISTORY, CEX MEDIUM) tidak menghalangi
+    const excluded = linkWallets({ chain: 'ethereum', wallets: [{ address: A, excluded: true, transfers: [nativeTransfer({ from: A, to: B, at: T0, n: 1 })] }, { address: B }] });
+    expect(excluded.links).toEqual([]);
+    const mild = linkWallets({ chain: 'ethereum', wallets: [
+      { address: A, flags: [flag('LOW_HISTORY', 'MEDIUM'), flag('CEX', 'MEDIUM')], transfers: [nativeTransfer({ from: A, to: B, at: T0, n: 1 })] },
+      { address: B },
+    ] });
+    expect(mild.links.map((l) => l.type)).toEqual(['DIRECT_TRANSFER']);
+  });
+
+  it('UNIT-SM-CL-037 hub ko-trading (front-runner) tidak menggabungkan wallet yang tidak berhubungan; segitiga lengkap tetap', () => {
+    const tok = (k) => tokenAddr(10 + k);
+    const buys = (wallet, ks, offset, base) => ks.map((k, i) => buy(wallet, tok(k), T0 + k * 3_600_000 + offset, base + i));
+    // D membeli 12 dtk sebelum A (token 0–2) dan sebelum C (token 3–5); A & C tidak pernah membeli token yang sama.
+    const hubWallets = [
+      { address: D, activities: [...buys(D, [0, 1, 2], 0, 1), ...buys(D, [3, 4, 5], 0, 10)] },
+      { address: A, activities: buys(A, [0, 1, 2], 12_000, 20) },
+      { address: C, activities: buys(C, [3, 4, 5], 12_000, 30) },
+    ];
+    const hub = linkWallets({ chain: 'ethereum', wallets: hubWallets });
+    expect(hub.links).toEqual([]);
+    expect(hub.clusters).toHaveLength(3);
+    expect(DEFAULT_CLUSTER_PARAMS.coTradeHubFilter).toBe(true);
+    expect(linkWallets({ chain: 'ethereum', wallets: hubWallets }, { coTradeHubFilter: false }).clusters).toHaveLength(1); // perilaku lama
+
+    // Segitiga ko-trading lengkap (A, B, C membeli bersama) → satu klaster, 3 tautan.
+    const trio = linkWallets({ chain: 'ethereum', wallets: [
+      { address: A, activities: buys(A, [0, 1, 2], 0, 1) },
+      { address: B, activities: buys(B, [0, 1, 2], 10_000, 10) },
+      { address: C, activities: buys(C, [0, 1, 2], 20_000, 20) },
+    ] });
+    expect(trio.links.map((l) => l.type)).toEqual(['CO_TRADING', 'CO_TRADING', 'CO_TRADING']);
+    expect(trio.clusters).toHaveLength(1);
+
+    // Mitra yang terkait bukti kuat (pendana pertama sama) → D bukan hub; tautan ko-trading dipertahankan.
+    const closed = linkWallets({ chain: 'ethereum', wallets: [
+      hubWallets[0],
+      { ...hubWallets[1], transfers: [nativeTransfer({ from: FUNDER, to: A, at: T0 - DAY, n: 1 })] },
+      { ...hubWallets[2], transfers: [nativeTransfer({ from: FUNDER, to: C, at: T0 - DAY, n: 2 })] },
+    ] });
+    expect(closed.clusters).toHaveLength(1);
+    expect(closed.links.map((l) => l.type)).toEqual(['COMMON_FUNDER', 'CO_TRADING', 'CO_TRADING']);
+  });
+
+  it('UNIT-SM-CL-038 wallet dengan > 125 ribu aktivitas/transfer tidak melempar RangeError', () => {
+    const N = 200_000;
+    const acts = Array.from({ length: N }, (_, i) => ({ type: 'SWAP_SELL', direction: 'OUT', blockTime: T0 + i, token: { address: tokenAddr(1) }, txHash: `h${i}` }));
+    const transfers = Array.from({ length: N }, (_, i) => ({ from: A, to: addr(0x7000), token: { address: tokenAddr(1) }, blockTime: T0 + i, txHash: `t${i}` }));
+    const r = linkWallets({ chain: 'ethereum', wallets: [{ address: A, activities: acts, transfers }] });
     expect(r.clusters).toEqual([{ id: `ethereum:${A}`, members: [A], reasons: [] }]);
   });
 });
