@@ -318,8 +318,12 @@ describe('deriveMarketInputs', () => {
     expect(m.rvol).toBeCloseTo(3, 9);
     expect(m.resistance).toBeCloseTo(101.7, 9); // swing high 101.5 (+0.2) di indeks 17, terkonfirmasi di indeks 19
     // Swing high yang belum terkonfirmasi tidak dipakai.
-    const early = deriveMarketInputs(cs.slice(0, 9));
+    // Candle evaluasi (indeks 7, high 104.2) sendiri tidak ikut menggeser level.
+    const early = deriveMarketInputs(cs.slice(0, 8));
     expect(early.resistance).toBeCloseTo(103.2, 9);
+    // Indeks 8: swing high 104.2 (indeks 7) belum terkonfirmasi, tetapi harga sudah diperdagangkan di 104.2 sejak swing
+    // 103.2 → level berjalan 104.2 (103.2 sudah ditembus, bukan resistance lagi).
+    expect(deriveMarketInputs(cs.slice(0, 9)).resistance).toBeCloseTo(104.2, 9);
     expect(deriveMarketInputs(cs.slice(0, 3))).toEqual({ atr: null, rvol: null, resistance: null });
   });
 });
