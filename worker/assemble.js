@@ -37,6 +37,7 @@ const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {}
  *   onAnalysed?: (e: { symbol: string, timeframe: string, candles: object[], reason: string, result: object }) => void,
  *   onMonitoringStopped?: (e: { symbol: string, timeframes: string[]|null, reason: string, at: number }) => void,
  *   heartbeatOwner?: { pid: number, host: string } | null,
+ *   analysisParams?: object,
  * }} deps
  *   clock: jam LOKAL host (default Date.now). Jam server (`serverClock.now` = jam lokal + offset terukur)
  *   dibuat di sini dan menjadi jam repositori, klien REST, dan scanner (`clock`); jam lokal menjadi
@@ -47,6 +48,8 @@ const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {}
  *   directions: arah yang dipindai (default kedua arah: LONG = SA/PVA, SHORT = SD/PVD). Satu worker, satu
  *   pipeline; setiap candle tertutup dievaluasi untuk semua arah dengan candle & fitur bersama.
  *   heartbeatOwner: identitas proses untuk heartbeat (worker/index.js mengisi pid + hostname; default null).
+ *   analysisParams: `params` pipeline analisis (override pola/sinyal/konfluensi + `calibration` hasil backtest;
+ *   lihat analyzeDirectionsAt). Default {} = parameter bawaan v3 (gerbang tier EARLY minEarlyTier 'B').
  * @returns {{ serverClock: object, repos: object, rest: object, pipeline: object, scanner: object,
  *   getSettings: () => Promise<object> }}
  *   Pemanggil wajib `await pipeline.ensureDefinitions()` sebelum `scanner.start()`.
@@ -69,6 +72,7 @@ export function assembleWorker({
   onMonitoringStopped,
   heartbeatOwner = null,
   directions = DIRECTIONS,
+  analysisParams = {},
 } = {}) {
   if (!db) throw new TypeError('db wajib ada');
 
@@ -101,6 +105,7 @@ export function assembleWorker({
     logger,
     onAlert,
     directions,
+    params: analysisParams,
   });
 
   scanner = createScanner({
