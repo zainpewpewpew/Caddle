@@ -18,6 +18,7 @@ import { setImmediate as nextMacrotask } from 'node:timers/promises';
 import { analyzeAt } from '../analysis/pipeline.js';
 import { labelTrade } from '../backtest/labeler.js';
 import { aggregateCandles, createRng } from '../backtest/synthetic.js';
+import { atr } from '../indicators/index.js';
 import { HIGHER_TIMEFRAMES } from '../market/contracts.js';
 import { ALERT_STATES, LONG_PATTERN_STATES } from '../signals/params.js';
 import { OPEN_STATUSES, REVERSAL_LOOKBACK, REVERSAL_TIMEFRAMES, STAGE_RANK, TERMINAL_STATUSES } from './constants.js';
@@ -34,6 +35,11 @@ export const REPLAY_DEFAULTS = Object.freeze({
 });
 export const OLD_SCANNER_MODES = Object.freeze(['full', 'fast']);
 export const REPLAY_OUTCOMES = Object.freeze(['SUCCESS', 'FAIL', 'TIMEOUT', 'OPEN']);
+/**
+ * Basis pembanding tanpa keterampilan (basis empiris): `samples` indeks acak per kandidat berlabel pada seri yang sama,
+ * dilabeli dengan aturan triple barrier yang sama; ATR di indeks acak = ATR Wilder `atrPeriod` (= atrPeriod bawaan mesin).
+ */
+export const BASELINE_DEFAULTS = Object.freeze({ samples: 3, atrPeriod: 14 });
 /** Alasan kandidat tidak dapat dilabeli (dikecualikan dari rasio hasil, tetap dihitung sebagai kandidat). */
 export const LABEL_ERRORS = Object.freeze(['NO_ENTRY_PRICE', 'NO_ATR', 'NO_INVALIDATION', 'LABEL_FAILED']);
 
@@ -200,6 +206,11 @@ function openCandidate({ index, candle, evaluation, next, event, ordinal, symbol
     leadVsBreakout: null,
     leadVsOld: null,
     leadVsOldAlert: null,
+    // Lead per peristiwa (sinyal lama terdekat ±horizon) & basis pembanding tanpa keterampilan — lihat nearestOldLead/shuffledBaseline.
+    leadVsOldNearest: null,
+    stopDistanceAtr: null,
+    baselineRandomWalk: null,
+    baselineShuffled: null,
   };
 }
 
@@ -278,6 +289,55 @@ export function breakoutLead(candles, candidate, horizonBars = REPLAY_DEFAULTS.h
 }
 
 /**
+ * Lead per peristiwa: indeks mulai sinyal lama (QUIET/EARLY_BULLISH) TERDEKAT dari deteksi dalam jendela ±horizonBars,
+ * dikurangi indeks deteksi (positif = Reversal Radar lebih awal); bila dua sinyal sama dekat, dipilih yang sesudah
+ * deteksi. null bila tidak ada sinyal lama dalam jendela. Berbeda dengan leadVsOld (sinyal lama PERTAMA seri) yang
+ * hanya bermakna pada seri satu-peristiwa (sintetis); pada data nyata multi-peristiwa pakai ukuran ini.
+ */
+export function nearestOldLead(signalIndexes, index, horizonBars = REPLAY_DEFAULTS.horizonBars) {
+  if (!Array.isArray(signalIndexes) || !Number.isInteger(index)) return null;
+  let best = null;
+  for (const s of signalIndexes) {
+    if (!Number.isInteger(s) || Math.abs(s - index) > horizonBars) continue;
+    const lead = s - index;
+    if (best === null || Math.abs(lead) < Math.abs(best) || (Math.abs(lead) === Math.abs(best) && lead > best)) best = lead;
+  }
+  return best;
+}
+
+/**
+ * Basis empiris tanpa keterampilan untuk satu kandidat berlabel: `samples` indeks acak berbeda (PRNG berbenih `seed`,
+ * deterministik) dalam [from, to] — from = warm-up, to = n − 1 − horizonBars agar label tidak OPEN — masing-masing
+ * dilabeli dengan aturan triple barrier yang SAMA (labelCandidate): entri = close indeks itu, target = targetAtr ×
+ * ATR(idx), stop = entri − stopDistanceAtr × ATR(idx) (jarak stop kandidat dalam ATR deteksi), ATR(idx) dari `atrSeries`
+ * (Wilder; hanya memakai candle ≤ idx). Sampel tanpa ATR/stop valid tetap dicatat (outcome null) tetapi tidak dihitung.
+ * @returns {{ k: number, n: number, indexes: number[], outcomes: Array<string|null> }} k = SUCCESS, n = berlabel
+ */
+export function shuffledBaseline(candles, {
+  stopDistanceAtr, atrSeries, from, to, seed, samples = BASELINE_DEFAULTS.samples,
+  horizonBars = REPLAY_DEFAULTS.horizonBars, targetAtr = REPLAY_DEFAULTS.targetAtr,
+} = {}) {
+  const out = { k: 0, n: 0, indexes: [], outcomes: [] };
+  if (!(stopDistanceAtr > 0) || !Array.isArray(candles) || !Array.isArray(atrSeries) || !Number.isInteger(from) || !Number.isInteger(to)) return out;
+  for (const idx of sampleIndexes(from, to, samples, seed)) {
+    const atrAt = atrSeries[idx];
+    const entry = candles[idx]?.close;
+    const stop = atrAt > 0 && entry > 0 ? entry - stopDistanceAtr * atrAt : null;
+    const label = stop > 0
+      ? labelCandidate(candles, { firstDetectedIndex: idx, firstDetectedPrice: entry, firstDetectedAtr: atrAt, invalidation: stop }, { horizonBars, targetAtr })
+      : null;
+    const outcome = label?.outcome ?? null;
+    out.indexes.push(idx);
+    out.outcomes.push(outcome);
+    if (outcome === 'SUCCESS' || outcome === 'FAIL' || outcome === 'TIMEOUT') {
+      out.n += 1;
+      if (outcome === 'SUCCESS') out.k += 1;
+    }
+  }
+  return out;
+}
+
+/**
  * Replay satu seri. Semua candle `candles` dianggap tertutup (isClosed true), urut naik; `higher` = HTF nyata bila
  * ada (dipotong closeTime ≤ t per candle), bila tidak diagregasi dari candle dasar. Mesin: `evaluate`/`transition`/
  * `resolveParams`/`requiredCandles` disuntikkan; yang tidak diberikan diambil dari ./index.js (lihat engineDeps).
@@ -292,9 +352,10 @@ export function breakoutLead(candles, candidate, horizonBars = REPLAY_DEFAULTS.h
  * }} input
  * @returns {Promise<{
  *   symbol: string, timeframe: string, bars: number, warmup: number, horizonBars: number, targetAtr: number, evaluations: number,
- *   candidates: object[], old: object, provisionalFree: true, counts: object, classifications: Record<string, number>,
- *   evaluationStages: Record<string, number>, evidenceCounts: Record<string, number>, anomalies: Record<string, number>, params: object,
- * }>}
+ *   candidates: object[], old: object, baseline: { samples: number, atrPeriod: number }, provisionalFree: true, counts: object,
+ *   classifications: Record<string, number>, evaluationStages: Record<string, number>, evidenceCounts: Record<string, number>,
+ *   anomalies: Record<string, number>, params: object,
+ * }>} kandidat juga membawa leadVsOldNearest, stopDistanceAtr, baselineRandomWalk, baselineShuffled (lihat openCandidate)
  */
 export async function replayReversalSeries({
   symbol, timeframe, candles, higher = {}, params = {}, liquidity,
@@ -332,6 +393,7 @@ export async function replayReversalSeries({
     enabled: oldEnabled, mode: oldEnabled ? oldMode : null, evaluations: 0, signals: 0, alerts: 0,
     firstSignalIndex: null, firstSignalTime: null, firstSignalState: null,
     firstAlertIndex: null, firstAlertTime: null, firstAlertState: null,
+    signalIndexes: [], // indeks mulai SEMUA sinyal lama (untuk lead per peristiwa pada seri multi-peristiwa)
   };
   let snapshot = null;
   let current = null;
@@ -418,6 +480,7 @@ export async function replayReversalSeries({
       const ev = r?.event ?? null;
       if (ev && ev.fromState === 'NO_PATTERN' && LONG_PATTERN_STATES.includes(ev.toState)) {
         old.signals += 1;
+        old.signalIndexes.push(i);
         if (old.firstSignalIndex === null) Object.assign(old, { firstSignalIndex: i, firstSignalTime: last.closeTime, firstSignalState: ev.toState });
       }
       if (ev && ALERT_STATES.includes(ev.toState)) {
@@ -430,12 +493,25 @@ export async function replayReversalSeries({
     if ((i - warmup) % yieldEvery === yieldEvery - 1) await yieldToEventLoop();
   }
 
+  // ATR Wilder untuk basis empiris dihitung sekali per seri (malas: hanya bila ada kandidat berlabel).
+  let atrCache = null;
+  const atrSeries = () => (atrCache ??= atr(candles, BASELINE_DEFAULTS.atrPeriod));
+  const baselineTo = candles.length - 1 - horizonBars;
   for (const c of candidates) {
     if (c.closeIndex === null) c.barsOpen = candles.length - 1 - c.firstDetectedIndex;
     Object.assign(c, labelCandidate(candles, c, { horizonBars, targetAtr }));
     c.leadVsBreakout = breakoutLead(candles, c, horizonBars);
     c.leadVsOld = old.firstSignalIndex === null ? null : old.firstSignalIndex - c.firstDetectedIndex;
     c.leadVsOldAlert = old.firstAlertIndex === null ? null : old.firstAlertIndex - c.firstDetectedIndex;
+    c.leadVsOldNearest = oldEnabled ? nearestOldLead(old.signalIndexes, c.firstDetectedIndex, horizonBars) : null;
+    // Jarak stop (ATR deteksi) = level yang benar-benar dipakai pelabelan (stopPrice); basis hanya untuk kandidat berlabel.
+    if (c.outcome !== null && c.stopPrice > 0) c.stopDistanceAtr = (c.firstDetectedPrice - c.stopPrice) / c.firstDetectedAtr;
+    if ((c.outcome === 'SUCCESS' || c.outcome === 'FAIL' || c.outcome === 'TIMEOUT') && c.stopDistanceAtr > 0) {
+      c.baselineRandomWalk = c.stopDistanceAtr / (targetAtr + c.stopDistanceAtr);
+      c.baselineShuffled = shuffledBaseline(candles, {
+        stopDistanceAtr: c.stopDistanceAtr, atrSeries: atrSeries(), from: warmup, to: baselineTo, seed: `${symbol}|${timeframe}|basis|${c.id}`, horizonBars, targetAtr,
+      });
+    }
   }
   const counts = {
     opened: candidates.length,
@@ -446,6 +522,7 @@ export async function replayReversalSeries({
   };
   return {
     symbol, timeframe, bars: candles.length, warmup, horizonBars, targetAtr, evaluations, candidates, old,
+    baseline: { samples: BASELINE_DEFAULTS.samples, atrPeriod: BASELINE_DEFAULTS.atrPeriod },
     provisionalFree: true, counts, classifications, evaluationStages, evidenceCounts, anomalies, params: resolved,
   };
 }

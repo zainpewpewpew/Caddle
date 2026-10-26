@@ -5,9 +5,10 @@
 import { describe, expect, it } from 'vitest';
 import { TIMEFRAME_MS } from '../../../backend/market/contracts.js';
 import { EVIDENCE_WEIGHTS } from '../../../backend/reversal/constants.js';
+import { atr } from '../../../backend/indicators/index.js';
 import {
-  LookaheadError, OLD_SCANNER_MODES, REPLAY_DEFAULTS, REPLAY_OUTCOMES, assertNoLookahead, breakoutLead, contextSeries, firstDifference,
-  htfCursor, labelCandidate, replayReversalSeries, replayReversalUniverse,
+  BASELINE_DEFAULTS, LookaheadError, OLD_SCANNER_MODES, REPLAY_DEFAULTS, REPLAY_OUTCOMES, assertNoLookahead, breakoutLead, contextSeries, firstDifference,
+  htfCursor, labelCandidate, nearestOldLead, replayReversalSeries, replayReversalUniverse, shuffledBaseline,
 } from '../../../backend/reversal/replay.js';
 import { scenarioUniverse, successfulReversal, uptrendContinuation, continuedDowntrend, brokenData } from '../../fixtures/candles/reversalScenarios.js';
 import { SYNTHETIC_START } from '../../fixtures/candles/synthetic.js';
@@ -295,5 +296,105 @@ describe('replayReversalSeries — mekanika', () => {
     expect(res.series.find((s) => s.timeframe === '1h').evaluations).toBe(0);
     await expect(replayReversalUniverse({ candles: null })).rejects.toThrow(TypeError);
     expect(successfulReversal(21)).toHaveLength(u[SYMBOL]['15m'].length);
+  });
+});
+
+describe('replayReversalSeries — lead per peristiwa & basis pembanding tanpa keterampilan', () => {
+  it('UNIT-RR-RP-001 nearestOldLead: sinyal lama terdekat ±horizon (seri → sesudah deteksi), old.signalIndexes & leadVsOldNearest di replay', async () => {
+    expect(nearestOldLead([], 10)).toBeNull();
+    expect(nearestOldLead(null, 10)).toBeNull();
+    expect(nearestOldLead([5, 30], 10, 48)).toBe(-5); // 5 lebih dekat daripada 30
+    expect(nearestOldLead([7, 13], 10, 48)).toBe(3); // sama dekat → yang sesudah deteksi (positif)
+    expect(nearestOldLead([100], 10, 48)).toBeNull(); // di luar jendela ±48
+    expect(nearestOldLead([58, 62], 10, 48)).toBe(48); // tepat di tepi jendela ikut; 62 tidak
+    // Dua sinyal lama (indeks 2 & 4) mengapit deteksi (indeks 3): leadVsOld memakai sinyal PERTAMA (−1), lead per peristiwa memilih
+    // yang sama dekat sesudah deteksi (+1). Tanpa pembanding lama → null.
+    const indexOf = (c) => Math.round((c.openTime - SYNTHETIC_START) / MS);
+    const oldAnalyze = ({ candlesByTimeframe, timeframe }) => {
+      const i = indexOf(candlesByTimeframe[timeframe].at(-1));
+      if (i === 2 || i === 4) return { next: { state: 'QUIET' }, event: { fromState: 'NO_PATTERN', toState: 'QUIET' }, alert: false };
+      return { next: { state: 'NO_PATTERN' }, event: null, alert: false };
+    };
+    const r = await replayReversalSeries({
+      symbol: 'HANDUSDT', timeframe: '15m', candles: candlesFromRows(handRows(Array(6).fill(flat))), warmupBars: 1, oldAnalyze, oldMode: 'fast', ...scripted(),
+    });
+    expect(r.old).toMatchObject({ signals: 2, signalIndexes: [2, 4], firstSignalIndex: 2 });
+    expect(r.candidates[0]).toMatchObject({ firstDetectedIndex: 3, leadVsOld: -1, leadVsOldNearest: 1 });
+    const narrow = await replayReversalSeries({
+      symbol: 'HANDUSDT', timeframe: '15m', candles: candlesFromRows(handRows(Array(6).fill(flat))), warmupBars: 1, oldMode: 'fast', ...scripted(),
+      oldAnalyze: ({ candlesByTimeframe, timeframe }) => (indexOf(candlesByTimeframe[timeframe].at(-1)) === 9
+        ? { next: { state: 'QUIET' }, event: { fromState: 'NO_PATTERN', toState: 'QUIET' }, alert: false }
+        : { next: { state: 'NO_PATTERN' }, event: null, alert: false }),
+      horizonBars: 4,
+    });
+    expect(narrow.candidates[0]).toMatchObject({ leadVsOld: 6, leadVsOldNearest: null }); // sinyal lama di luar ±4
+    const off = await runHand(Array(4).fill(flat), { oldScanner: false });
+    expect(off.candidates[0].leadVsOldNearest).toBeNull();
+    expect(off.old.signalIndexes).toEqual([]);
+  });
+
+  it('UNIT-RR-RP-002 jarak stop, basis random walk & basis empiris berbenih (aturan triple barrier yang sama, rentang warm-up..n−horizon)', async () => {
+    expect(BASELINE_DEFAULTS).toEqual({ samples: 3, atrPeriod: 14 });
+    // Kasus buatan tangan: entri 100, ATR 1, invalidasi 97 → s = 3 ATR, basis RW = 3/(2+3) = 0,6; seri terlalu pendek untuk basis empiris (n = 0).
+    const success = await runHand([{ o: 100, h: 101, l: 99.6, c: 100.4 }, { o: 100.4, h: 100.6, l: 98.5, c: 99 }, { o: 99, h: 102.2, l: 98.9, c: 102 }, flat, flat, flat, flat, flat]);
+    const s = success.candidates[0];
+    expect(s.outcome).toBe('SUCCESS');
+    expect(s.stopDistanceAtr).toBeCloseTo(3, 9);
+    expect(s.baselineRandomWalk).toBeCloseTo(0.6, 9);
+    expect(s.baselineShuffled).toEqual({ k: 0, n: 0, indexes: [], outcomes: [] });
+    expect(success.baseline).toEqual({ samples: 3, atrPeriod: 14 });
+    // OPEN → jarak stop ada, basis tidak dihitung; tanpa invalidasi → semuanya null.
+    const open = await runHand([flat, flat, flat]);
+    expect(open.candidates[0]).toMatchObject({ outcome: 'OPEN', stopDistanceAtr: 3, baselineRandomWalk: null, baselineShuffled: null });
+    const noStop = await runHand([flat, flat, flat], { engine: { levelsAt: () => ({ ...LEVELS, invalidation: null }) } });
+    expect(noStop.candidates[0]).toMatchObject({ outcome: null, stopDistanceAtr: null, baselineRandomWalk: null, baselineShuffled: null });
+
+    // shuffledBaseline langsung pada seri datar (TR = 1 → ATR14 = 1 sejak indeks 13): stop 0,25 ATR tersentuh candle berikutnya (FAIL semua),
+    // stop 0,6 ATR tidak tersentuh dan target tidak tercapai → TIMEOUT semua; indeks berbeda, urut, dalam [from, to], deterministik per benih.
+    const flatSeries = candlesFromRows(Array(64).fill(flat));
+    const atr14 = atr(flatSeries, 14);
+    const base = { atrSeries: atr14, from: 13, to: 63 - 4, horizonBars: 4, targetAtr: 2, seed: 'uji' };
+    const tight = shuffledBaseline(flatSeries, { ...base, stopDistanceAtr: 0.25 });
+    expect(tight).toMatchObject({ k: 0, n: 3, outcomes: ['FAIL', 'FAIL', 'FAIL'] });
+    expect(tight.indexes).toHaveLength(3);
+    expect(new Set(tight.indexes).size).toBe(3);
+    expect(tight.indexes).toEqual([...tight.indexes].sort((a, b) => a - b));
+    expect(tight.indexes.every((i) => i >= 13 && i <= 59)).toBe(true);
+    expect(shuffledBaseline(flatSeries, { ...base, stopDistanceAtr: 0.25 }).indexes).toEqual(tight.indexes);
+    expect(shuffledBaseline(flatSeries, { ...base, stopDistanceAtr: 0.25, seed: 'lain' }).indexes).not.toEqual(tight.indexes);
+    expect(shuffledBaseline(flatSeries, { ...base, stopDistanceAtr: 0.6 })).toMatchObject({ k: 0, n: 3, outcomes: ['TIMEOUT', 'TIMEOUT', 'TIMEOUT'] });
+    expect(shuffledBaseline(flatSeries, { ...base, stopDistanceAtr: 0.6, samples: 2 }).n).toBe(2);
+    // Indeks tanpa ATR (sebelum periode) → outcome null, tidak dihitung; jarak stop tidak valid / rentang kosong → kosong.
+    expect(shuffledBaseline(flatSeries, { ...base, stopDistanceAtr: 0.6, from: 0, to: 5 })).toMatchObject({ k: 0, n: 0, outcomes: [null, null, null] });
+    expect(shuffledBaseline(flatSeries, { ...base, stopDistanceAtr: 0 })).toEqual({ k: 0, n: 0, indexes: [], outcomes: [] });
+    expect(shuffledBaseline(flatSeries, { ...base, stopDistanceAtr: 1, from: 60, to: 59 })).toEqual({ k: 0, n: 0, indexes: [], outcomes: [] });
+
+    // Seri skenario dengan mesin palsu: tiap kandidat berlabel membawa basis yang dapat dihitung ulang dengan labelCandidate pada ATR14(idx).
+    const u = universeOf([21], '15m', ['successfulReversal']);
+    const input = seriesOf(u, SYMBOL, '15m');
+    const r = await withFake(input, { oldScanner: false });
+    const again = await withFake(input, { oldScanner: false });
+    const atrS = atr(input.candles, 14);
+    const labeled = r.candidates.filter((c) => ['SUCCESS', 'FAIL', 'TIMEOUT'].includes(c.outcome));
+    expect(labeled.length).toBeGreaterThan(0);
+    for (const c of labeled) {
+      expect(c.stopDistanceAtr).toBeCloseTo((c.firstDetectedPrice - c.stopPrice) / c.firstDetectedAtr, 9);
+      expect(c.baselineRandomWalk).toBeCloseTo(c.stopDistanceAtr / (2 + c.stopDistanceAtr), 9);
+      const b = c.baselineShuffled;
+      expect(b.indexes).toHaveLength(3);
+      expect(b.indexes.every((i) => i >= r.warmup && i <= input.candles.length - 1 - r.horizonBars)).toBe(true);
+      expect(again.candidates.find((x) => x.id === c.id).baselineShuffled).toEqual(b);
+      let k = 0;
+      let n = 0;
+      b.indexes.forEach((idx, j) => {
+        const entry = input.candles[idx].close;
+        const expected = labelCandidate(input.candles, { firstDetectedIndex: idx, firstDetectedPrice: entry, firstDetectedAtr: atrS[idx], invalidation: entry - c.stopDistanceAtr * atrS[idx] }, { horizonBars: r.horizonBars, targetAtr: r.targetAtr });
+        expect(b.outcomes[j]).toBe(expected.outcome);
+        if (['SUCCESS', 'FAIL', 'TIMEOUT'].includes(expected.outcome)) { n += 1; if (expected.outcome === 'SUCCESS') k += 1; }
+      });
+      expect(b).toMatchObject({ k, n });
+      expect(b.outcomes.includes('OPEN')).toBe(false);
+    }
+    for (const c of r.candidates.filter((x) => x.outcome === 'OPEN' || x.outcome === null)) expect(c.baselineShuffled).toBeNull();
   });
 });
