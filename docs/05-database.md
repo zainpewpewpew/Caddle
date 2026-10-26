@@ -102,6 +102,27 @@ Kursor dimajukan oleh `save()` (dalam transaksi yang sama dengan sinyal + event,
 
 **Usulan migrasi `006` (belum dibuat):** memindahkan `tracking` ke kolom sendiri (`last_candle_time`, `bars_in_state`, `peak_price`, `peak_state`) dengan indeks `(symbol_id, timeframe, last_candle_time)`, serta mengisi ulang dari `explanation_json`. Dibutuhkan sebelum M6 (backtest membaca MFE/peak dalam jumlah besar).
 
+## 6b. Insider / Smart Money Radar (`007_smart_money.sql`)
+
+Kontrak lengkap: `docs/15-kontrak-smart-money.md`. Semua tabel `STRICT`, ber-prefix `sm_`, timestamp INTEGER epoch ms, chain di-`CHECK` terhadap `CHAINS` (`contracts.js`). Fitur baca saja: hanya alamat publik, tidak ada kolom kunci privat. Seluruh SQL ada di `backend/smartmoney/repository.js` (`repos.smartMoney`). Alamat EVM disimpan huruf kecil; identitas token = `(chain, alamat)`, simbol hanya label. Kolom `is_simulated` menandai data fixture/demo (UI wajib menampilkan pita “DATA SIMULASI”); nilai USD `NULL` = tidak diketahui, tidak pernah diganti 0.
+
+| Tabel | Kunci & constraint penting |
+|---|---|
+| `sm_wallets` | PK `(chain, address)`; `first_seen_at`, `last_activity_at`, `discovered_via` (sumber penemuan pertama dipertahankan), `discovery_reason`, `is_simulated` |
+| `sm_labels` | PK `(chain, address, source, label)`; `source` wajib tidak kosong (label tanpa sumber ditolak); `category` ∈ `LABEL_CATEGORIES`; `confidence` 0..1 |
+| `sm_tokens` | PK `(chain, address)`; metadata tampilan (`symbol`, `name`, `decimals`) |
+| `sm_activities` | PK `id` = kunci dedupe Activity (`chain:tx:wallet:token`) → duplikat diabaikan (`INSERT OR IGNORE`); data terlambat hanya mengisi `usd_value` yang masih `NULL`. `type`/`direction`/`confidence` di-`CHECK`, `amount > 0`. Indeks `(chain, wallet, block_time)`, `(chain, token_address, block_time)`, `(block_time)` |
+| `sm_wallet_scores` | PK `(chain, address)`; skor 0..100, `eligible`, `style`, `cluster_id`, komponen/metrik/alasan/keterbatasan/flag/PnL sebagai JSON |
+| `sm_wallet_links` | PK `(chain, a, b, reason_type)` dengan `CHECK (a < b)`; bukti tautan JSON. Diganti per chain setiap run klaster |
+| `sm_binance_map` | PK `(chain, contract_address)`; `futures_symbol` + `multiplier ≥ 1` (mis. `1000PEPEUSDT` × 1000); `source` wajib |
+| `sm_watchlist` | PK `(user_id, kind, chain, address)`; `kind` ∈ `WALLET`/`TOKEN`; FK `users` `ON DELETE CASCADE` |
+| `sm_alerts` | `dedupe_key` UNIK (alert ganda dalam satu ember cooldown diabaikan); `kind`/`severity` di-`CHECK` |
+| `sm_alert_reads` | PK `(user_id, alert_id)`; status baca per pengguna; cascade dari `users` dan `sm_alerts` |
+| `sm_alert_prefs` | PK `user_id` (cascade); `prefs_json` |
+| `sm_provider_status` | PK `provider`; percobaan/sukses terakhir, `last_error_code` ∈ `PROVIDER_ERROR_CODES`, pesan ≤ 500 karakter tanpa kunci API, cakupan JSON |
+| `sm_sync_cursors` | PK `(provider, chain, address)`; `address = ''` untuk kursor tingkat chain |
+| `sm_evaluations` | Laporan evaluasi historis (`params_json`, `report_json`); yang terbaru dibaca `latestEvaluation()` |
+
 ## 7. Catatan presisi
 
 OHLCV disimpan `REAL` (float64). Binance mengirim angka sebagai string desimal; float64 memberikan ±15 digit signifikan, cukup untuk rasio indikator. `tick_size`/`step_size` disimpan sebagai `TEXT` untuk mempertahankan nilai persis. Ditinjau di M2: parser kline menolak angka non-finite dan string non-desimal; indikator hanya memakai rasio sehingga galat float64 jauh di bawah ambang kondisi pola.

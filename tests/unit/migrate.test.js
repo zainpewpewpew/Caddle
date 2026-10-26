@@ -6,7 +6,8 @@ import { openDatabase } from '../../backend/database/connection.js';
 import { MigrationError, migrate } from '../../backend/database/migrate.js';
 
 const REQUIRED_TABLES = ['users', 'sessions', 'symbols', 'candles', 'features', 'pattern_definitions', 'pattern_examples',
-  'signals', 'signal_events', 'backtest_runs', 'backtest_results', 'settings', 'audit_logs'];
+  'signals', 'signal_events', 'backtest_runs', 'backtest_results', 'settings', 'audit_logs',
+  'sm_wallets', 'sm_labels', 'sm_activities', 'sm_watchlist', 'sm_alerts', 'sm_alert_reads', 'sm_evaluations'];
 
 const tables = (db) => db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
 
@@ -20,7 +21,7 @@ describe('migrasi database', () => {
   it('UNIT-DB-001 seluruh entitas wajib dibuat', () => {
     const db = openDatabase(':memory:');
     const result = migrate(db);
-    expect(result.applied).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(result.applied).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(tables(db)).toEqual(expect.arrayContaining(REQUIRED_TABLES));
   });
 
