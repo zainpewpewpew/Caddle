@@ -3,8 +3,9 @@ import { openDatabase } from '../../../backend/database/connection.js';
 import { migrate } from '../../../backend/database/migrate.js';
 import { DEFAULT_ALERT_PREFS } from '../../../backend/smartmoney/alerts.js';
 import { matchToken } from '../../../backend/smartmoney/binanceMatch.js';
-import { EXCLUDING_FLAGS, QUOTE_ASSETS, tokenKey, walletKey } from '../../../backend/smartmoney/contracts.js';
+import { EXCLUDING_FLAGS, NATIVE_TOKEN, QUOTE_ASSETS, tokenKey, walletKey } from '../../../backend/smartmoney/contracts.js';
 import { enrichNativeUsd } from '../../../backend/smartmoney/nativePrices.js';
+import { COLLISION_LOG_INDEX_BASE } from '../../../backend/smartmoney/normalize.js';
 import { ProviderError } from '../../../backend/smartmoney/providers/errors.js';
 import { createFixtureProvider } from '../../../backend/smartmoney/providers/fixtureProvider.js';
 import { createProviderRegistry } from '../../../backend/smartmoney/providers/registry.js';
@@ -21,6 +22,9 @@ const E = SCENARIO.expectations;
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
+// Penyemaian skenario: peristiwa fixture berumur berjam-jam → jendela basi diperbesar HANYA di panggilan uji ini
+// (default produksi alerts.js 30 menit diuji tersendiri di EDGE-SM-SYNC-010).
+const SEED_TUNING = Object.freeze({ alertMaxEventAgeMs: DAY });
 
 function setup({ adapters, fixtureOptions = {}, config = { maxWalletsPerSync: 50 }, users = 0 } = {}) {
   const db = openDatabase(':memory:');
@@ -37,7 +41,7 @@ function setup({ adapters, fixtureOptions = {}, config = { maxWalletsPerSync: 50
   return {
     db, repo, fixture, registry, userIds,
     advance: (ms) => { t += ms; },
-    run: (extra = {}) => runSmartMoneySync({ repo, registry, clock, config, ...extra }),
+    run: (extra = {}) => runSmartMoneySync({ repo, registry, clock, config, ...extra, tuning: { ...SEED_TUNING, ...extra.tuning } }),
   };
 }
 
@@ -162,10 +166,74 @@ describe('sinkronisasi smart money (runSmartMoneySync)', () => {
     expect(after).toHaveLength(1);
     expect(after[0]).toMatchObject({ id: before[0].id, type: 'SWAP_BUY', direction: 'IN' });
     expect(after[0].usdValue).toBeGreaterThan(0);
-    // Pembelian yang baru diketahui memicu alert beli baru (data ≤ 24 jam).
+    // Pembelian yang baru diketahui memicu alert beli baru (data ≤ 24 jam, jendela basi penyemaian SEED_TUNING).
     const alerts = await repo.listAlerts({ userId: 1, limit: 1000 });
     expect(alerts.some((a) => a.kind === 'NEW_BUY' && a.wallet === SCENARIO.wallets.Q3
       && a.tokenKey === tokenKey('ethereum', E.tka.address))).toBe(true);
+  });
+
+  it('EDGE-SM-SYNC-010 peristiwa basi: maxEventAgeMs default (30 menit) melewati peristiwa lama; eventAt tersimpan', async () => {
+    expect(DEFAULT_SYNC_TUNING.alertMaxEventAgeMs).toBe(DEFAULT_ALERT_PREFS.maxEventAgeMs);
+    const strict = setup();
+    const s = await strict.run({ tuning: { alertMaxEventAgeMs: DEFAULT_ALERT_PREFS.maxEventAgeMs } });
+    expect(s.alertsSkipped.stale).toBeGreaterThan(0);
+    const fresh = await strict.repo.listAlerts({ userId: 1, limit: 1000 });
+    expect(fresh.every((a) => a.createdAt - a.eventAt <= DEFAULT_ALERT_PREFS.maxEventAgeMs)).toBe(true);
+    expect(fresh.some((a) => a.kind === 'MULTI_WALLET_BUY')).toBe(false); // pembelian TKA terakhir 2 jam lalu
+    // Penyemaian dengan jendela lebih besar → alert dibuat, waktu peristiwa tersimpan & dikembalikan.
+    const seeded = setup();
+    const s2 = await seeded.run();
+    expect(s2.alerts).toBeGreaterThan(0);
+    const alerts = await seeded.repo.listAlerts({ userId: 1, limit: 1000 });
+    expect(alerts.length).toBe(s2.alerts);
+    expect(alerts.every((a) => Number.isInteger(a.eventAt) && a.eventAt <= a.createdAt && a.createdAt - a.eventAt <= DAY)).toBe(true);
+    const multi = alerts.find((a) => a.kind === 'MULTI_WALLET_BUY' && a.tokenKey === tokenKey('ethereum', E.tka.address));
+    expect(multi.eventAt).toBe(SCENARIO.now - 2 * HOUR);
+    // Cooldown sejati memakai waktu peristiwa tersimpan.
+    expect((await seeded.repo.lastAlertTimes()).get(`MULTI_WALLET_BUY:${tokenKey('ethereum', E.tka.address)}:*`)).toBe(multi.eventAt);
+    // Nilai di luar aturan alerts.js ditolak di awal run (bukan setelah seluruh sinkronisasi).
+    await expect(seeded.run({ tuning: { alertMaxEventAgeMs: 1000 } })).rejects.toThrow(/alertMaxEventAgeMs/);
+    await expect(seeded.run({ tuning: { alertCooldownMs: 8 * DAY } })).rejects.toThrow(RangeError);
+  });
+
+  it('EDGE-SM-SYNC-011 tabrakan logIndex lintas run: transfer berisi berbeda berkunci sama disimpan terpisah, kiriman ulang tidak dihitung ganda', async () => {
+    const wallet = SCENARIO.wallets.Q1;
+    const target = E.tka.buyTxs[0]; // pembelian TKA Q1 20 jam lalu (di luar tumpang-tindih `since` run berikutnya)
+    let extra = [];
+    const { repo, run, advance } = setup({
+      adapters: (f) => [derive(f, {
+        fetchWalletTransfers: async (args) => {
+          const res = await f.fetchWalletTransfers(args);
+          return args.address === wallet ? { ...res, transfers: [...res.transfers, ...extra] } : res;
+        },
+      })],
+    });
+    await run();
+    const legs1 = await repo.listRawTransfersForTxs('ethereum', wallet, [target]);
+    const base = legs1.find((t) => t.logIndex === 0);
+    expect(base).toBeDefined();
+    // Kaki ETH native dengan logIndex sintetis 0 (penomoran provider lain) — bentrok dengan log ERC-20 #0.
+    extra = [{
+      ...base, token: { address: NATIVE_TOKEN, symbol: 'ETH', name: 'Ether', decimals: 18 }, amount: 0.123,
+      usdValue: null, priceSource: null, from: wallet, to: `0x${'ab'.repeat(20)}`,
+    }];
+    advance(15 * MIN);
+    const s2 = await run();
+    expect(s2.collisions).toBe(1);
+    const legs2 = await repo.listRawTransfersForTxs('ethereum', wallet, [target]);
+    expect(legs2).toHaveLength(legs1.length + 1);
+    expect(legs2.find((t) => t.logIndex === 0)).toEqual(base); // transfer tersimpan tidak tercampur / tertimpa
+    const rekeyed = legs2.find((t) => t.logIndex >= COLLISION_LOG_INDEX_BASE);
+    expect(rekeyed).toMatchObject({ amount: 0.123, token: { address: NATIVE_TOKEN } });
+    // Kiriman ulang (kunci asli 0) dikenali → tidak tersimpan lagi dengan logIndex tabrakan berikutnya.
+    advance(15 * MIN);
+    const s3 = await run();
+    expect(s3.collisions).toBe(0);
+    expect(await repo.listRawTransfersForTxs('ethereum', wallet, [target])).toHaveLength(legs1.length + 1);
+    // Aktivitas membawa blockNumber/logIndex dari classify (logIndex sintetis/tabrakan tidak pernah dipakai).
+    const acts = await activityOf(repo, 'ethereum', wallet, target);
+    expect(acts.length).toBeGreaterThan(0);
+    expect(acts.every((a) => a.logIndex === null || (Number.isInteger(a.logIndex) && a.logIndex < COLLISION_LOG_INDEX_BASE))).toBe(true);
   });
 
   it('EDGE-SM-SYNC-003 data terlambat: kaki token datang belakangan → TRANSFER_OUT USDC basi dihapus, SWAP_BUY masuk', async () => {
@@ -441,6 +509,10 @@ describe('sinkronisasi smart money (runSmartMoneySync)', () => {
     ]);
     expect(prefs).toMatchObject({ minUsd: 250, largeSellUsd: 5000, minIndependentBuyers: 2, minWalletScore: 0, watchlistOnly: false });
     expect(prefs.cooldownMs).toBe(DEFAULT_ALERT_PREFS.cooldownMs);
+    // Jendela basi: nilai server, atau nilai tersimpan pengguna yang lebih besar.
+    expect(prefs.maxEventAgeMs).toBe(DEFAULT_ALERT_PREFS.maxEventAgeMs);
+    expect(permissiveAlertPrefs([], undefined, 2 * HOUR).maxEventAgeMs).toBe(2 * HOUR);
+    expect(permissiveAlertPrefs([{ prefs: { maxEventAgeMs: 3 * HOUR } }], undefined, 2 * HOUR).maxEventAgeMs).toBe(3 * HOUR);
     const rows = [
       ...SCENARIO.binanceMap,
       { ...SCENARIO.binanceMap[0], binanceAsset: 'PEPE2', futuresSymbol: 'PEPE2USDT', multiplier: 1 },

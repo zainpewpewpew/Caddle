@@ -656,6 +656,13 @@ export const ALERT_PREF_LIMITS = Object.freeze({
 });
 
 const RULE_SUFFIX = Object.freeze({ cooldownHours: ' jam (minimal 1 menit, maksimal 7 hari)' });
+
+/**
+ * maxEventAgeMs (umur peristiwa maksimum, alerts.js: bilangan bulat 60 000..604 800 000 ms) tidak ditampilkan sebagai
+ * field form — nilai dari server dibawa apa adanya agar penyimpanan form tidak diam-diam mengembalikannya ke default.
+ */
+const EVENT_AGE_LIMITS_MS = Object.freeze([60_000, 7 * 24 * HOUR_MS]);
+const validEventAge = (v) => Number.isInteger(v) && v >= EVENT_AGE_LIMITS_MS[0] && v <= EVENT_AGE_LIMITS_MS[1];
 const limitText = (v) => v.toLocaleString('id-ID', { maximumFractionDigits: 3 });
 
 const toNumber = (raw) => {
@@ -665,10 +672,11 @@ const toNumber = (raw) => {
   return text === '' ? Number.NaN : Number(text);
 };
 
-/** Preferensi server → nilai form (cooldownMs → jam). */
+/** Preferensi server → nilai form (cooldownMs → jam; maxEventAgeMs valid dibawa tanpa field). */
 export function prefsToForm(prefs) {
   const p = prefs ?? {};
   return {
+    ...(validEventAge(p.maxEventAgeMs) ? { maxEventAgeMs: p.maxEventAgeMs } : {}),
     kinds: Array.isArray(p.kinds) ? p.kinds.filter((k) => ALERT_KINDS.includes(k)) : [...ALERT_KINDS],
     minUsd: isNum(p.minUsd) ? p.minUsd : 1000,
     largeSellUsd: isNum(p.largeSellUsd) ? p.largeSellUsd : 10000,
@@ -682,7 +690,9 @@ export function prefsToForm(prefs) {
 /**
  * Validasi form preferensi notifikasi di klien.
  * @param {{ kinds?: string[], minUsd?: unknown, largeSellUsd?: unknown, minWalletScore?: unknown,
- *   minIndependentBuyers?: unknown, cooldownHours?: unknown, watchlistOnly?: unknown }} form
+ *   minIndependentBuyers?: unknown, cooldownHours?: unknown, watchlistOnly?: unknown, maxEventAgeMs?: unknown }} form
+ *   maxEventAgeMs (bawaan server, tanpa field) diteruskan hanya bila valid; selain itu dihilangkan (server memakai
+ *   nilai default).
  * @returns {{ prefs: object|null, errors: Record<string, string> }} prefs null bila ada error
  */
 export function validateAlertPrefsClient(form) {
@@ -717,6 +727,7 @@ export function validateAlertPrefsClient(form) {
       minIndependentBuyers,
       cooldownMs: Math.round(cooldownHours * HOUR_MS),
       watchlistOnly,
+      ...(validEventAge(f.maxEventAgeMs) ? { maxEventAgeMs: f.maxEventAgeMs } : {}),
     },
     errors,
   };

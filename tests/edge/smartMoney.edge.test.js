@@ -43,6 +43,19 @@ describe('Fungsi murni route smart money', () => {
     expect(() => applyUserCooldown(null, 10)).toThrow(TypeError);
     expect(() => applyUserCooldown([], -1)).toThrow(RangeError);
   });
+
+  it('EDGE-SM-API-014 applyUserCooldown memakai waktu peristiwa (eventAt) bila ada, createdAt bila tidak', () => {
+    // Dua alert dibuat berdekatan (createdAt 100 & 101) untuk peristiwa yang berjarak 50 → keduanya dipertahankan
+    // dengan jeda 20; urutan kronologis mengikuti eventAt (id 2 lebih dulu walau dibuat belakangan).
+    const alerts = [
+      { id: 1, dedupeKey: 'NEW_BUY:t:w:2', createdAt: 100, eventAt: 60 },
+      { id: 2, dedupeKey: 'NEW_BUY:t:w:1', createdAt: 101, eventAt: 10 },
+      { id: 3, dedupeKey: 'NEW_BUY:t:w:3', createdAt: 102, eventAt: null },
+    ];
+    expect(applyUserCooldown(alerts, 20).map((x) => x.id)).toEqual([1, 2, 3]);
+    // Jeda 55: 10 dipertahankan, 60 (50 dari 10) disembunyikan, 102 (createdAt; 92 dari 10) dipertahankan.
+    expect(applyUserCooldown(alerts, 55).map((x) => x.id)).toEqual([2, 3]);
+  });
 });
 
 describe('API Smart Money — kasus tepi dengan data simulasi', () => {

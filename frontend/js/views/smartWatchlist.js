@@ -206,7 +206,8 @@ function prefsForm(data) {
     h('div', { class: 'cluster' }, saveBtn));
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const { prefs, errors } = validateAlertPrefsClient(readPrefsForm(form));
+    // maxEventAgeMs tidak punya field: nilai tersimpan dibawa apa adanya (lihat prefsToForm).
+    const { prefs, errors } = validateAlertPrefsClient({ ...readPrefsForm(form), maxEventAgeMs: v.maxEventAgeMs });
     if (!prefs) {
       showErrors(form, errors, [], generalHost);
       return;
