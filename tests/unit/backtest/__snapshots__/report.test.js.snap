@@ -1,0 +1,104 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderMarkdownReport > UNIT-BTRP-005 snapshot laporan contoh (deterministik) 1`] = `
+"# Laporan Backtest AlphaLens
+
+> Riset saja — bukan nasihat keuangan. Skor/tier adalah aturan yang dapat dijelaskan, bukan probabilitas;
+> peluang hanya sah bila berasal dari kalibrasi out-of-sample dengan sampel memadai dan selalu disertai interval.
+
+## Parameter
+
+- Dibuat: 2026-10-26 08:00:00 UTC
+- Sumber data: binance
+- Simbol: BTCUSDT, ETHUSDT
+- Timeframe: 15m, 1h
+- Rentang: 2024-01-01 → 2025-10-01
+- Target: 2,0R · batas waktu 48 candle · TP & SL di candle yang sama = LOSS (konservatif)
+- Validasi: walk-forward 5 fold, embargo 48 candle
+
+## Peringatan kejujuran
+
+- ⚠️ Sesudah — v3 confluence tier A/B: sampel terlalu kecil (n < 30) pada tier A.
+
+## Perbandingan sebelum vs sesudah
+
+- **Sebelum**: Sebelum — pola v2 saja (\`v2\`)
+- **Sesudah**: Sesudah — v3 confluence tier A/B (\`v3\`)
+
+Penilaian utama memakai **out-of-sample**; in-sample hanya pembanding untuk mendeteksi overfitting.
+
+| Sampel | Varian | n | Win rate | CI 95% (Wilson) | Expectancy | Profit factor | Selisih (sesudah − sebelum) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Out-of-sample (test) | Sebelum | 420 | 35,0% | 30,0–40,0% | +0,05R | 1,08 | — |
+| Out-of-sample (test) | Sesudah | 180 | 44,0% | 37,0–51,0% | +0,32R | 1,57 | WR +9,0 pp; E +0,27R |
+| In-sample (train) | Sebelum | 900 | 37,0% | 34,0–40,0% | +0,11R | 1,17 | — |
+| In-sample (train) | Sesudah | 400 | 46,0% | 41,0–51,0% | +0,38R | 1,70 | WR +9,0 pp; E +0,27R |
+
+> Interval kepercayaan win rate out-of-sample kedua varian **beririsan** — perbedaan belum dapat dianggap signifikan secara statistik.
+
+## Varian: Sebelum — pola v2 saja
+
+### Ringkasan
+
+| Sampel | n | Win rate | CI 95% (Wilson) | Expectancy | Profit factor | MFE rata² | MAE rata² | W/L/T | Catatan |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Out-of-sample (test) | 420 | 35,0% | 30,0–40,0% | +0,05R | 1,08 | +1,40R | −0,60R | 147/273/0 | — |
+| In-sample (train) | 900 | 37,0% | 34,0–40,0% | +0,11R | 1,17 | +1,40R | −0,60R | 333/567/0 | — |
+
+## Varian: Sesudah — v3 confluence tier A/B
+
+### Ringkasan
+
+| Sampel | n | Win rate | CI 95% (Wilson) | Expectancy | Profit factor | MFE rata² | MAE rata² | W/L/T | Catatan |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Out-of-sample (test) | 180 | 44,0% | 37,0–51,0% | +0,32R | 1,57 | +1,40R | −0,60R | 79/101/0 | — |
+| In-sample (train) | 400 | 46,0% | 41,0–51,0% | +0,38R | 1,70 | +1,40R | −0,60R | 184/216/0 | — |
+
+### Per arah × timeframe × tier
+
+| Arah | TF | Tier | Sampel | n | Win rate | CI 95% (Wilson) | Expectancy | Profit factor | MFE rata² | MAE rata² | W/L/T | Catatan |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| LONG | 15m | B | Out-of-sample (test) | 40 | 40,0% | 26,0–55,0% | +0,20R | 1,33 | +1,40R | −0,60R | 16/24/0 | CI lebar |
+| LONG | 15m | B | In-sample (train) | 90 | 42,0% | 32,0–52,0% | +0,26R | 1,45 | +1,40R | −0,60R | 38/52/0 | — |
+| SHORT | 1h | A | Out-of-sample (test) | 12 | 50,0% | 25,0–75,0% | +0,50R | 2,00 | +1,40R | −0,60R | 6/6/0 | sampel terlalu kecil, CI lebar |
+
+### Per arah
+
+| Arah | Sampel | n | Win rate | CI 95% (Wilson) | Expectancy | Profit factor | MFE rata² | MAE rata² | W/L/T | Catatan |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| LONG | Out-of-sample (test) | 100 | 46,0% | 36,0–56,0% | +0,38R | 1,70 | +1,40R | −0,60R | 46/54/0 | CI lebar |
+| SHORT | Out-of-sample (test) | 80 | 42,0% | 32,0–53,0% | +0,26R | 1,45 | +1,40R | −0,60R | 34/46/0 | CI lebar |
+
+### Per tier
+
+| Tier | Sampel | n | Win rate | CI 95% (Wilson) | Expectancy | Profit factor | MFE rata² | MAE rata² | W/L/T | Catatan |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A | Out-of-sample (test) | 20 | 55,0% | 34,0–74,0% | +0,65R | ∞ | +1,40R | −0,60R | 11/9/0 | sampel terlalu kecil, CI lebar |
+| A | In-sample (train) | 150 | 51,0% | 43,0–59,0% | +0,53R | 2,08 | +1,40R | −0,60R | 77/73/0 | — |
+| B | Out-of-sample (test) | 120 | 41,0% | 33,0–50,0% | +0,23R | 1,39 | +1,40R | −0,60R | 49/71/0 | — |
+| B | In-sample (train) | 250 | 43,0% | 37,0–49,0% | +0,29R | 1,50 | +1,40R | −0,60R | 108/142/0 | — |
+
+## Kalibrasi
+
+ECE = rata-rata selisih |prediksi − realisasi| berbobot jumlah sampel; Brier = rata-rata (p − hasil)². Keduanya makin kecil makin baik.
+
+### Kalibrasi — Sesudah — v3 confluence tier A/B (Out-of-sample (test))
+
+ECE: **4,0%** · Brier: **0,2391** · Brier baseline (base rate): 0,2464
+
+Diagram reliabilitas (prediksi vs realisasi per bin skor):
+
+| Bin skor | n | Prediksi | Realisasi | CI 95% | Selisih | Catatan |
+| --- | --- | --- | --- | --- | --- | --- |
+| 60–75 | 110 | 40,0% | 42,0% | 33,0–51,0% | 2,0 pp | — |
+| 75–100 | 20 | 52,0% | 55,0% | 34,0–74,0% | 3,0 pp | sampel terlalu kecil |
+
+## Glosarium
+
+- **Win rate**: proporsi trade yang berakhir WIN (TP tersentuh). CI 95% memakai interval skor Wilson.
+- **Expectancy (R)**: rata-rata hasil per trade dalam kelipatan risiko awal (1R = jarak entry ke stop).
+- **Profit factor**: total R menang / total R kalah (∞ bila tidak ada kerugian).
+- **MFE/MAE**: pergerakan menguntungkan/merugikan maksimum selama trade, dalam R.
+- **In-sample (train)** dipakai untuk menyetel; **out-of-sample (test)** adalah data yang tidak dilihat saat menyetel.
+"
+`;
