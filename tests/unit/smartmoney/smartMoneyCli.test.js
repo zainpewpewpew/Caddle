@@ -51,7 +51,7 @@ describe('CLI sinkronisasi smart money (scripts/smart-money-sync.js)', () => {
     const c = capture();
     expect(await syncMain([], { env, clock, ...c.io })).toBe(0);
     expect(c.text()).toContain('Belum ada sumber data smart money yang aktif');
-    expect(c.text()).toContain('SMART_MONEY_PROVIDERS belum diisi');
+    expect(c.text()).toContain('ETHERSCAN_API_KEY belum diisi di .env (mode otomatis)');
     expect(c.text()).toContain('Tidak ada data contoh/simulasi');
     expect(c.text()).toContain('Mengaktifkan data live (jalur gratis)');
     expect(existsSync(env.DATABASE_PATH)).toBe(false);
@@ -61,7 +61,7 @@ describe('CLI sinkronisasi smart money (scripts/smart-money-sync.js)', () => {
     const c = capture();
     expect(await syncMain([], { env: { ...env, SMART_MONEY_PROVIDERS: 'etherscan,fixture' }, clock, ...c.io })).toBe(0);
     expect(c.text()).toContain('SMART_MONEY_PROVIDERS: etherscan, fixture');
-    expect(c.text()).toMatch(/etherscan: Adapter untuk id ini belum dirakit/);
+    expect(c.text()).toMatch(/etherscan: ETHERSCAN_API_KEY belum diisi di \.env/);
     expect(c.text()).toMatch(/fixture: Provider fixture \(data simulasi\) hanya tersedia di tes/);
     expect(existsSync(env.DATABASE_PATH)).toBe(false);
     expect(noProviderMessage({ smartMoney: { providers: [] } }, null)).toContain('belum diisi');

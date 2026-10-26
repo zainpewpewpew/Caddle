@@ -33,6 +33,19 @@ describe('konfigurasi smart money', () => {
     expect(parseSmartMoneyConfig({ NODE_ENV: 'test', SMART_MONEY_PROVIDERS: 'fixture' }).providers).toEqual(['fixture']);
   });
 
+  it('UNIT-SM-CFG-004 mode otomatis: provider mengikuti kunci di .env; `off` mematikan; daftar eksplisit menang', () => {
+    expect(parseSmartMoneyConfig({}).providers).toEqual([]);
+    expect(parseSmartMoneyConfig({ ETHERSCAN_API_KEY: '  ' }).providers).toEqual([]);
+    expect(parseSmartMoneyConfig({ ETHERSCAN_API_KEY: 'x' }).providers).toEqual(['etherscan', 'routescan', 'geckoterminal']);
+    expect(parseSmartMoneyConfig({ BINANCE_API_KEY: 'k' }).providers).toEqual([]);
+    expect(parseSmartMoneyConfig({ BINANCE_API_KEY: 'k', BINANCE_API_SECRET: 's' }).providers).toEqual(['binance-mapping']);
+    const both = { ETHERSCAN_API_KEY: 'x', BINANCE_API_KEY: 'k', BINANCE_API_SECRET: 's' };
+    expect(parseSmartMoneyConfig(both).providers).toEqual(['etherscan', 'routescan', 'geckoterminal', 'binance-mapping']);
+    expect(parseSmartMoneyConfig({ ...both, SMART_MONEY_PROVIDERS: 'auto' }).providers).toHaveLength(4);
+    expect(parseSmartMoneyConfig({ ...both, SMART_MONEY_PROVIDERS: 'off' }).providers).toEqual([]);
+    expect(parseSmartMoneyConfig({ ...both, SMART_MONEY_PROVIDERS: 'routescan' }).providers).toEqual(['routescan']);
+  });
+
   it('UNIT-SM-CFG-003 loadConfig memuat field smartMoney tanpa mengubah field lain', () => {
     const c = loadConfig({ SMART_MONEY_PROVIDERS: 'blockscout' });
     expect(c.smartMoney.providers).toEqual(['blockscout']);

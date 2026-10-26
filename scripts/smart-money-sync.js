@@ -77,7 +77,7 @@ export function noProviderMessage(config, registry) {
   const unavailable = typeof registry?.unavailable === 'function' ? registry.unavailable() : [];
   const lines = ['Belum ada sumber data smart money yang aktif — sinkronisasi tidak dijalankan.'];
   if (ids.length === 0) {
-    lines.push('- SMART_MONEY_PROVIDERS belum diisi di .env.');
+    lines.push('- Belum ada provider aktif: ETHERSCAN_API_KEY belum diisi di .env (mode otomatis), atau SMART_MONEY_PROVIDERS=off.');
   } else {
     lines.push(`- SMART_MONEY_PROVIDERS: ${ids.join(', ')}`);
     for (const u of unavailable) lines.push(`  · ${u.id}: ${sanitizeProviderMessage(u.reason)}`);

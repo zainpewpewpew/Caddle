@@ -22,14 +22,37 @@ describe('registri provider live (providers/live.js)', () => {
   });
 
   it('UNIT-SM-LIVE-002 id belum dirakit / fixture dari tabel pabrik → "belum tersedia" beserta alasan, bukan data palsu', () => {
-    const registry = createLiveProviderRegistry(config(['etherscan', 'fixture']));
+    const registry = createLiveProviderRegistry(config(['tidakdikenal', 'fixture']));
     expect(registry.list()).toEqual([]);
-    expect(registry.configuredIds()).toEqual(['etherscan', 'fixture']);
-    expect(registry.missing()).toEqual(['etherscan', 'fixture']);
-    const [etherscan, fixture] = registry.unavailable();
-    expect(etherscan).toMatchObject({ id: 'etherscan', requiresKey: null, isSimulated: false, reason: expect.stringMatching(/belum dirakit/) });
+    expect(registry.configuredIds()).toEqual(['tidakdikenal', 'fixture']);
+    expect(registry.missing()).toEqual(['tidakdikenal', 'fixture']);
+    const [unknown, fixture] = registry.unavailable();
+    expect(unknown).toMatchObject({ id: 'tidakdikenal', requiresKey: null, isSimulated: false, reason: expect.stringMatching(/belum dirakit/) });
     expect(fixture).toMatchObject({ id: 'fixture', isSimulated: true, reason: expect.stringMatching(/hanya tersedia di tes/) });
     expect(LIVE_PROVIDER_FACTORIES.fixture.create({}, {})).toBeNull();
+  });
+
+  it('UNIT-SM-LIVE-006 adapter jalur gratis: tanpa kunci → belum dikonfigurasi (tanpa jaringan); dengan kunci → aktif & valid', () => {
+    const calls = [];
+    const fetchImpl = async (url) => { calls.push(String(url)); throw new Error('jaringan tidak boleh dipanggil'); };
+    const ids = ['etherscan', 'routescan', 'geckoterminal', 'binance-mapping'];
+    const off = createLiveProviderRegistry(config(ids), { env: { BINANCE_API_KEY: 'k' }, fetchImpl });
+    expect(off.list().map((a) => a.id)).toEqual(['routescan', 'geckoterminal']);
+    expect(off.unavailable()).toEqual([
+      expect.objectContaining({ id: 'etherscan', requiresKey: true, reason: expect.stringMatching(/ETHERSCAN_API_KEY/) }),
+      expect.objectContaining({ id: 'binance-mapping', requiresKey: true, reason: expect.stringMatching(/BINANCE_API_SECRET/) }),
+    ]);
+    const env = { ETHERSCAN_API_KEY: ' AAAABBBBCCCCDDDD ', BINANCE_API_KEY: 'a'.repeat(64), BINANCE_API_SECRET: 'b'.repeat(64) };
+    const on = createLiveProviderRegistry(config(ids), { env, fetchImpl });
+    expect(on.list().map((a) => a.id)).toEqual(ids);
+    expect(on.unavailable()).toEqual([]);
+    expect(on.list().every((a) => a.isSimulated === false)).toBe(true);
+    // Prioritas per chain: Etherscan untuk chain paket gratisnya, Routescan untuk sisanya (mis. base).
+    expect(on.withCapability('walletTransfers', 'ethereum').map((a) => a.id)).toEqual(['etherscan', 'routescan']);
+    expect(on.withCapability('walletTransfers', 'base').map((a) => a.id)).toEqual(['routescan']);
+    expect(on.withCapability('walletDiscovery', 'ethereum').map((a) => a.id)).toEqual(['geckoterminal']);
+    expect(on.withCapability('binanceMapping').map((a) => a.id)).toEqual(['binance-mapping']);
+    expect(calls).toEqual([]);
   });
 
   it('UNIT-SM-LIVE-003 pabrik menerima env & deps; hasil null → alasan pabrik / alasan bawaan kunci', () => {

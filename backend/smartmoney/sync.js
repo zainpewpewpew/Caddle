@@ -450,7 +450,9 @@ export async function runSmartMoneySync({
   const discoverers = registry.list().filter((p) => p.capabilities.has('walletDiscovery'));
   if (discoverers.length > 0 && !aborted()) {
     const matched = matchedTokensFromMapping(await repo.listBinanceMap());
-    const discoveryChains = CHAINS.filter((c) => discoverers.some((p) => p.chains.includes(c)));
+    // Hanya chain yang juga punya provider riwayat transfer: wallet temuan di chain lain tidak dapat dinilai.
+    const discoveryChains = CHAINS.filter((c) => discoverers.some((p) => p.chains.includes(c))
+      && registry.withCapability('walletTransfers', c).length > 0);
     for (const chain of discoveryChains) {
       if (!matched.some((t) => t.chain === chain)) {
         summary.discovery.skippedChains.push(chain);

@@ -9,13 +9,25 @@
 // - Provider `fixture` (DATA SIMULASI) TIDAK PERNAH dibuat dari tabel ini. Ia hanya diterima lewat `extraAdapters`
 //   (dibuat pemanggil dari skenario uji) dan hanya bila config.nodeEnv === 'test' (tes unit/integrasi & server E2E).
 //   Skenario simulasi (tests/fixtures/smartmoney/scenario.js) tidak pernah diimpor kode backend.
-// - Adapter live jalur gratis (Etherscan V2, Routescan, GeckoTerminal, pemetaan Binance read-only) BELUM dirakit di
-//   tabel ini: perakitannya (env kunci, daftar chain) dikerjakan koordinator — TODO lihat docs/16 "Mengaktifkan data
-//   live (jalur gratis)". Sampai saat itu id tersebut dilaporkan "belum tersedia" (bukan error, bukan data palsu).
+// - Adapter live jalur gratis (pilihan pengguna 2026-10-26, docs/16 "Mengaktifkan data live (jalur gratis)"):
+//   etherscan (ETHERSCAN_API_KEY), routescan (tanpa kunci; ROUTESCAN_API_KEY opsional), geckoterminal (tanpa kunci),
+//   binance-mapping (BINANCE_API_KEY + BINANCE_API_SECRET, izin baca saja). Adapter berkunci tanpa kunci → null
+//   (dilaporkan "belum dikonfigurasi", tidak pernah memanggil jaringan). Urutan SMART_MONEY_PROVIDERS = prioritas
+//   per chain: Etherscan untuk chain paket gratisnya, Routescan untuk chain sisanya (fallback NOT_SUPPORTED).
 
+import { createBinanceMappingProvider } from './binanceMapping.js';
+import { createEtherscanProvider } from './etherscan.js';
+import { createGeckoTerminalProvider } from './geckoTerminal.js';
 import { createProviderRegistry } from './registry.js';
+import { createRoutescanProvider } from './routescan.js';
 
 const FIXTURE_ID = 'fixture';
+
+/** Nilai kunci dari env yang sudah dipangkas, atau null bila kosong. Nilai kunci tidak pernah dicatat. */
+function secret(value) {
+  const v = typeof value === 'string' ? value.trim() : '';
+  return v === '' ? null : v;
+}
 
 /**
  * Pabrik adapter yang dikenal. Kunci = id provider di SMART_MONEY_PROVIDERS.
@@ -31,6 +43,36 @@ export const LIVE_PROVIDER_FACTORIES = Object.freeze({
     // Sengaja null: fixture hanya lewat extraAdapters di lingkungan tes (lihat catatan modul).
     create: () => null,
     unavailableReason: 'Provider fixture (data simulasi) hanya tersedia di tes & E2E — tidak pernah di server sungguhan',
+  }),
+  etherscan: Object.freeze({
+    displayName: 'Etherscan API V2',
+    requiresKey: true,
+    isSimulated: false,
+    create: (env, deps) => (secret(env.ETHERSCAN_API_KEY) ? createEtherscanProvider({ apiKey: secret(env.ETHERSCAN_API_KEY), ...deps }) : null),
+    unavailableReason: 'ETHERSCAN_API_KEY belum diisi di .env',
+  }),
+  routescan: Object.freeze({
+    displayName: 'Routescan',
+    requiresKey: false,
+    isSimulated: false,
+    create: (env, deps) => createRoutescanProvider({ apiKey: secret(env.ROUTESCAN_API_KEY), ...deps }),
+  }),
+  geckoterminal: Object.freeze({
+    displayName: 'GeckoTerminal',
+    requiresKey: false,
+    isSimulated: false,
+    create: (env, deps) => createGeckoTerminalProvider({ ...deps }),
+  }),
+  'binance-mapping': Object.freeze({
+    displayName: 'Pemetaan kontrak Binance (baca saja)',
+    requiresKey: true,
+    isSimulated: false,
+    create: (env, deps) => {
+      const apiKey = secret(env.BINANCE_API_KEY);
+      const apiSecret = secret(env.BINANCE_API_SECRET);
+      return apiKey && apiSecret ? createBinanceMappingProvider({ apiKey, apiSecret, ...deps }) : null;
+    },
+    unavailableReason: 'BINANCE_API_KEY / BINANCE_API_SECRET belum diisi di .env',
   }),
 });
 
