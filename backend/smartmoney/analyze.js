@@ -16,8 +16,9 @@
 //   (isExcluded) atau ditandai BOT/MEV tidak ikut penautan — bukan anggota maupun jembatan (lihat clusters.js).
 //   Penanda LINKED (LOW, clusters.linkedFlag) disisipkan sebelum skor dihitung: tidak mengecualikan, hanya tampil
 //   sebagai keterbatasan; radar menghitung satu klaster sebagai satu pembeli independen.
-// - Penanda dihitung dengan `pnl` & `now` (ekstensi walletFlags.js) tanpa `txTimes` (Activity tidak membawa
-//   blockNumber). Skor & kelayakan hanya membaca PnL realisasi — `prices` hanya memengaruhi unrealized PnL.
+// - Penanda dihitung dengan `pnl` & `now` (ekstensi walletFlags.js) tanpa `txTimes` (heuristik waktu walletFlags
+//   memakai blockTime aktivitas). Skor & kelayakan hanya membaca PnL realisasi — `prices` hanya memengaruhi
+//   unrealized PnL.
 //
 // Keluaran (Map terurut walletKey; klaster terurut id; tautan terurut chain lalu urutan linkWallets):
 //   wallets:      Map<walletKey, { chain, address, pnl, flags, score: WalletScore, clusterId,
