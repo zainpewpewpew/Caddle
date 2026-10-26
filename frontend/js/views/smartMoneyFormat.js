@@ -862,11 +862,12 @@ export const SYNC_NO_PROVIDERS_HELP = 'Belum ada provider data smart money yang 
   + 'Isi ETHERSCAN_API_KEY di file .env folder proyek, lalu hentikan server (Ctrl+C) dan jalankan npm start lagi — '
   + '.env hanya dibaca saat server mulai. Langkah lengkap: docs/17-panduan-smart-money.md §5.';
 /**
- * Petunjuk hasil saat tidak ada wallet yang dilacak (lastRun.wallets.tracked === 0): hanya kunci Etherscan → penemuan
- * wallet dilewati dan run "berhasil" dengan angka nol semua.
+ * Petunjuk hasil saat tidak ada wallet yang dilacak (lastRun.wallets.tracked === 0): penemuan otomatis (Etherscan +
+ * Binance publik / token trending GeckoTerminal, tanpa kunci Binance) belum menghasilkan kandidat.
  */
-export const SYNC_NO_WALLETS_HINT = 'Belum ada wallet yang dilacak — ikuti wallet lewat Watchlist & Alerts, atau isi kunci '
-  + 'Binance read-only (BINANCE_API_KEY + BINANCE_API_SECRET) agar wallet baru ditemukan otomatis.';
+export const SYNC_NO_WALLETS_HINT = 'Belum ada wallet yang dilacak — penemuan otomatis (cukup ETHERSCAN_API_KEY, kunci '
+  + 'Binance tidak wajib) belum menemukan kandidat; lihat catatan run, jalankan npm run smart-money:check, atau ikuti '
+  + 'wallet lewat Watchlist & Alerts.';
 
 const SYNC_MESSAGE_MAX = 300;
 const clipText = (text) => (text.length > SYNC_MESSAGE_MAX ? `${text.slice(0, SYNC_MESSAGE_MAX - 1)}…` : text);
@@ -966,9 +967,13 @@ export function syncResultLines(lastRun) {
   const transfer = [isNum(r.fetched) ? `${n(r.fetched)} diambil` : null, isNum(r.inserted) ? `${n(r.inserted)} aktivitas baru` : null].filter(Boolean);
   if (transfer.length) lines.push(`Transfer: ${transfer.join(' · ')}`);
   const d = r.discovery && typeof r.discovery === 'object' ? r.discovery : {};
-  if (isNum(d.added)) lines.push(`Penemuan wallet: ${n(d.added)} wallet baru${positive(d.candidates) ? ` dari ${n(d.candidates)} kandidat` : ''}`);
+  const via = d.mode === 'binance' ? ' (token listing Binance)'
+    : d.mode === 'trending' ? ` (token trending GeckoTerminal${typeof d.trendingChain === 'string' ? ` di ${d.trendingChain}` : ''} — belum tentu listing Binance)`
+      : '';
+  if (isNum(d.added)) lines.push(`Penemuan wallet${via}: ${n(d.added)} wallet baru${positive(d.candidates) ? ` dari ${n(d.candidates)} kandidat` : ''}`);
   const m = r.mapping && typeof r.mapping === 'object' ? r.mapping : {};
-  if (isNum(m.upserted)) lines.push(`Pemetaan Binance: ${n(m.upserted)} kontrak diperbarui${positive(m.rejected) ? ` (${n(m.rejected)} ditolak)` : ''}`);
+  const publicMap = Array.isArray(m.refreshed) && m.refreshed.includes('binance-public') ? ' (publik, tanpa kunci)' : '';
+  if (isNum(m.upserted)) lines.push(`Pemetaan Binance${publicMap}: ${n(m.upserted)} kontrak diperbarui${positive(m.rejected) ? ` (${n(m.rejected)} ditolak)` : ''}`);
   if (isNum(r.alerts)) lines.push(`Alert baru: ${n(r.alerts)}`);
   if (w.tracked === 0) lines.push(SYNC_NO_WALLETS_HINT);
   return lines;

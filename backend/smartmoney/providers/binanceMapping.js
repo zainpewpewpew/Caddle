@@ -42,6 +42,14 @@
 //   satu baris). Lebih dari satu perp untuk satu koin: perp nama persis menang; tanpa nama persis → satu baris per
 //   perp (→ AMBIGUOUS) dan dicatat di diagnostics.multiplePerps.
 //
+// Mode PUBLIK TANPA KUNCI (`createBinancePublicMappingProvider`, id `binance-public`, ditambahkan 2026-10-26 untuk
+// pengguna yang hanya punya ETHERSCAN_API_KEY): langkah 1 dilewati dan langkah 2 diganti endpoint publik situs
+// Binance GET https://www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll — daftar koin + networkList
+// yang sama dengan getall tetapi tanpa saldo dan tanpa tanda tangan. Endpoint ini dipakai halaman deposit/penarikan
+// binance.com dan sejumlah proyek open source; TIDAK terdokumentasi resmi, jadi bentuknya dibaca defensif
+// (`{ code: "000000", data: [...], success: true }` atau array langsung) dan diverifikasi `npm run smart-money:check`.
+// Tidak ada header kunci yang pernah dikirim di mode ini. Langkah 3–4 sama (publik).
+//
 // Diagnostik: kontrak mengharuskan fetchBinanceMapping mengembalikan ARRAY. Diagnostik dilampirkan sebagai properti
 // NON-enumerable `diagnostics` pada array hasil dan salinannya tersedia lewat `lastDiagnostics()`.
 
@@ -52,6 +60,10 @@ import { ProviderError, codeForStatus, parseRetryAfter } from './errors.js';
 import { createThrottle } from './throttle.js';
 
 export const BINANCE_MAPPING_PROVIDER_ID = 'binance-mapping';
+/** Id mode publik tanpa kunci (lihat catatan modul). */
+export const BINANCE_PUBLIC_PROVIDER_ID = 'binance-public';
+/** Origin situs Binance untuk endpoint publik `bapi` (tanpa kunci). */
+export const BINANCE_WEB_BASE_URL = 'https://www.binance.com';
 export const BINANCE_SPOT_BASE_URL = 'https://api.binance.com';
 export const BINANCE_FUTURES_BASE_URL = 'https://fapi.binance.com';
 
@@ -75,11 +87,13 @@ export const BINANCE_PATHS = Object.freeze({
   allCoins: '/sapi/v1/capital/config/getall',
   futuresExchangeInfo: '/fapi/v1/exchangeInfo',
   spotExchangeInfo: '/api/v3/exchangeInfo',
+  /** Endpoint publik situs (tanpa kunci, tidak resmi) — hanya mode `binance-public`. */
+  publicCoins: '/bapi/capital/v1/public/capital/getNetworkCoinAll',
 });
 
-const ID = BINANCE_MAPPING_PROVIDER_ID;
 const PREFIX_FACTORS = Object.freeze({ 1000000: 1_000_000, 1000: 1000, '1M': 1_000_000 });
 const SOURCE = 'binance-getall';
+const PUBLIC_SOURCE = 'binance-public';
 const REQUEST_TIMEOUT_MS = 20_000;
 const RATE_PER_SEC = 2;
 // Ban 418 tanpa Retry-After: Binance memulai ban dari 2 menit (sama dengan backend/ingestion/binance/restClient.js).
@@ -145,6 +159,18 @@ function resolveBinanceBaseUrl(name, value) {
   }
   if (!ALLOWED_HOST_RE.test(url.hostname)) throw new TypeError(`${name} harus host binance.com`);
   return url.origin;
+}
+
+/**
+ * Array koin dari respons endpoint publik `getNetworkCoinAll`: `{ code: "000000", data: [...], success }` atau array
+ * langsung. `success === false` / kode selain "000000" / tanpa array → null.
+ */
+export function publicCoinsOf(body) {
+  if (Array.isArray(body)) return body;
+  if (!isObject(body)) return null;
+  if (body.success === false) return null;
+  if (body.code !== undefined && body.code !== null && String(body.code) !== '000000') return null;
+  return Array.isArray(body.data) ? body.data : null;
 }
 
 /**
@@ -240,7 +266,7 @@ function spotIndex(spotSymbols) {
  * @returns {{ rows: Array<{ chain: string, contractAddress: string, binanceAsset: string, spotSymbol: string|null,
  *   futuresSymbol: string|null, multiplier: number, source: string, verifiedAt: number }>, diagnostics: object }}
  */
-export function buildBinanceMappingRows({ coins, futuresSymbols, spotSymbols = null, verifiedAt }) {
+export function buildBinanceMappingRows({ coins, futuresSymbols, spotSymbols = null, verifiedAt, source = SOURCE }) {
   if (!Number.isInteger(verifiedAt) || verifiedAt < 0) throw new TypeError('verifiedAt harus epoch milidetik (bilangan bulat ≥ 0)');
   const diagnostics = {
     coins: 0, networksWithContract: 0, rows: 0, duplicateRows: 0,
@@ -306,7 +332,7 @@ export function buildBinanceMappingRows({ coins, futuresSymbols, spotSymbols = n
           spotSymbol: spot.get(coin) ?? null,
           futuresSymbol: perp === null ? null : perp.symbol,
           multiplier: (perp === null ? 1 : perp.factor) * denomination,
-          source: `${SOURCE}${perp?.viaPrefix ? '+prefix-rule' : ''}${denomination !== 1 ? '+denomination' : ''}`,
+          source: `${source}${perp?.viaPrefix ? '+prefix-rule' : ''}${denomination !== 1 ? '+denomination' : ''}`,
           verifiedAt,
         };
         if (!Number.isSafeInteger(row.multiplier)) {
@@ -352,7 +378,21 @@ export function buildBinanceMappingRows({ coins, futuresSymbols, spotSymbols = n
  *   `clock` sebaiknya jam yang tersinkron dengan server Binance (selisih > recvWindow → kode -1021).
  * @returns {object} adapter sesuai docs/15 §3 + `checkKeyRestrictions()`, `isConfigured()`, `lastDiagnostics()`
  */
-export function createBinanceMappingProvider({
+export function createBinanceMappingProvider(options = {}) {
+  return createMappingProvider({ ...options, publicMode: false });
+}
+
+/**
+ * Adapter pemetaan Binance TANPA KUNCI (id `binance-public`): daftar kontrak dari endpoint publik situs Binance
+ * (lihat catatan modul). Tidak pernah mengirim kunci API; `checkKeyRestrictions` tidak berlaku (NOT_SUPPORTED).
+ * @param {{ fetchImpl?: typeof fetch, clock?: () => number, sleep?: (ms: number) => Promise<void>,
+ *   webBaseUrl?: string, spotBaseUrl?: string, futuresBaseUrl?: string }} [options]
+ */
+export function createBinancePublicMappingProvider({ apiKey: _k, apiSecret: _s, ...options } = {}) {
+  return createMappingProvider({ ...options, publicMode: true });
+}
+
+function createMappingProvider({
   apiKey,
   apiSecret,
   fetchImpl = globalThis.fetch,
@@ -360,8 +400,11 @@ export function createBinanceMappingProvider({
   sleep,
   spotBaseUrl = BINANCE_SPOT_BASE_URL,
   futuresBaseUrl = BINANCE_FUTURES_BASE_URL,
+  webBaseUrl = BINANCE_WEB_BASE_URL,
   recvWindow = 10_000,
-} = {}) {
+  publicMode,
+}) {
+  const ID = publicMode ? BINANCE_PUBLIC_PROVIDER_ID : BINANCE_MAPPING_PROVIDER_ID;
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl wajib fungsi');
   if (typeof clock !== 'function') throw new TypeError('clock wajib fungsi');
   if (!Number.isInteger(recvWindow) || recvWindow < 1 || recvWindow > MAX_RECV_WINDOW_MS) {
@@ -369,10 +412,11 @@ export function createBinanceMappingProvider({
   }
   const spotBase = resolveBinanceBaseUrl('spotBaseUrl', spotBaseUrl);
   const futuresBase = resolveBinanceBaseUrl('futuresBaseUrl', futuresBaseUrl);
-  const key = typeof apiKey === 'string' ? apiKey.trim() : '';
-  const secret = typeof apiSecret === 'string' ? apiSecret.trim() : '';
+  const webBase = publicMode ? resolveBinanceBaseUrl('webBaseUrl', webBaseUrl) : null;
+  const key = !publicMode && typeof apiKey === 'string' ? apiKey.trim() : '';
+  const secret = !publicMode && typeof apiSecret === 'string' ? apiSecret.trim() : '';
   // Format dicek sebelum dipakai di header: nilai dengan spasi/baris baru bisa membuat error fetch memuat kunci.
-  const configured = CREDENTIAL_RE.test(key) && CREDENTIAL_RE.test(secret);
+  const configured = publicMode || (CREDENTIAL_RE.test(key) && CREDENTIAL_RE.test(secret));
   const throttle = createThrottle({ ratePerSec: RATE_PER_SEC, clock, sleep });
   /** Vonis izin kunci: { ok: true, summary } | { ok: false, message, excessPermissions } — berlaku seumur provider. */
   let keyVerdict = null;
@@ -490,6 +534,7 @@ export function createBinanceMappingProvider({
    * @returns {Promise<{ enableReading: true, ipRestrict: boolean, checkedAt: number }>}
    */
   async function checkKeyRestrictions({ signal } = {}) {
+    if (publicMode) throw fail('NOT_SUPPORTED', 'mode publik tanpa kunci tidak memakai kunci API — tidak ada izin yang perlu dicek');
     requireConfigured();
     if (keyVerdict?.ok) return { ...keyVerdict.summary };
     if (keyVerdict) throw fail('UNAUTHORIZED', keyVerdict.message);
@@ -526,9 +571,15 @@ export function createBinanceMappingProvider({
    */
   async function fetchBinanceMapping({ signal } = {}) {
     requireConfigured();
-    await checkKeyRestrictions({ signal });
-    const coins = await call(spotBase, BINANCE_PATHS.allCoins, { signed: true, signal });
-    if (!Array.isArray(coins)) throw fail('BAD_RESPONSE', `respons ${BINANCE_PATHS.allCoins} bukan array koin`);
+    let coins;
+    if (publicMode) {
+      coins = publicCoinsOf(await call(webBase, BINANCE_PATHS.publicCoins, { signed: false, signal }));
+      if (coins === null) throw fail('BAD_RESPONSE', `respons ${BINANCE_PATHS.publicCoins} tidak memuat array koin (bentuk endpoint publik berubah?)`);
+    } else {
+      await checkKeyRestrictions({ signal });
+      coins = await call(spotBase, BINANCE_PATHS.allCoins, { signed: true, signal });
+      if (!Array.isArray(coins)) throw fail('BAD_RESPONSE', `respons ${BINANCE_PATHS.allCoins} bukan array koin`);
+    }
     const futures = await call(futuresBase, BINANCE_PATHS.futuresExchangeInfo, { signed: false, signal });
     if (!isObject(futures) || !Array.isArray(futures.symbols)) {
       throw fail('BAD_RESPONSE', `respons ${BINANCE_PATHS.futuresExchangeInfo} tidak memuat array symbols`);
@@ -546,7 +597,9 @@ export function createBinanceMappingProvider({
         : { code: 'UNAVAILABLE', message: `${ID}: exchangeInfo spot gagal` };
     }
     const at = Math.trunc(clock());
-    const { rows, diagnostics } = buildBinanceMappingRows({ coins, futuresSymbols: futures.symbols, spotSymbols, verifiedAt: at });
+    const { rows, diagnostics } = buildBinanceMappingRows({
+      coins, futuresSymbols: futures.symbols, spotSymbols, verifiedAt: at, source: publicMode ? PUBLIC_SOURCE : SOURCE,
+    });
     const notes = [];
     if (spotError) notes.push('exchangeInfo spot gagal — spotSymbol null di semua baris; mapping futures tetap dipakai.');
     if (diagnostics.unknownNetworks.length > 0) notes.push('Kode jaringan Binance di luar tabel tidak dipetakan (tidak ditebak).');
@@ -560,8 +613,8 @@ export function createBinanceMappingProvider({
 
   return {
     id: ID,
-    displayName: 'Binance (pemetaan kontrak aset, baca saja)',
-    requiresKey: true,
+    displayName: publicMode ? 'Binance publik (pemetaan kontrak aset, tanpa kunci)' : 'Binance (pemetaan kontrak aset, baca saja)',
+    requiresKey: !publicMode,
     isSimulated: false,
     chains: CHAINS.filter((c) => Object.values(BINANCE_NETWORK_CHAINS).includes(c)),
     capabilities: new Set(['binanceMapping']),
@@ -569,7 +622,9 @@ export function createBinanceMappingProvider({
       docsUrl: 'https://developers.binance.com/docs/wallet/capital',
       attribution: null,
       displayAllowed: true,
-      notes: 'Kunci Binance hanya untuk membaca daftar kontrak aset; tidak pernah dipakai untuk order/penarikan. '
+      notes: (publicMode
+        ? 'Tanpa kunci: daftar kontrak dari endpoint publik situs Binance (tidak resmi, dapat berubah sewaktu-waktu). '
+        : 'Kunci Binance hanya untuk membaca daftar kontrak aset; tidak pernah dipakai untuk order/penarikan. ')
         + 'Posisi futures pribadi siapa pun tidak dapat diketahui dari data ini.',
     },
 

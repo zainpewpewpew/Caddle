@@ -369,7 +369,7 @@ export async function runSmartMoneySync({
     fetched: 0, duplicates: 0, rejected: 0, collisions: 0, reclassified: 0, inserted: 0, alerts: 0,
     alertsSkipped: { stale: 0, cooldown: 0 },
     wallets: { tracked: 0, selected: 0, synced: 0, failed: 0, deferred: 0, skippedNoProvider: 0 },
-    discovery: { candidates: 0, added: 0, skippedChains: [] },
+    discovery: { candidates: 0, added: 0, skippedChains: [], mode: 'none', trendingChain: null },
     mapping: { refreshed: [], upserted: 0, rejected: 0 },
     scored: 0, links: 0,
     providers: [], errors: [], notes: [],
@@ -525,15 +525,13 @@ export async function runSmartMoneySync({
     const discoveryChains = CHAINS.filter((c) => discoverers.some((p) => p.chains.includes(c))
       && registry.withCapability('walletTransfers', c).length > 0);
     const mappingActive = registry.withCapability('binanceMapping').length > 0;
+    const trendingCapable = (chain) => registry.withCapability('walletDiscovery', chain)
+      .some((p) => typeof p.trendingTokens === 'function' && usable(p, 'trendingTokens', chain));
     for (const chain of discoveryChains) {
       if (!matched.some((t) => t.chain === chain)) {
         summary.discovery.skippedChains.push(chain);
-        if (mappingActive) note(`Penemuan wallet ${chain} dilewati: belum ada token yang MATCHED di mapping Binance.`);
+        if (mappingActive && matched.length > 0) note(`Penemuan wallet ${chain} dilewati: belum ada token yang MATCHED di mapping Binance.`);
       }
-    }
-    if (!mappingActive && summary.discovery.skippedChains.length > 0 && matched.length === 0) {
-      note('Penemuan wallet otomatis dilewati: pemetaan Binance belum aktif (isi BINANCE_API_KEY + BINANCE_API_SECRET '
-        + 'read-only di .env). Hanya wallet di watchlist yang disinkronkan.');
     }
     const eligibleTokens = matched.filter((t) => discoveryChains.includes(t.chain));
     const rotState = (await repo.getSyncState(SYNC_STATE_KEYS.discovery))?.value ?? {};
@@ -541,7 +539,44 @@ export async function runSmartMoneySync({
     const take = Math.min(tune.discoveryTokensPerRun, eligibleTokens.length);
     const picked = Array.from({ length: take }, (_, i) => eligibleTokens[(offset + i) % eligibleTokens.length]);
     if (eligibleTokens.length > 0) {
-      await repo.setSyncState(SYNC_STATE_KEYS.discovery, { offset: (offset + take) % eligibleTokens.length }, { now });
+      summary.discovery.mode = 'binance';
+      await repo.setSyncState(SYNC_STATE_KEYS.discovery, { ...rotState, offset: (offset + take) % eligibleTokens.length }, { now });
+    }
+    // Cadangan jalur Etherscan-saja: belum ada satu pun token MATCHED (mapping Binance kosong/gagal) → pindai token
+    // dari pool trending GeckoTerminal di SATU chain per run (bergilir), menjaga kuota keyless ±6 panggilan/menit.
+    // Kandidatnya bersumber `geckoterminal-trending` dan alasannya menyebut "belum tentu listing Binance".
+    const trendingSource = new Map();
+    if (picked.length === 0) {
+      const fallbackChains = summary.discovery.skippedChains.filter(trendingCapable);
+      if (fallbackChains.length > 0) {
+        const tOffset = Number.isSafeInteger(rotState?.trendingOffset) && rotState.trendingOffset >= 0 ? rotState.trendingOffset : 0;
+        const chain = fallbackChains[tOffset % fallbackChains.length];
+        await repo.setSyncState(SYNC_STATE_KEYS.discovery, { ...rotState, trendingOffset: (tOffset + 1) % fallbackChains.length }, { now });
+        progress('discovery', 0, 1);
+        for (const p of registry.withCapability('walletDiscovery', chain)) {
+          if (typeof p.trendingTokens !== 'function' || !usable(p, 'trendingTokens', chain)) continue;
+          const r = await call(p, 'trendingTokens', { chain, limit: tune.discoveryTokensPerRun }, { chain });
+          if (!r.ok || !Array.isArray(r.value)) continue;
+          for (const t of r.value) {
+            const address = t && typeof t === 'object' ? normalizeAddress(chain, t.address) : null;
+            if (!address || picked.length >= tune.discoveryTokensPerRun || picked.some((x) => x.chain === chain && x.address === address)) continue;
+            picked.push({ chain, address, symbol: nonEmpty(t.symbol) ? t.symbol : null });
+            trendingSource.set(chain, p.id);
+          }
+          if (picked.length > 0) break;
+        }
+        summary.discovery.mode = 'trending';
+        summary.discovery.trendingChain = chain;
+        note(picked.length > 0
+          ? `Penemuan wallet ${chain} memakai ${picked.length} token trending GeckoTerminal karena mapping Binance belum `
+            + 'memiliki token MATCHED — kandidat belum tentu terkait token yang listing di Binance. Chain lain bergiliran di sync berikutnya.'
+          : `Penemuan wallet ${chain} via token trending GeckoTerminal tidak menghasilkan token.`);
+      } else if (summary.discovery.skippedChains.length > 0) {
+        note(mappingActive
+          ? 'Penemuan wallet otomatis dilewati: mapping Binance belum memiliki token MATCHED dan token trending tidak tersedia.'
+          : 'Penemuan wallet otomatis dilewati: pemetaan Binance belum aktif (provider binance-public tanpa kunci, atau '
+            + 'BINANCE_API_KEY + BINANCE_API_SECRET read-only di .env). Hanya wallet di watchlist yang disinkronkan.');
+      }
     }
     const candidates = [];
     const simulatedCandidates = new Set();
@@ -562,7 +597,14 @@ export async function runSmartMoneySync({
         }
         for (const c of r.value) {
           if (!c || typeof c !== 'object' || (c.chain !== undefined && c.chain !== chain)) continue;
-          candidates.push({ chain, address: c.address, source: nonEmpty(c.source) ? c.source : p.id, reason: c.reason ?? null });
+          const viaTrending = trendingSource.has(chain);
+          candidates.push({
+            chain, address: c.address,
+            source: viaTrending ? `${p.id}-trending` : nonEmpty(c.source) ? c.source : p.id,
+            reason: viaTrending
+              ? `Token trending GeckoTerminal (belum tentu listing Binance). ${c.reason ?? ''}`.trim()
+              : c.reason ?? null,
+          });
           const a = normalizeAddress(chain, c.address);
           if (p.isSimulated && a) simulatedCandidates.add(makeWalletKey(chain, a));
         }
