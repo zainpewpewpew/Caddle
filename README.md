@@ -131,6 +131,7 @@ Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
 | `npm run user:password -- --username <u>` | Mengganti kata sandi pengguna (prompt tersembunyi) dan mencabut semua sesinya |
 | `npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01` | Backtest walk-forward sebelum (v2) vs sesudah (v3); laporan di `reports/` ([docs/13](docs/13-panduan-akurasi-v3.md)) |
 | `npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01 --ml` | Sama, plus lab meta-labeling ML (bagian "Lab meta-labeling" di laporan; [docs/16](docs/16-riset-machine-learning.md)) |
+| `npm run reversal:replay -- --synthetic --seeds 21-60` / `-- --top 20 --timeframes 5m,15m,1h --from 2025-06-01` | Replay berurutan Reversal Radar (tanpa look-ahead) pada skenario sintetis atau data Binance nyata, pembanding mesin lama SA/PVA, laporan di `reports/` ([docs/21](docs/21-validasi-reversal-radar.md)) |
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |
