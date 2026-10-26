@@ -20,7 +20,7 @@ describe('migrasi database', () => {
   it('UNIT-DB-001 seluruh entitas wajib dibuat', () => {
     const db = openDatabase(':memory:');
     const result = migrate(db);
-    expect(result.applied).toEqual([1, 2, 3, 4, 5]);
+    expect(result.applied).toEqual([1, 2, 3, 4, 5, 6]);
     expect(tables(db)).toEqual(expect.arrayContaining(REQUIRED_TABLES));
   });
 

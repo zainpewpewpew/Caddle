@@ -6,11 +6,40 @@
 // Riset saja: worker tidak pernah mengirim order (LONG maupun SHORT).
 // Log terstruktur JSON per baris ke stdout.
 
+import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { ConfigError, loadConfig } from '../backend/app/config.js';
 import { openDatabase } from '../backend/database/connection.js';
 import { migrate } from '../backend/database/migrate.js';
+import { parseCalibrationFile } from '../backend/backtest/calibration.js';
 import { assembleWorker } from './assemble.js';
+
+/** Tabel kalibrasi hasil `npm run backtest -- --write-calibration config/calibration.json` (opsional). */
+// Relatif ke root repo (bukan cwd proses), kecuali CALIBRATION_PATH diatur.
+const CALIBRATION_PATH = process.env.CALIBRATION_PATH ?? fileURLToPath(new URL('../config/calibration.json', import.meta.url));
+
+/**
+ * Kalibrasi skor konfluensi → peluang historis. Tanpa file (atau file rusak) → null: scanner tetap jalan dan peluang
+ * tidak pernah ditampilkan (tidak dikarang). Hanya bentuk { version: 1, tables: { 'LONG:*'|'SHORT:*'|'ARAH:TF': tabel } }.
+ */
+function loadCalibration(path, logger) {
+  let raw;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    logger.info({ path }, 'kalibrasi backtest belum ada — peluang historis tidak ditampilkan');
+    return null;
+  }
+  try {
+    const parsed = parseCalibrationFile(raw);
+    logger.info({ path, tables: Object.keys(parsed.tables) }, 'kalibrasi backtest dimuat');
+    return parsed;
+  } catch (err) {
+    logger.warn({ path, err: err.message }, 'file kalibrasi diabaikan (tidak valid)');
+    return null;
+  }
+}
 
 const LEVELS = Object.freeze({ trace: 10, debug: 20, info: 30, warn: 40, error: 50, fatal: 60, silent: Infinity });
 const RESERVED = new Set(['time', 'level', 'msg']);
@@ -76,9 +105,11 @@ async function main() {
 
   // Perakitan jam server, repositori, REST, pipeline, dan scanner ada di worker/assemble.js (tanpa efek
   // samping) agar tes integrasi menguji perakitan yang sama.
+  const calibration = loadCalibration(CALIBRATION_PATH, logger);
   const { pipeline, scanner } = assembleWorker({
     db,
     logger,
+    analysisParams: calibration ? { calibration } : {},
     clock: Date.now,
     // Identitas proses di heartbeat: server yang baru start dapat mengenali heartbeat segar dari worker yang sudah
     // mati (SIGKILL/OOM) sebelum sempat menulis heartbeat akhir, sehingga tombol scanner tidak tertahan 90 detik.

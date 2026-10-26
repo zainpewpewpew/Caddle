@@ -3,7 +3,7 @@
 // Arah (Short Scanner): `direction` LONG | SHORT. /active tanpa direction = LONG (perilaku lama);
 // /history tanpa direction = kedua arah. Setiap item memuat field `direction`. Sinyal SHORT adalah
 // kandidat riset, bukan rekomendasi jual/short.
-import { ALIGNMENTS, DIRECTIONS, TIMEFRAMES } from '../market/contracts.js';
+import { ALIGNMENTS, CONFIDENCE_TIERS, DIRECTIONS, TIMEFRAMES } from '../market/contracts.js';
 import { PATTERN_STATES } from '../signals/index.js';
 
 // limit 1..500 (sama dengan batas listActive/history di repositori). Di luar rentang → 400, tidak dipotong diam-diam.
@@ -24,6 +24,8 @@ const activeQuerySchema = {
     // Alignment sudah relatif terhadap arah sinyal (SHORT: ALIGNED = HTF bearish).
     alignment: { type: 'string', enum: [...ALIGNMENTS] },
     minScore: { type: 'string', pattern: '^(100|[1-9]?[0-9])$' },
+    // Tier konfluensi v3 minimum (A tertinggi); sinyal lama tanpa tier tidak ikut bila filter dipakai.
+    minTier: { type: 'string', enum: [...CONFIDENCE_TIERS] },
     limit: LIMIT,
   },
 };
@@ -60,6 +62,7 @@ export async function signalRoutes(app, { signals, candles }) {
       state: q.state ?? null,
       alignment: q.alignment ?? null,
       minScore: q.minScore === undefined ? null : toInt(q.minScore),
+      minTier: q.minTier ?? null,
       limit,
     });
     return { items: await withLastPrice(rows), count: rows.length };
