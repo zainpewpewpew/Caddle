@@ -127,6 +127,17 @@ Kontrak lengkap: `docs/15-kontrak-smart-money.md`. Semua tabel `STRICT`, ber-pre
 
 Indeks parsial `WHERE is_simulated = 1` pada `sm_activities`, `sm_wallets`, `sm_alerts`, `sm_evaluations` membuat pemeriksaan "ada data simulasi?" (pita DATA SIMULASI di setiap respons) membaca indeks kecil, bukan memindai tabel. `sm_alerts.is_simulated` wajib diisi eksplisit oleh pemanggil (tidak ada default diam-diam).
 
+## 6c. Reversal Radar (`008_reversal_radar.sql`)
+
+Kontrak lengkap: `docs/19-kontrak-reversal-radar.md` §5; SQL di `backend/reversal/repository.js` (`repos.reversal`). Mesin TERPISAH dari `signals`/`signal_events` (SA/PVA & SD/PVD tidak disentuh). Semua tabel `STRICT`, timestamp INTEGER epoch ms; enum tahap/status/jenis setup/alasan tutup di-`CHECK` sesuai `backend/reversal/constants.js`; `score` 0..100 adalah skor aturan, bukan probabilitas.
+
+| Tabel | Isi & constraint penting |
+|---|---|
+| `reversal_candidates` | Satu baris per kandidat (symbol × timeframe): `stage`, `status`, `setup_type`, `score`, `first_detected_*`, `stage_entered_at`, `last_candle_time`, `last_evaluated_at`, `invalidation_price`, `trigger_price`, `extended`, `liquidity_class`, `snapshot_json` (ReversalSnapshot §4 lengkap untuk melanjutkan state machine setelah restart), `closed_at` + `close_reason` (terminal); indeks unik parsial `(symbol_id, timeframe) WHERE closed_at IS NULL` = paling banyak satu kandidat terbuka per seri; `(closed_at IS NULL) = (status NOT IN terminal)` di-`CHECK` |
+| `reversal_events` | Riwayat per kandidat: `type` OPENED / STAGE_UP / CANCELLED / EXPIRED / PROVISIONAL_STAGE (`provisional` 0/1 membedakan candle berjalan dari candle tutup), `from_stage`/`to_stage`, `from_status`/`to_status`, `candle_time`, `occurred_at`, `price`, `reason`, `detail_json`; indeks `(candidate_id, candle_time)` |
+| `reversal_cursors` | `(symbol_id, timeframe)` → `last_open_time` candle tutup terakhir yang dievaluasi (replay dari kursor, `WITHOUT ROWID`) |
+| `reversal_provisional` | Evaluasi candle BERJALAN terakhir per seri (`candle_open_time`, `evaluated_at`, `stage`, `score`, `snapshot_json`); tidak pernah membuka/menutup kandidat; dihapus saat candle tutup (`clearProvisional`) |
+
 ## 7. Catatan presisi
 
 OHLCV disimpan `REAL` (float64). Binance mengirim angka sebagai string desimal; float64 memberikan ±15 digit signifikan, cukup untuk rasio indikator. `tick_size`/`step_size` disimpan sebagai `TEXT` untuk mempertahankan nilai persis. Ditinjau di M2: parser kline menolak angka non-finite dan string non-desimal; indikator hanya memakai rasio sehingga galat float64 jauh di bawah ambang kondisi pola.
