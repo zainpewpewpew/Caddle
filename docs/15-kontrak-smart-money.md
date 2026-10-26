@@ -270,6 +270,41 @@ Metode yang tidak didukung melempar `ProviderError('NOT_SUPPORTED')`. Semua kega
 code: PROVIDER_ERROR_CODES, retryAfterMs|null, message }`; tidak pernah melempar error mentah ke API.
 `fixtureProvider` (`isSimulated: true`) hanya untuk tes, E2E, dan mode demo eksplisit; tidak pernah aktif default.
 
+### Provider pemetaan Binance: `binance-mapping` dan `binance-public`
+
+Keduanya dibuat di `providers/binanceMapping.js`, berkapabilitas `binanceMapping` saja, dan menghasilkan `mappingRows`
+dengan bentuk yang sama (langkah futures/spot `exchangeInfo` publik identik).
+
+| Id | Pembuat | `requiresKey` | Sumber daftar koin + `networkList` | `source` baris |
+| --- | --- | --- | --- | --- |
+| `binance-mapping` | `createBinanceMappingProvider({ apiKey, apiSecret, … })` | `true` | `GET /sapi/v1/capital/config/getall` (bertanda tangan, izin kunci dicek dulu) | `binance-getall[+prefix-rule][+denomination]` |
+| `binance-public` | `createBinancePublicMappingProvider({ fetchImpl?, clock?, sleep?, webBaseUrl?, spotBaseUrl?, futuresBaseUrl? })` | `false` | `GET https://www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll` (tanpa kunci) | `binance-public[+prefix-rule][+denomination]` |
+
+- `binance-public` **tidak pernah mengirim kunci** (opsi `apiKey`/`apiSecret` dibuang), `isConfigured()` selalu `true`,
+  dan `checkKeyRestrictions()` melempar `NOT_SUPPORTED`.
+- Endpoint `getNetworkCoinAll` adalah endpoint situs binance.com yang **tidak terdokumentasi resmi** (docs/14 §9.3), jadi
+  dibaca defensif lewat `publicCoinsOf(body)`: array langsung, atau `{ code: '000000', data: [...], success }`.
+  `success === false`, `code` selain `'000000'`, atau tanpa array → `null` → `ProviderError('BAD_RESPONSE')`.
+- Mode otomatis (`SMART_MONEY_PROVIDERS` kosong/`auto`, `config.js autoProviders`): `ETHERSCAN_API_KEY` →
+  `etherscan, routescan, geckoterminal`; lalu `binance-mapping` bila `BINANCE_API_KEY` **dan** `BINANCE_API_SECRET`
+  terisi, **selain itu** `binance-public` (hanya bila sudah ada provider lain). Kunci Binance read-only opsional dan
+  didahulukan; kedua provider pemetaan tidak pernah aktif bersamaan dalam mode otomatis.
+
+### Metode tambahan GeckoTerminal: `trendingTokens`
+
+Di luar kontrak adapter umum (hanya `geckoterminal`; pemanggil wajib cek `typeof p.trendingTokens === 'function'`):
+
+```js
+async trendingTokens({ chain, limit = 10, signal }) → [{ chain, address, symbol|null }]   // + .diagnostics non-enumerable
+```
+
+- Sumber: `GET /networks/{network}/trending_pools` (tanpa kunci). Per pool diambil token **base**; bila base adalah aset
+  quote, diambil token quote; aset quote, `native`, dan `ZERO_ADDRESS` dibuang. Satu entri per alamat, urutan sesuai
+  urutan trending, maks. `limit` (dibatasi batas daftar internal).
+- Respons tanpa array `data` → `ProviderError('BAD_RESPONSE')`. Diagnostik: `{ provider, method: 'trendingTokens', chain,
+  network, at, pools, skipped, tokens, notes }`.
+- Dipakai `sync.js` **hanya** sebagai cadangan penemuan (§4) — bukan sumber status MATCHED.
+
 ## 4. Persistensi & API
 
 Migrasi `007_smart_money.sql` (tabel `sm_*`), repositori `backend/smartmoney/repository.js`, layanan sinkronisasi
@@ -302,6 +337,32 @@ terjadwal yang bertemu sync manual dilewati lalu dicoba lagi 60 detik kemudian. 
 ditulis ke lease paling sering sekali per detik per tahap, sehingga terbaca dari proses mana pun. Sync manual berikutnya
 baru boleh 30 detik setelah putaran terakhir selesai (proses mana pun). Putaran yang berhenti karena kesalahan
 tak terduga dicatat sebagai `lastRun.status = 'FAILED'` dengan catatan generik (detail hanya di log, tersaring).
+
+**Penemuan wallet di `runSmartMoneySync`.** Chain penemuan = chain yang punya provider `walletDiscovery` **dan**
+`walletTransfers`. Dua jalur, dicatat di ringkasan run:
+
+```js
+summary.discovery = {
+  candidates: number, added: number,
+  skippedChains: [string],             // chain penemuan tanpa token MATCHED
+  mode: 'none' | 'binance' | 'trending',
+  trendingChain: string | null,        // chain yang dipindai jalur trending pada run ini; null selain mode 'trending'
+}
+```
+
+- `'binance'`: ada token MATCHED di mapping (dari `binance-mapping` atau `binance-public`) → `discoveryTokensPerRun`
+  token bergiliran per run; giliran disimpan di `offset`.
+- `'trending'`: **tidak ada satu pun** token terpilih dari mapping → pilih **satu** chain dari `skippedChains` yang
+  providernya punya `trendingTokens` (bergiliran via `trendingOffset`, menjaga kuota GeckoTerminal tanpa kunci),
+  ambil ≤ `discoveryTokensPerRun` token trending, lalu `discoverWallets` seperti biasa. Kandidat dari chain itu diberi
+  `source = '<provider>-trending'` (mis. `geckoterminal-trending`) dan `reason` diawali `Token trending GeckoTerminal
+  (belum tentu listing Binance).`; ringkasan menambah catatan yang sama. `trendingChain` diisi walau hasilnya 0 token.
+- `'none'`: penemuan tidak berjalan (tidak ada token MATCHED dan tidak ada provider trending) → catatan menjelaskan
+  sebabnya; hanya wallet yang sudah dilacak/di watchlist yang disinkronkan.
+
+State rotasi di `sm_sync_state` kunci `discoveryRotation` (`SYNC_STATE_KEYS.discovery`): `{ offset?: number,
+trendingOffset?: number }` — keduanya bilangan bulat ≥ 0, ditulis dengan menggabungkan nilai lama (`{ ...rotState, … }`)
+sehingga jalur satu tidak menghapus giliran jalur lain. Nilai tidak valid diperlakukan sebagai 0.
 
 ## 5. Bentuk respons API (dipakai frontend)
 
@@ -347,7 +408,11 @@ meta: {
     phase: 'start'|'mapping'|'discovery'|'transfers'|'analysis'|'alerts', done: number|null, total: number|null }`
     (tanpa id proses);
   - `lastRun`: ringkasan putaran terakhir yang sudah disaring (sama dengan `GET /status`), `status`
-    `'OK'|'DEGRADED'|'NO_PROVIDERS'|'ABORTED'|'FAILED'`;
+    `'OK'|'DEGRADED'|'NO_PROVIDERS'|'ABORTED'|'FAILED'`. Objek hitungan (mis. `discovery`, `mapping`) disalin hanya
+    berupa angka, daftar string (dipotong), dan string token aman `^[a-z0-9_-]{1,32}$` — sehingga
+    `discovery.mode` dan `discovery.trendingChain` ikut, teks bebas tidak. UI menulis jalur penemuan di baris hasil
+    (*Penemuan wallet (token listing Binance)* / *(token trending GeckoTerminal di <chain> — belum tentu listing
+    Binance)*) dan *Pemetaan Binance (publik, tanpa kunci)* bila `mapping.refreshed` memuat `binance-public`;
   - `reason`: `null`, `'NO_PROVIDERS'` (belum ada sumber data — berlaku untuk semua peran, didahulukan), atau
     `'NOT_ADMIN'`; `canTrigger = reason === null`;
   - `cooldownUntil`: epoch ms akhir jeda 30 detik setelah putaran terakhir, atau `null`.

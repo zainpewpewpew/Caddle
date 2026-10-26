@@ -23,13 +23,15 @@ const hasValue = (env, name) => typeof env[name] === 'string' && env[name].trim(
 /**
  * Mode otomatis (jalur gratis, docs/17): provider aktif mengikuti kunci yang terisi di .env. Dengan
  * ETHERSCAN_API_KEY → etherscan (chain paket gratis) + routescan (chain sisanya, tanpa kunci) + geckoterminal
- * (penemuan wallet, tanpa kunci); dengan BINANCE_API_KEY + BINANCE_API_SECRET → binance-mapping. Tanpa kunci apa pun
+ * (penemuan wallet, tanpa kunci); dengan BINANCE_API_KEY + BINANCE_API_SECRET → binance-mapping, tanpa kunci Binance →
+ * binance-public (daftar kontrak dari endpoint publik Binance, jalur Etherscan-saja). Tanpa kunci apa pun
  * → tidak ada provider (fitur menampilkan "belum ada sumber data"; tidak ada panggilan jaringan).
  */
 function autoProviders(env) {
   const ids = [];
   if (hasValue(env, 'ETHERSCAN_API_KEY')) ids.push('etherscan', 'routescan', 'geckoterminal');
   if (hasValue(env, 'BINANCE_API_KEY') && hasValue(env, 'BINANCE_API_SECRET')) ids.push('binance-mapping');
+  else if (ids.length > 0) ids.push('binance-public');
   return ids;
 }
 

@@ -244,12 +244,15 @@ function invalidAddress(reply, chain, path = '/address') {
 const publicLabel = (l) => ({ label: l.label, category: l.category, source: l.source });
 
 /** Salinan angka (dan daftar string) dari objek hitungan ringkasan run — tidak ada teks bebas yang diteruskan. */
+const SAFE_TOKEN_RE = /^[a-z0-9_-]{1,32}$/;
+
 function plainCounts(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
   const out = {};
   for (const [k, v] of Object.entries(obj)) {
     if (isNum(v)) out[k] = v;
     else if (Array.isArray(v) && v.every((x) => typeof x === 'string')) out[k] = v.slice(0, LAST_RUN_LIST_MAX).map((x) => truncate(x, 64));
+    else if (typeof v === 'string' && SAFE_TOKEN_RE.test(v)) out[k] = v; // mis. discovery.mode / trendingChain
   }
   return out;
 }

@@ -11,11 +11,12 @@
 //   Skenario simulasi (tests/fixtures/smartmoney/scenario.js) tidak pernah diimpor kode backend.
 // - Adapter live jalur gratis (pilihan pengguna 2026-10-26, docs/17 "Mengaktifkan data live (jalur gratis)"):
 //   etherscan (ETHERSCAN_API_KEY), routescan (tanpa kunci; ROUTESCAN_API_KEY opsional), geckoterminal (tanpa kunci),
-//   binance-mapping (BINANCE_API_KEY + BINANCE_API_SECRET, izin baca saja). Adapter berkunci tanpa kunci → null
+//   binance-mapping (BINANCE_API_KEY + BINANCE_API_SECRET, izin baca saja), binance-public (tanpa kunci: daftar kontrak
+//   dari endpoint publik situs Binance — jalur Etherscan-saja, 2026-10-26). Adapter berkunci tanpa kunci → null
 //   (dilaporkan "belum dikonfigurasi", tidak pernah memanggil jaringan). Urutan SMART_MONEY_PROVIDERS = prioritas
 //   per chain: Etherscan untuk chain paket gratisnya, Routescan untuk chain sisanya (fallback NOT_SUPPORTED).
 
-import { createBinanceMappingProvider } from './binanceMapping.js';
+import { createBinanceMappingProvider, createBinancePublicMappingProvider } from './binanceMapping.js';
 import { createEtherscanProvider } from './etherscan.js';
 import { createGeckoTerminalProvider } from './geckoTerminal.js';
 import { createProviderRegistry } from './registry.js';
@@ -73,6 +74,12 @@ export const LIVE_PROVIDER_FACTORIES = Object.freeze({
       return apiKey && apiSecret ? createBinanceMappingProvider({ apiKey, apiSecret, ...deps }) : null;
     },
     unavailableReason: 'BINANCE_API_KEY / BINANCE_API_SECRET belum diisi di .env',
+  }),
+  'binance-public': Object.freeze({
+    displayName: 'Pemetaan kontrak Binance publik (tanpa kunci)',
+    requiresKey: false,
+    isSimulated: false,
+    create: (env, deps) => createBinancePublicMappingProvider({ ...deps }),
   }),
 });
 

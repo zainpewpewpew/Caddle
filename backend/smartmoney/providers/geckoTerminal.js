@@ -35,6 +35,12 @@
 //   UniswapX), atau bundler smart account — dicatat di `reason`. Kandidat BELUM dinilai; kualitas wallet tetap
 //   ditentukan dari riwayat swap (classify → pnl → walletScore).
 //
+// Token trending (trendingTokens, tambahan di luar kontrak adapter, 2026-10-26 jalur Etherscan-saja):
+// - GET /networks/{net}/trending_pools — pool trending jaringan [dok GeckoTerminal; bentuk relationships sama dengan
+//   pool token]. Diambil token BASE pool (atau token quote bila base adalah aset quote), aset quote/nol dibuang,
+//   satu entri per alamat sesuai urutan trending. Dipakai sync.js HANYA sebagai cadangan bila chain belum punya token
+//   MATCHED di mapping Binance; kandidat hasilnya ditandai sumber `geckoterminal-trending` (belum tentu listing Binance).
+//
 // Diagnostik: kontrak mengharuskan discoverWallets/fetchPrices mengembalikan ARRAY. Diagnostik dilampirkan sebagai
 // properti NON-enumerable `diagnostics` pada array hasil (tidak ikut JSON/perbandingan) dan salinannya tersedia lewat
 // `lastDiagnostics()` (panggilan terakhir metode mana pun; null sebelum ada panggilan).
@@ -430,6 +436,44 @@ export function createGeckoTerminalProvider({
   }
 
   /**
+   * Token dari pool trending jaringan (cadangan penemuan tanpa mapping Binance).
+   * @param {{ chain: string, limit?: number, signal?: AbortSignal }} params
+   * @returns {Promise<Array<{ chain: string, address: string, symbol: string|null }>>} + `.diagnostics`
+   */
+  async function trendingTokens({ chain, limit = 10, signal } = {}) {
+    const network = networkOf(chain);
+    const max = Number.isInteger(limit) && limit > 0 ? Math.min(limit, MAX_LISTED) : 10;
+    const diagnostics = {
+      provider: ID, method: 'trendingTokens', chain, network, at: clock(), pools: 0, skipped: 0, tokens: 0, notes: [],
+    };
+    const body = await get(`/networks/${network}/trending_pools`, signal);
+    if (!isObject(body) || !Array.isArray(body.data)) {
+      throw new ProviderError('BAD_RESPONSE', `${ID}: respons trending_pools tidak memuat array data`, { provider: ID });
+    }
+    const out = [];
+    const seen = new Set();
+    for (const item of body.data) {
+      diagnostics.pools += 1;
+      const rel = isObject(item) && isObject(item.relationships) ? item.relationships : {};
+      const baseToken = addressFromId(chain, network, rel.base_token?.data?.id);
+      const quoteToken = addressFromId(chain, network, rel.quote_token?.data?.id);
+      const name = isObject(item?.attributes) && typeof item.attributes.name === 'string' ? item.attributes.name.split(' / ') : [];
+      const pick = baseToken !== null && !isQuoteAsset(chain, baseToken) ? { address: baseToken, symbol: symbolOf(name[0]) }
+        : quoteToken !== null && !isQuoteAsset(chain, quoteToken) ? { address: quoteToken, symbol: symbolOf(name[1]) } : null;
+      if (pick === null || pick.address === NATIVE_TOKEN || pick.address === ZERO_ADDRESS || seen.has(pick.address)) {
+        diagnostics.skipped += 1;
+        continue;
+      }
+      seen.add(pick.address);
+      out.push({ chain, ...pick });
+      if (out.length >= max) break;
+    }
+    diagnostics.tokens = out.length;
+    if (out.length === 0) diagnostics.notes.push('Tidak ada token non-quote di pool trending.');
+    return finish(out, diagnostics);
+  }
+
+  /**
    * Harga USD terkini per alamat token (batch ≤ 30 alamat per panggilan). Harga kosong / tidak terbaca / ≤ 0 dilewati
    * (dicatat di diagnostik) — tidak pernah diganti 0.
    * @param {{ chain: string, addresses?: string[], signal?: AbortSignal }} params
@@ -519,5 +563,6 @@ export function createGeckoTerminalProvider({
     fetchBinanceMapping: notSupported(ID, 'fetchBinanceMapping'),
     fetchPrices,
     discoverWallets,
+    trendingTokens,
   };
 }

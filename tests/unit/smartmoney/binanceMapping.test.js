@@ -3,7 +3,7 @@ import { matchToken } from '../../../backend/smartmoney/binanceMatch.js';
 import { validateAdapter } from '../../../backend/smartmoney/providers/adapter.js';
 import {
   BINANCE_NETWORK_CHAINS, BINANCE_PATHS, PERP_PREFIX_RE, buildBinanceMappingRows, createBinanceMappingProvider,
-  findExcessPermissions, signQuery,
+  createBinancePublicMappingProvider, findExcessPermissions, publicCoinsOf, signQuery,
 } from '../../../backend/smartmoney/providers/binanceMapping.js';
 import { createProviderRegistry } from '../../../backend/smartmoney/providers/registry.js';
 import {
@@ -429,5 +429,123 @@ describe('Binance mapping — kontrak adapter', () => {
     expect(() => createBinanceMappingProvider({ spotBaseUrl: 'https://api.binance.com/sapi' })).toThrow(TypeError);
     expect(() => createBinanceMappingProvider({ recvWindow: 70_000 })).toThrow(RangeError);
     expect(createBinanceMappingProvider({ spotBaseUrl: 'https://api1.binance.com' }).isConfigured()).toBe(false);
+  });
+});
+
+/**
+ * fetch palsu untuk mode publik tanpa kunci: www.binance.com/bapi/... mengembalikan `publicBody` (default bentuk
+ * `{ code: '000000', data, success: true }`); endpoint /sapi/ sengaja selalu 401 agar pemakaian kunci ketahuan.
+ */
+function setupPublic({ publicBody = { code: '000000', message: null, data: COINS, success: true }, futures = FUTURES, spot = SPOT } = {}, options = {}) {
+  const t = fakeTime();
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const u = new URL(url);
+    const route = `${u.host}${u.pathname}`;
+    calls.push({ url: u, route, at: t.clock(), init });
+    switch (route) {
+      case `www.binance.com${BINANCE_PATHS.publicCoins}`: return jsonResponse(200, publicBody);
+      case `fapi.binance.com${BINANCE_PATHS.futuresExchangeInfo}`: return jsonResponse(200, { timezone: 'UTC', serverTime: NOW, symbols: futures });
+      case `api.binance.com${BINANCE_PATHS.spotExchangeInfo}`: return jsonResponse(200, { timezone: 'UTC', serverTime: NOW, symbols: spot });
+      default: return jsonResponse(401, { code: -2015, msg: 'Invalid API-key, IP, or permissions for action.' });
+    }
+  };
+  const provider = createBinancePublicMappingProvider({ fetchImpl, clock: t.clock, sleep: t.sleep, ...options });
+  return { provider, calls, t };
+}
+
+describe('Binance mapping — mode publik tanpa kunci (binance-public)', () => {
+  it('UNIT-SM-BNM-008 publicCoinsOf: { code: "000000", data, success: true } atau array langsung → array; selain itu null', () => {
+    const data = [binanceCoin('PEPE', [binanceNetwork('ETH', PEPE)])];
+    expect(publicCoinsOf({ code: '000000', message: null, data, success: true })).toBe(data);
+    expect(publicCoinsOf({ data })).toBe(data); // tanpa code/success → tetap dibaca
+    expect(publicCoinsOf(data)).toBe(data);
+    expect(publicCoinsOf([])).toEqual([]);
+    for (const bad of [
+      { code: '000000', data, success: false }, { code: '100001', data, success: true }, { code: 100001, data },
+      { code: '000000', data: null, success: true }, { code: '000000', data: { coins: data }, success: true },
+      null, undefined, 'teks', 42,
+    ]) {
+      expect(publicCoinsOf(bad)).toBeNull();
+    }
+  });
+
+  it('UNIT-SM-BNM-009 endpoint publik → baris sama dengan getall bersumber binance-public; tanpa kunci, tanda tangan, atau /sapi/', async () => {
+    const { provider, calls } = setupPublic();
+    const rows = await provider.fetchBinanceMapping();
+    expect(calls.map((c) => c.route)).toEqual([
+      'www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll',
+      'fapi.binance.com/fapi/v1/exchangeInfo', 'api.binance.com/api/v3/exchangeInfo',
+    ]);
+    for (const c of calls) {
+      expect(c.url.search).toBe('');
+      expect(c.url.searchParams.has('signature')).toBe(false);
+      expect(Object.keys(c.init.headers).map((h) => h.toLowerCase())).not.toContain('x-mbx-apikey');
+      expect(c.init).toMatchObject({ method: 'GET', redirect: 'error' });
+    }
+    expect(calls.map((c) => c.at - NOW)).toEqual([0, 500, 1000]); // throttle 2/detik tetap berlaku
+    expect(rows).toHaveLength(15);
+    expect(rows.every((r) => r.source.startsWith('binance-public'))).toBe(true);
+    expect(rowsFor(rows, 'ethereum', PEPE)).toEqual([{
+      chain: 'ethereum', contractAddress: PEPE, binanceAsset: 'PEPE', spotSymbol: 'PEPEUSDT', futuresSymbol: '1000PEPEUSDT',
+      multiplier: 1000, source: 'binance-public+prefix-rule', verifiedAt: NOW + 1000,
+    }]);
+    expect(rowsFor(rows, 'bsc', BABYDOGE_BSC)).toMatchObject([{ source: 'binance-public+denomination', multiplier: 1_000_000 }]);
+    expect(rowsFor(rows, 'solana', USDC_SOL)).toMatchObject([{ source: 'binance-public', futuresSymbol: null }]);
+    // Hasil sama dengan mode berkunci, kecuali sumbernya.
+    const keyed = await setup().provider.fetchBinanceMapping();
+    const strip = (list) => list.map(({ source: _s, verifiedAt: _v, ...r }) => r);
+    expect(strip(rows)).toEqual(strip(keyed));
+    expect(provider.lastDiagnostics()).toMatchObject({ coins: 12, rows: 15, spotAvailable: true });
+
+    // Array langsung (tanpa amplop) juga diterima.
+    const bare = await setupPublic({ publicBody: COINS }).provider.fetchBinanceMapping();
+    expect(bare).toEqual(rows);
+  });
+
+  it('NEG-SM-BNM-004 mode publik: success:false / kode bukan "000000" / tanpa array → BAD_RESPONSE; kunci yang diberikan diabaikan', async () => {
+    for (const publicBody of [
+      { code: '000000', data: COINS, success: false }, { code: '345001', message: 'system busy', data: null, success: false },
+      { code: '000000', data: null, success: true }, { coins: COINS }, 'bukan objek',
+    ]) {
+      const { provider, calls } = setupPublic({ publicBody });
+      await expect(provider.fetchBinanceMapping()).rejects.toMatchObject({ code: 'BAD_RESPONSE', provider: 'binance-public' });
+      expect(calls.map((c) => c.route)).toEqual(['www.binance.com/bapi/capital/v1/public/capital/getNetworkCoinAll']);
+    }
+    // HTTP 451 tetap dipetakan seperti mode berkunci.
+    const fetch451 = async () => jsonResponse(451, { code: 0, msg: 'Service unavailable from a restricted location' });
+    await expect(createBinancePublicMappingProvider({ fetchImpl: fetch451, ...fakeTime() }).fetchBinanceMapping())
+      .rejects.toMatchObject({ code: 'UNAVAILABLE', status: 451, provider: 'binance-public' });
+
+    // apiKey/apiSecret yang (keliru) diteruskan tidak pernah dikirim maupun bocor.
+    const { provider, calls } = setupPublic({}, { apiKey: KEY, apiSecret: SECRET });
+    await provider.fetchBinanceMapping();
+    for (const c of calls) {
+      expect(Object.values(c.init.headers)).not.toContain(KEY);
+      expect(c.url.href).not.toContain(KEY);
+      expect(c.url.searchParams.has('signature')).toBe(false);
+    }
+    expect(JSON.stringify(provider)).not.toMatch(new RegExp(`${KEY}|${SECRET}`));
+  });
+
+  it('UNIT-SM-BNM-010 kontrak adapter publik: validateAdapter lolos, tanpa kunci, terkonfigurasi; checkKeyRestrictions → NOT_SUPPORTED tanpa jaringan', async () => {
+    const { provider, calls } = setupPublic();
+    expect(validateAdapter(provider)).toEqual([]);
+    expect(provider).toMatchObject({ id: 'binance-public', requiresKey: false, isSimulated: false });
+    expect(provider.displayName).toBe('Binance publik (pemetaan kontrak aset, tanpa kunci)');
+    expect([...provider.capabilities]).toEqual(['binanceMapping']);
+    expect(provider.terms.notes).toBe('Tanpa kunci: daftar kontrak dari endpoint publik situs Binance (tidak resmi, dapat berubah sewaktu-waktu). '
+      + 'Posisi futures pribadi siapa pun tidak dapat diketahui dari data ini.');
+    expect([...provider.chains].sort()).toEqual(['arbitrum', 'base', 'bsc', 'ethereum', 'optimism', 'polygon', 'solana']);
+    expect(provider.isConfigured()).toBe(true);
+    await expect(provider.checkKeyRestrictions()).rejects.toMatchObject({ code: 'NOT_SUPPORTED', provider: 'binance-public' });
+    for (const m of ['fetchWalletTransfers', 'fetchLabels', 'fetchPrices', 'discoverWallets']) {
+      await expect(provider[m]({})).rejects.toMatchObject({ code: 'NOT_SUPPORTED', provider: 'binance-public' });
+    }
+    expect(calls).toHaveLength(0);
+    expect(createProviderRegistry({ adapters: [provider], enabledIds: ['binance-public'] }).withCapability('binanceMapping')).toEqual([provider]);
+    expect(() => createBinancePublicMappingProvider({ webBaseUrl: 'http://www.binance.com' })).toThrow(TypeError);
+    expect(() => createBinancePublicMappingProvider({ webBaseUrl: 'https://www.contoh.invalid' })).toThrow(TypeError);
+    expect(() => createBinancePublicMappingProvider({ webBaseUrl: 'https://www.binance.com/bapi' })).toThrow(TypeError);
   });
 });

@@ -3,7 +3,7 @@ import { openDatabase } from '../../../backend/database/connection.js';
 import { migrate } from '../../../backend/database/migrate.js';
 import { DEFAULT_ALERT_PREFS } from '../../../backend/smartmoney/alerts.js';
 import { matchToken } from '../../../backend/smartmoney/binanceMatch.js';
-import { EXCLUDING_FLAGS, NATIVE_TOKEN, QUOTE_ASSETS, tokenKey, walletKey } from '../../../backend/smartmoney/contracts.js';
+import { CHAINS, EXCLUDING_FLAGS, NATIVE_TOKEN, QUOTE_ASSETS, tokenKey, walletKey } from '../../../backend/smartmoney/contracts.js';
 import { enrichNativeUsd } from '../../../backend/smartmoney/nativePrices.js';
 import { COLLISION_LOG_INDEX_BASE } from '../../../backend/smartmoney/normalize.js';
 import { ProviderError } from '../../../backend/smartmoney/providers/errors.js';
@@ -14,6 +14,7 @@ import {
   DEFAULT_SYNC_TUNING, SYNC_STATE_KEYS, matchedTokensFromMapping, permissiveAlertPrefs, runSmartMoneySync,
   sanitizeProviderMessage,
 } from '../../../backend/smartmoney/sync.js';
+import { fakeEvmAddress, fakeSolanaAddress } from '../../fixtures/smartmoney/liveShapes.js';
 import { buildScenario } from '../../fixtures/smartmoney/scenario.js';
 
 // Seluruh data berasal dari skenario SIMULASI (alamat & hash fiktif) lewat provider fixture.
@@ -67,6 +68,7 @@ describe('sinkronisasi smart money (runSmartMoneySync)', () => {
     // 12 ethereum + 3 base kandidat valid; hot wallet CEX & pool berlabel dibuang; Q1 ganda digabung.
     expect(s.discovery.added).toBe(15);
     expect(s.discovery.skippedChains).toEqual(['solana']);
+    expect(s.discovery).toMatchObject({ mode: 'binance', trendingChain: null });
     expect(s.notes.some((n) => n.includes('solana') && n.includes('MATCHED'))).toBe(true);
     const tracked = await repo.listWallets();
     const keys = new Set(tracked.map((w) => walletKey(w.chain, w.address)));
@@ -99,7 +101,100 @@ describe('sinkronisasi smart money (runSmartMoneySync)', () => {
     expect(s.notes.filter((n) => n.includes('pemetaan Binance belum aktif'))).toHaveLength(1);
     expect(s.notes.some((n) => n.includes('BINANCE_API_KEY + BINANCE_API_SECRET'))).toBe(true);
     expect(s.notes.some((n) => n.includes('MATCHED di mapping Binance'))).toBe(false);
+    expect(s.discovery).toMatchObject({ mode: 'none', trendingChain: null });
+    expect(s.notes.some((n) => n.includes('trending'))).toBe(false);
     expect(await repo.listWallets()).toEqual([]);
+  });
+
+  it('UNIT-SM-SYNC-014 tanpa token MATCHED: cadangan token trending di SATU chain per run (bergilir); kandidat bersumber <id>-trending', async () => {
+    const trendCalls = [];
+    const discCalls = [];
+    const tokensFor = (chain) => [1, 2, 3, 4, 5, 6].map((i) => (chain === 'solana' ? fakeSolanaAddress(`trend-${chain}-${i}`) : fakeEvmAddress(`trend-${chain}-${i}`)));
+    const trending = (fixture) => [derive(fixture, {
+      capabilities: new Set([...fixture.capabilities].filter((c) => c !== 'binanceMapping')),
+      trendingTokens: async ({ chain, limit }) => {
+        trendCalls.push({ chain, limit });
+        const [a, b, ...rest] = tokensFor(chain);
+        const upper = chain === 'solana' ? a : `0x${a.slice(2).toUpperCase()}`;
+        // Entri rusak, alamat ganda (beda huruf), dan lebih banyak dari limit → disaring sync.
+        return [null, { address: 'bukan-alamat' }, { address: upper, symbol: 'TRD1' }, { address: a, symbol: 'TRD1' }, { address: b, symbol: '' }, ...rest.map((address) => ({ address }))];
+      },
+      discoverWallets: async (args) => { discCalls.push(args); return fixture.discoverWallets(args); },
+    })];
+    const { repo, run, advance } = setup({ adapters: trending });
+    const order = CHAINS.filter((c) => ['ethereum', 'base', 'solana'].includes(c));
+
+    const s = await run();
+    const first = order[0];
+    expect(s.status).toBe('OK');
+    expect(trendCalls).toEqual([{ chain: first, limit: DEFAULT_SYNC_TUNING.discoveryTokensPerRun }]);
+    expect(s.discovery).toMatchObject({ mode: 'trending', trendingChain: first });
+    expect(s.discovery.skippedChains).toEqual(order);
+    // Hanya chain trending yang dipindai, dengan token trending yang sudah dinormalisasi & dibatasi.
+    expect(discCalls.map((c) => c.chain)).toEqual([first]);
+    const [a, b, c3, c4] = tokensFor(first);
+    expect(discCalls[0].tokens).toEqual([
+      { chain: first, address: a, symbol: 'TRD1' }, { chain: first, address: b, symbol: null },
+      { chain: first, address: c3, symbol: null }, { chain: first, address: c4, symbol: null },
+    ]);
+    expect(s.discovery.added).toBeGreaterThan(0);
+    const wallets = await repo.listWallets();
+    expect(wallets).toHaveLength(s.discovery.added);
+    for (const w of wallets) {
+      expect(w.chain).toBe(first);
+      expect(w.discoveredVia).toBe('fixture-trending');
+      expect(w.discoveredVia.endsWith('-trending')).toBe(true);
+      expect(w.discoveryReason).toMatch(/^Token trending GeckoTerminal \(belum tentu listing Binance\)\. Trader aktif token/);
+    }
+    expect(s.notes.filter((n) => n.includes('token trending GeckoTerminal') && n.includes('belum tentu terkait token yang listing di Binance'))).toHaveLength(1);
+    expect(s.notes.some((n) => n.includes('pemetaan Binance belum aktif'))).toBe(false);
+    expect(s.notes.some((n) => n.includes('dilewati: belum ada token yang MATCHED'))).toBe(false);
+    expect((await repo.getSyncState(SYNC_STATE_KEYS.discovery)).value).toMatchObject({ trendingOffset: 1 });
+
+    // Run berikutnya: chain berikutnya, lalu kembali ke awal.
+    for (let i = 1; i <= order.length; i += 1) {
+      advance(HOUR);
+      const next = await run();
+      expect(next.discovery).toMatchObject({ mode: 'trending', trendingChain: order[i % order.length] });
+    }
+    expect(trendCalls.map((c) => c.chain)).toEqual([...order, order[0]]);
+    expect((await repo.getSyncState(SYNC_STATE_KEYS.discovery)).value).toMatchObject({ trendingOffset: 1 % order.length });
+  });
+
+  it('EDGE-SM-SYNC-012 cadangan trending: hasil kosong / gagal dicatat jujur; mapping aktif tanpa MATCHED tetap memakai trending', async () => {
+    const withTrending = (impl, { keepMapping = false } = {}) => (fixture) => [derive(fixture, {
+      capabilities: new Set([...fixture.capabilities].filter((c) => keepMapping || c !== 'binanceMapping')),
+      ...(keepMapping ? { fetchBinanceMapping: async () => [] } : {}),
+      trendingTokens: impl,
+    })];
+    const empty = await setup({ adapters: withTrending(async () => []) }).run();
+    expect(empty.discovery).toMatchObject({ mode: 'trending', added: 0, candidates: 0 });
+    expect(empty.notes.some((n) => n.includes('via token trending GeckoTerminal tidak menghasilkan token'))).toBe(true);
+
+    const failing = await setup({ adapters: withTrending(async () => { throw new ProviderError('UNAVAILABLE', 'trending down'); }) }).run();
+    expect(failing.status).toBe('DEGRADED');
+    expect(failing.discovery).toMatchObject({ mode: 'trending', added: 0 });
+    expect(failing.errors).toEqual([expect.objectContaining({ code: 'UNAVAILABLE', method: 'trendingTokens' })]);
+
+    // trendingTokens NOT_SUPPORTED → tidak dianggap gagal.
+    const unsupported = await setup({ adapters: withTrending(async () => { throw new ProviderError('NOT_SUPPORTED', 'tidak ada'); }) }).run();
+    expect(unsupported.errors).toEqual([]);
+    expect(unsupported.discovery.added).toBe(0);
+
+    // Mapping aktif tetapi kosong (mis. endpoint publik Binance gagal/berubah) → trending tetap dipakai, tanpa catatan per chain.
+    const tokens = [{ address: fakeEvmAddress('trend-mapping-empty') }];
+    const mappingEmpty = await setup({ adapters: withTrending(async ({ chain }) => (chain === 'solana' ? [] : tokens), { keepMapping: true }) }).run();
+    expect(mappingEmpty.mapping.refreshed).toEqual([]);
+    expect(mappingEmpty.notes.some((n) => n.includes('Mapping Binance dari "fixture" kosong'))).toBe(true);
+    expect(mappingEmpty.discovery.mode).toBe('trending');
+    expect(mappingEmpty.discovery.added).toBeGreaterThan(0);
+    expect(mappingEmpty.notes.some((n) => n.includes('dilewati: belum ada token yang MATCHED'))).toBe(false);
+
+    // Mapping aktif tanpa MATCHED dan tanpa trendingTokens → satu catatan.
+    const noTrend = (fixture) => [derive(fixture, { fetchBinanceMapping: async () => [] })];
+    const none = await setup({ adapters: noTrend }).run();
+    expect(none.discovery).toMatchObject({ mode: 'none', added: 0 });
+    expect(none.notes.filter((n) => n.includes('mapping Binance belum memiliki token MATCHED dan token trending tidak tersedia'))).toHaveLength(1);
   });
 
   it('UNIT-SM-SYNC-002 klasifikasi tersimpan: hanya swap = beli; penarikan CEX/bridge/deposit CEX bukan beli/jual', async () => {

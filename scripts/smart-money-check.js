@@ -1,7 +1,8 @@
 // Cek koneksi & bentuk data sumber Insider / Smart Money Radar — jalankan di Mac: `npm run smart-money:check`.
 // Lingkungan pengembangan cloud tidak dapat menjangkau API on-chain mana pun (docs/14 §0), jadi skrip ini adalah
-// verifikasi live pertama atas adapter jalur gratis: Etherscan V2, Routescan, GeckoTerminal, pemetaan Binance
-// (kunci read-only), dan harga koin native per jam dari Binance. BACA SAJA: hanya permintaan GET; kunci API tidak
+// verifikasi live pertama atas adapter jalur gratis: Etherscan V2, Routescan, GeckoTerminal (penemuan + token
+// trending), pemetaan Binance publik TANPA kunci, pemetaan Binance (kunci read-only, opsional), dan harga koin native
+// per jam dari Binance. Bagian akhir "Jalur Etherscan-saja" merangkum apa yang jalan hanya dengan ETHERSCAN_API_KEY. BACA SAJA: hanya permintaan GET; kunci API tidak
 // pernah dicetak (pesan error adapter sudah disamarkan). Hasil: ringkasan per sumber & chain + kode keluar
 // 0 (tidak ada masalah fatal) / 1 (ada sumber terkonfigurasi yang gagal fatal, mis. kunci ditolak).
 
@@ -9,7 +10,9 @@ import { createBinanceRestClient } from '../backend/ingestion/binance/restClient
 import { matchToken } from '../backend/smartmoney/binanceMatch.js';
 import { EVM_CHAINS } from '../backend/smartmoney/contracts.js';
 import { createNativePriceResolver } from '../backend/smartmoney/nativePrices.js';
-import { createBinanceMappingProvider } from '../backend/smartmoney/providers/binanceMapping.js';
+import {
+  createBinanceMappingProvider, createBinancePublicMappingProvider,
+} from '../backend/smartmoney/providers/binanceMapping.js';
 import { createEtherscanProvider } from '../backend/smartmoney/providers/etherscan.js';
 import {
   GECKOTERMINAL_BASE_URL, GECKOTERMINAL_NETWORKS, createGeckoTerminalProvider,
@@ -27,6 +30,8 @@ const env = process.env;
 const now = Date.now();
 const problems = [];
 const usable = { etherscan: [], routescan: [] };
+/** Status jalur tanpa kunci Binance: null = belum dicek, true/false = hasil cek. */
+const keyless = { publicMapping: null, publicMappingRows: 0, trending: null, trendingTokens: 0, discovery: null };
 
 const line = (text = '') => process.stdout.write(`${text}\n`);
 const errText = (err) => `${err?.code ?? 'ERROR'} — ${err?.message ?? String(err)}`;
@@ -96,22 +101,54 @@ async function checkGeckoTerminal() {
     const d = disc.value.diagnostics ?? gt.lastDiagnostics?.() ?? {};
     const missing = Object.keys(d.missingTradeKeys ?? {});
     const unknown = d.unknownTradeKeys ?? [];
+    keyless.discovery = true;
     line(`  ✅ penemuan wallet (pembeli PEPE ≥ $1.000, 24 jam): ${disc.value.length} kandidat (${disc.ms} ms)`);
     if (missing.length || unknown.length) line(`     field trade hilang: ${list(missing) || '-'} · field baru: ${list(unknown) || '-'}`);
     if (d.errors?.length) line(`     galat parsial: ${list(d.errors.map((e) => e.code ?? String(e)))}`);
   } else {
+    keyless.discovery = false;
     line(`  ❌ penemuan wallet: ${errText(disc.err)}`);
+  }
+  const trend = await timed(() => gt.trendingTokens({ chain: 'ethereum', limit: 5 }));
+  keyless.trending = trend.ok && trend.value.length > 0;
+  keyless.trendingTokens = trend.ok ? trend.value.length : 0;
+  if (trend.ok) {
+    const shown = trend.value.map((t) => t.symbol ?? t.address.slice(0, 10));
+    line(`  ${trend.value.length ? '✅' : '⚠️ '} token trending ethereum (cadangan penemuan tanpa mapping): ${list(shown) || 'tidak ada'} (${trend.ms} ms)`);
+  } else {
+    line(`  ❌ token trending: ${errText(trend.err)}`);
   }
   const price = await timed(() => gt.fetchPrices({ chain: PEPE.chain, addresses: [PEPE.address] }));
   if (price.ok) line(`  ✅ harga PEPE: ${price.value[0]?.priceUsd ?? 'tidak ada'} USD`);
   else line(`  ❌ harga token: ${errText(price.err)}`);
 }
 
+async function checkBinancePublicMapping() {
+  line('\n▶ Pemetaan Binance PUBLIK (tanpa kunci — endpoint situs binance.com, tidak resmi)');
+  const provider = createBinancePublicMappingProvider();
+  const rows = await timed(() => provider.fetchBinanceMapping());
+  if (!rows.ok) {
+    keyless.publicMapping = false;
+    line(`  ❌ daftar kontrak publik: ${errText(rows.err)}`);
+    line('     → penemuan wallet memakai cadangan token trending GeckoTerminal (belum tentu listing Binance)');
+    return;
+  }
+  keyless.publicMapping = rows.value.length > 0;
+  keyless.publicMappingRows = rows.value.length;
+  const chains = [...new Set(rows.value.map((r) => r.chain))].sort();
+  line(`  ${rows.value.length ? '✅' : '⚠️ '} ${rows.value.length} baris kontrak → pasar (${rows.ms} ms), chain: ${chains.join(', ') || '-'}`);
+  const d = provider.lastDiagnostics?.() ?? {};
+  if (d.unknownNetworks?.length) line(`  ℹ️  kode jaringan Binance belum dipetakan: ${list(d.unknownNetworks.map((n) => n.network ?? n))}`);
+  const m = matchToken(PEPE, rows.value);
+  const ok = m.status === 'MATCHED' && m.futuresSymbol === '1000PEPEUSDT' && m.multiplier === 1000;
+  line(`  ${ok ? '✅' : '⚠️ '} PEPE (Ethereum) → ${m.status} ${m.futuresSymbol ?? '-'} ×${m.multiplier}${ok ? '' : ' (diharapkan MATCHED 1000PEPEUSDT ×1000)'}`);
+}
+
 async function checkBinanceMapping() {
   line('\n▶ Pemetaan Binance (kunci READ-ONLY)');
   const provider = createBinanceMappingProvider({ apiKey: env.BINANCE_API_KEY, apiSecret: env.BINANCE_API_SECRET });
   if (!provider.isConfigured()) {
-    line('  ⏭  dilewati: BINANCE_API_KEY / BINANCE_API_SECRET belum diisi di .env');
+    line('  ⏭  dilewati: BINANCE_API_KEY / BINANCE_API_SECRET belum diisi di .env (opsional — jalur publik di atas dipakai)');
     return;
   }
   const restr = await timed(() => provider.checkKeyRestrictions());
@@ -157,6 +194,7 @@ line(`Waktu: ${new Date(now).toISOString()}`);
 await checkTransfers('Etherscan API V2', createEtherscanProvider({ apiKey: env.ETHERSCAN_API_KEY ?? null, chains: [...EVM_CHAINS] }), 'etherscan');
 await checkTransfers('Routescan (tanpa kunci)', createRoutescanProvider({ apiKey: env.ROUTESCAN_API_KEY ?? null, chains: [...EVM_CHAINS] }), 'routescan');
 await checkGeckoTerminal();
+await checkBinancePublicMapping();
 await checkBinanceMapping();
 await checkNativePrices();
 
@@ -164,6 +202,20 @@ line('\n— Ringkasan —');
 line(`Riwayat wallet via Etherscan : ${usable.etherscan.join(', ') || '-'}`);
 const viaRoutescan = usable.routescan.filter((c) => !usable.etherscan.includes(c));
 line(`Riwayat wallet via Routescan : ${viaRoutescan.join(', ') || '-'} (chain yang tidak dicakup Etherscan)`);
+
+const mark = (v) => (v === true ? '✅' : v === false ? '❌' : '⏭ ');
+line('\n— Jalur Etherscan-saja (tanpa kunci Binance) —');
+line(`${mark(Boolean(env.ETHERSCAN_API_KEY?.trim()) && usable.etherscan.length > 0)} Riwayat wallet & skor: ${[...new Set([...usable.etherscan, ...viaRoutescan])].join(', ') || 'belum ada chain yang berhasil'}`);
+line(`${mark(keyless.publicMapping)} Pemetaan kontrak → pasar Binance (publik): ${keyless.publicMappingRows} baris — tautan ke LONG Scanner & token untuk penemuan`);
+line(`${mark(keyless.discovery)} Penemuan wallet dari pembeli besar di DEX (GeckoTerminal)`);
+line(`${mark(keyless.trending)} Cadangan token trending GeckoTerminal: ${keyless.trendingTokens} token`);
+const discoveryMode = keyless.discovery && keyless.publicMapping ? 'token yang listing di Binance (mapping publik)'
+  : keyless.discovery && keyless.trending ? 'token trending GeckoTerminal (belum tentu listing Binance)'
+    : null;
+line(discoveryMode
+  ? `➡️  Penemuan wallet otomatis AKTIF tanpa kunci Binance, sumber token: ${discoveryMode}.`
+  : '➡️  Penemuan wallet otomatis BELUM bisa jalan — lihat baris ❌ di atas (GeckoTerminal / Binance publik).');
+if (!discoveryMode) problems.push('penemuan wallet tanpa kunci Binance belum dapat berjalan');
 if (usable.etherscan.length === 0 && usable.routescan.length === 0) {
   problems.push('belum ada sumber riwayat wallet yang berhasil dihubungi (cek koneksi internet & ETHERSCAN_API_KEY)');
 }
