@@ -9,7 +9,7 @@
 // - Provider `fixture` (DATA SIMULASI) TIDAK PERNAH dibuat dari tabel ini. Ia hanya diterima lewat `extraAdapters`
 //   (dibuat pemanggil dari skenario uji) dan hanya bila config.nodeEnv === 'test' (tes unit/integrasi & server E2E).
 //   Skenario simulasi (tests/fixtures/smartmoney/scenario.js) tidak pernah diimpor kode backend.
-// - Adapter live jalur gratis (pilihan pengguna 2026-10-26, docs/16 "Mengaktifkan data live (jalur gratis)"):
+// - Adapter live jalur gratis (pilihan pengguna 2026-10-26, docs/17 "Mengaktifkan data live (jalur gratis)"):
 //   etherscan (ETHERSCAN_API_KEY), routescan (tanpa kunci; ROUTESCAN_API_KEY opsional), geckoterminal (tanpa kunci),
 //   binance-mapping (BINANCE_API_KEY + BINANCE_API_SECRET, izin baca saja). Adapter berkunci tanpa kunci → null
 //   (dilaporkan "belum dikonfigurasi", tidak pernah memanggil jaringan). Urutan SMART_MONEY_PROVIDERS = prioritas
@@ -76,7 +76,7 @@ export const LIVE_PROVIDER_FACTORIES = Object.freeze({
   }),
 });
 
-const NOT_WIRED_REASON = 'Adapter untuk id ini belum dirakit di registri live (lihat docs/16 — Mengaktifkan data live)';
+const NOT_WIRED_REASON = 'Adapter untuk id ini belum dirakit di registri live (lihat docs/17 — Mengaktifkan data live)';
 const CREATE_NULL_REASON = 'Adapter belum dapat dibuat — periksa kunci API / konfigurasi di .env';
 
 /**

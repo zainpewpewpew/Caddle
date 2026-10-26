@@ -21,7 +21,7 @@ function parseInteger(name, raw, { min, max }) {
 const hasValue = (env, name) => typeof env[name] === 'string' && env[name].trim() !== '';
 
 /**
- * Mode otomatis (jalur gratis, docs/16): provider aktif mengikuti kunci yang terisi di .env. Dengan
+ * Mode otomatis (jalur gratis, docs/17): provider aktif mengikuti kunci yang terisi di .env. Dengan
  * ETHERSCAN_API_KEY → etherscan (chain paket gratis) + routescan (chain sisanya, tanpa kunci) + geckoterminal
  * (penemuan wallet, tanpa kunci); dengan BINANCE_API_KEY + BINANCE_API_SECRET → binance-mapping. Tanpa kunci apa pun
  * → tidak ada provider (fitur menampilkan "belum ada sumber data"; tidak ada panggilan jaringan).

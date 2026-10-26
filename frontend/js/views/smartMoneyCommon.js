@@ -189,7 +189,7 @@ export function noSourceState() {
   return emptyState({
     iconName: 'radar',
     title: 'Belum ada sumber data on-chain',
-    text: 'Belum ada provider data yang dikonfigurasi, sehingga tidak ada data yang ditampilkan — tidak ada data contoh atau rekaan. Admin perlu memilih provider (SMART_MONEY_PROVIDERS) dan mengisi API key gratis bila diperlukan; langkahnya ada di panduan docs/16-panduan-smart-money.md.',
+    text: 'Belum ada provider data yang dikonfigurasi, sehingga tidak ada data yang ditampilkan — tidak ada data contoh atau rekaan. Admin perlu memilih provider (SMART_MONEY_PROVIDERS) dan mengisi API key gratis bila diperlukan; langkahnya ada di panduan docs/17-panduan-smart-money.md.',
     action: h('a', { class: 'btn btn--sm', href: '#/health' }, 'Buka System Health'),
   });
 }

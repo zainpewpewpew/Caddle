@@ -1,4 +1,4 @@
-// Sinkronisasi Insider / Smart Money Radar dari terminal (panduan: docs/16-panduan-smart-money.md).
+// Sinkronisasi Insider / Smart Money Radar dari terminal (panduan: docs/17-panduan-smart-money.md).
 //   npm run smart-money:sync              → satu putaran sinkronisasi, cetak ringkasan, keluar
 //   npm run smart-money:sync -- --loop    → berulang setiap SMART_MONEY_SYNC_MINUTES sampai Ctrl+C
 //   npm run smart-money:sync -- --verbose → tampilkan juga log info/debug
@@ -31,7 +31,7 @@ Opsi:
   --verbose     tampilkan juga log info/debug (bawaan: hanya peringatan & error)
   -h, --help    tampilkan bantuan ini
 
-Belum ada provider? Lihat docs/16-panduan-smart-money.md bagian "Mengaktifkan data live (jalur gratis)".
+Belum ada provider? Lihat docs/17-panduan-smart-money.md bagian "Mengaktifkan data live (jalur gratis)".
 `;
 
 const OPTIONS = Object.freeze({
@@ -84,7 +84,7 @@ export function noProviderMessage(config, registry) {
   }
   lines.push(
     '- Tidak ada data contoh/simulasi yang dipakai sebagai pengganti; halaman Smart Money tetap menampilkan "Belum ada sumber data".',
-    '- Cara mengaktifkan data live (gratis): docs/16-panduan-smart-money.md bagian "Mengaktifkan data live (jalur gratis)".',
+    '- Cara mengaktifkan data live (gratis): docs/17-panduan-smart-money.md bagian "Mengaktifkan data live (jalur gratis)".',
   );
   return lines.join('\n');
 }

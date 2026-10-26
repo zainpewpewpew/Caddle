@@ -1,4 +1,4 @@
-# 16 — Panduan Insider / Smart Money Radar
+# 17 — Panduan Insider / Smart Money Radar
 
 Panduan untuk pemilik aplikasi: cara membaca halaman Smart Money, arti angkanya, batas datanya, dan cara mengaktifkan
 data live **gratis** di Mac. Dokumen pendukung: [14 — riset sumber data & metodologi](14-riset-smart-money.md),
