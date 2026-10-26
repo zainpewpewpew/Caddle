@@ -13,7 +13,7 @@ describe('parseBacktestArgs', () => {
     expect(a).toMatchObject({
       help: false, source: 'binance', symbols: ['BTCUSDT', 'ETHUSDT'], top: null, csv: null, timeframes: ['15m', '1h'],
       from: Date.UTC(2024, 0, 1), to: NOW, rangeExplicit: false, targetR: 2, maxBars: 48, folds: 5, embargoBars: 48,
-      cacheDir: 'data/backtest-cache', out: 'reports', writeCalibration: null,
+      cacheDir: 'data/backtest-cache', out: 'reports', writeCalibration: null, ml: false,
     });
   });
 
