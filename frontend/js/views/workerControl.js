@@ -6,6 +6,7 @@ import { ApiError, api } from '../lib/api.js';
 import { callout, panel, toast } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { formatUtc } from '../lib/format.js';
+import { requestSyncRefresh, syncProgressInline } from './syncProgress.js';
 import { canStartWorker, isWorkerTransitional, workerControlLabel, workerControlPill } from './workerFormat.js';
 
 const POLL_MS = 2_000;
@@ -250,6 +251,8 @@ const STOP_LABEL_STATES = new Set(['running', 'starting', 'external']);
  * Tombol nonaktif memakai aria-disabled (bukan atribut disabled) sehingga tetap dapat difokus: fokus keyboard tidak
  * jatuh ke <body> saat label/state berubah. Analyst hanya melihat pill dan pesan, tanpa tombol.
  * Satu worker memindai LONG dan SHORT dari candle yang sama, sehingga satu kontrol mencakup kedua arah.
+ * Saat scanner berjalan, baris proses sync ringkas (syncProgressInline) menampilkan langkah yang sedang berjalan —
+ * sinkron jam, discovery, backfill x/y seri, lalu Live — dengan tautan ke panel lengkap di System Health.
  * Selama transisi/pemantauan GET /api/system/worker dipantau tiap POLL_MS (latar), selain itu tiap STEADY_POLL_MS.
  * Halaman pemakainya tidak punya cleanup: polling berhenti sendiri bila elemen sudah tidak ada di halaman. Karena itu
  * elemen dibuat setelah seluruh await view selesai, tepat sebelum halaman dipasang.
@@ -278,7 +281,13 @@ export function workerControlBar({ user, status: initial }) {
   const message = h('p', { id: 'worker-bar-message', 'aria-live': 'polite', 'data-testid': 'worker-callout-message' });
   const progressEl = progressBar('worker-callout-progress');
   const errorEl = h('p', { class: 'field__error', role: 'alert', hidden: true });
-  const content = h('div', { class: 'callout__content' }, stateEl, message, progressEl, errorEl);
+  // Proses sync ringkas (langkah + bar + x/y seri, lalu Live · candle terakhir) dan tautan ke panel lengkap di System
+  // Health. Varian ringkas syncProgress.js memantau GET /api/system/sync sendiri (latar) dan berhenti saat kontrol
+  // dilepas — tanpa cleanup. Disembunyikan selama scanner dapat dijalankan (berhenti/crash) agar pesan tidak ganda.
+  const syncRow = h('div', { class: 'cluster callout__sync', 'data-testid': 'worker-callout-sync', hidden: true },
+    syncProgressInline({ initial: null }),
+    h('a', { href: '#/health' }, 'Lihat proses sync di System Health'));
+  const content = h('div', { class: 'callout__content' }, stateEl, message, progressEl, syncRow, errorEl);
   const el = callout([content]);
   el.classList.add('callout--action', 'worker-bar');
   el.dataset.testid = 'worker-callout';
@@ -314,6 +323,7 @@ export function workerControlBar({ user, status: initial }) {
     el.classList.toggle('callout--warn', !crashed && canStartWorker(status));
     el.setAttribute('aria-busy', String(busy()));
     progressEl.hidden = !busy();
+    syncRow.hidden = canStartWorker(status);
     if (!toggle) return;
     const stopLabel = STOP_LABEL_STATES.has(status?.state);
     const label = stopLabel ? 'Hentikan scanner' : 'Jalankan scanner';
@@ -366,6 +376,8 @@ export function workerControlBar({ user, status: initial }) {
       status = await api(`/api/system/worker/${action}`, { method: 'POST' });
       settleUntil = action === 'start' ? Date.now() + SETTLE_MS : 0;
       toast(action === 'start' ? 'Scanner dijalankan' : 'Scanner sedang dihentikan', 'bull');
+      // Proses sync dipantau cepat (tiap 2 detik) agar langkah pertama langsung terlihat.
+      requestSyncRefresh();
     } catch (err) {
       // Termasuk 429 WORKER_COOLDOWN (jeda start ulang) dan 409 WORKER_EXTERNAL: pesan server ditampilkan apa adanya.
       showError(workerErrorMessage(err));

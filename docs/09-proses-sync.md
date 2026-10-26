@@ -1,6 +1,6 @@
 # 09 — Proses sync scanner
 
-Satu klik **Jalankan scanner** sudah cukup: worker menyinkronkan jam, memilih simbol, mengisi histori candle, membuka stream live, lalu menganalisis setiap candle tertutup secara otomatis. Dokumen ini menjelaskan bagaimana proses itu **terlihat langsung** di website — panel **Proses sync scanner** di System Health (tepat di bawah kartu **Kontrol scanner**) dan varian ringkasnya untuk bar kontrol scanner.
+Satu klik **Jalankan scanner** sudah cukup: worker menyinkronkan jam, memilih simbol, mengisi histori candle, membuka stream live, lalu menganalisis setiap candle tertutup secara otomatis. Dokumen ini menjelaskan bagaimana proses itu **terlihat langsung** di website — panel **Proses sync scanner** di System Health (tepat di bawah kartu **Kontrol scanner**) dan varian ringkasnya, yang langsung tampil di callout Overview setelah **Jalankan scanner** ditekan dan dapat disematkan di bar kontrol scanner.
 
 Prinsip yang sama dengan seluruh aplikasi: hanya data nyata dari heartbeat worker. Nilai yang belum diketahui tampil `—`; tidak ada angka contoh, perkiraan, atau sisa waktu rekaan. Teks dari server (pesan error) selalu dirender lewat `textContent` (`h()`).
 
@@ -24,7 +24,7 @@ flowchart LR
 | `discovery` | Discovery simbol | Pengaturan dimuat; `exchangeInfo`, ticker 24 jam, dan book ticker diambil; simbol dipilih & disimpan | Simbol terpilih (`symbolsDiscovered`) atau fallback daftar DB |
 | `bootstrap` | Backfill candle (REST) | Seri simbol×timeframe **baru** di-backfill REST (paralelisme 3) + perbaikan gap; WebSocket sudah dibuka untuk set stream baru, kline yang datang diantrekan per seri | Semua seri yang direncanakan selesai (berhasil atau gagal) |
 | `live` | Stream live (WebSocket) → Analisis pola | Kline final dari WebSocket disimpan dan dianalisis per candle tertutup; sweep REST menambal yang tertinggal | Berlangsung terus; rediscovery berkala tiap 1 jam memulai siklus baru |
-| `stopping` / `stopped` | — | `stop()`: timer & stream dihentikan, tugas aktif ditunggu, heartbeat akhir | — |
+| `stopping` / `stopped` | — | `stop()`: timer & stream dihentikan, satu heartbeat `stopping` (UI *Menghentikan…*, juga untuk worker dari terminal), tugas aktif ditunggu, heartbeat akhir | — |
 
 Histori hasil backfill **tidak** dianalisis (`emitBootstrap: false`): analisis pertama terjadi pada candle tertutup berikutnya, sehingga UI menampilkan "Menunggu candle tertutup berikutnya" sampai `lastAnalysisAt` terisi.
 
@@ -43,7 +43,8 @@ Siklus rediscovery (`cycle = 'rediscovery'`) melewati langkah `clock → discove
 | `streamsDone` | angka | Seri yang backfill-nya selesai (berhasil **atau** gagal) di siklus ini |
 | `streamsFailed` | angka | Seri yang backfill-nya gagal (dicoba ulang oleh sweep berkala) |
 | `candlesStored` | angka | Candle tertutup yang disimpan sejak siklus ini mulai — backfill REST, gap, sweep, dan stream live |
-| `symbolsDiscovered` | angka \| `null` | Simbol terpilih discovery siklus ini; `null` bila discovery gagal/anomali (fallback daftar DB) |
+| `symbolsDiscovered` | angka \| `null` | Simbol terpilih discovery siklus ini, diisi setelah hasilnya diterapkan (simbol tersimpan); `null` bila discovery gagal/anomali atau penyimpanan simbolnya gagal (fallback daftar DB / set lama) |
+| `clockSynced` | boolean \| `null` | `true` setelah sync jam server pertama yang berhasil; `false` selama belum — `clockOffsetMs` masih nilai awal serverClock (0), bukan pengukuran, sehingga UI tidak menampilkan angkanya; `null` tanpa serverClock |
 | `lastCandleAt` | epoch ms (waktu server Binance) \| `null` | `closeTime` candle tertutup tersimpan terbaru (acuan yang sama dengan `candleLagMs`) |
 | `lastAnalysisAt` | epoch ms (jam host) \| `null` | Saat callback analisis per candle terakhir selesai tanpa error |
 | `updatedAt` | epoch ms (jam host) \| `null` | Perubahan progres terakhir |
@@ -55,15 +56,16 @@ Hitungan per siklus di-reset di awal setiap siklus; `lastCandleAt` dan `lastAnal
 Field sama dengan §3.1, disaring: hanya kode `step`/`cycle` yang dikenal (kode lain → `null`), angka lewat `numberOrNull`, tanpa field tambahan (owner/pid tidak pernah diteruskan). Tambahan:
 
 - `progress` = `streamsDone / streamsTotal` (0..1) hanya bila `step === 'bootstrap'` dan `streamsTotal > 0`; selain itu `null`.
-- Heartbeat tidak hidup → `step` = `'stopped'` (heartbeat akhir) atau `'stale'` (lebih tua dari 90 detik); `cycle`, `cycleStartedAt`, dan semua hitungan siklus `null` (tidak sedang berjalan); `lastCandleAt`, `lastAnalysisAt`, `updatedAt` tetap diteruskan sebagai fakta historis.
+- Heartbeat tidak hidup → `step` = `'stopped'` (heartbeat akhir) atau `'stale'` (lebih tua dari 90 detik); `cycle`, `cycleStartedAt`, dan semua hitungan siklus `null` (tidak sedang berjalan); `lastCandleAt`, `lastAnalysisAt`, `updatedAt`, dan `clockSynced` (melengkapi `clockOffsetMs`) tetap diteruskan sebagai fakta historis.
 - Heartbeat hidup tanpa objek `sync` (worker versi lama) → `sync: null`. Tanpa heartbeat sama sekali → `scanner: { status: 'not_running', heartbeatAt: null, sync: null }`.
 
 ## 4. Heartbeat progres
 
 - Selama `step` ∈ {`clock`, `discovery`, `bootstrap`}, setiap perubahan progres menjadwalkan **satu** heartbeat progres `progressHeartbeatMs` (default 2 detik) kemudian — trailing throttle: paling banyak satu tulis per 2 detik, satu baris singleton (`worker_heartbeat`, upsert), tidak pernah per candle.
 - Saat `live`/`idle`/berhenti tidak ada tulis tambahan: hitungan hanya berubah di memori dan ikut heartbeat 30 detik biasa. Jadwal heartbeat progres yang tertunda dibatalkan begitu siklus selesai.
-- Siklus rediscovery yang sempat menulis heartbeat progres ditutup satu heartbeat tambahan, agar UI tidak menampilkan langkah lama sampai heartbeat 30 detik berikutnya. Siklus start ditutup heartbeat yang memang ditulis `start()`.
-- Siklus yang selesai kurang dari 2 detik (umum di tes dengan jam palsu) tidak menulis heartbeat tambahan sama sekali.
+- Siklus rediscovery yang sempat menulis heartbeat berisi langkah siklus — heartbeat progres, atau heartbeat 30 detik yang jatuh di tengah siklus — ditutup satu heartbeat tambahan, agar UI tidak menampilkan langkah lama sampai heartbeat 30 detik berikutnya. Siklus start ditutup heartbeat yang memang ditulis `start()`.
+- Siklus yang selesai kurang dari 2 detik (umum di tes dengan jam palsu) tidak menulis heartbeat tambahan, kecuali heartbeat 30 detik jatuh di tengahnya (lalu tepat satu heartbeat penutup).
+- `stop()` menulis satu heartbeat `stopping` sebelum menunggu tugas aktif (timer sudah dibatalkan), lalu heartbeat akhir `stopped`.
 
 ## 5. API — `GET /api/system/sync`
 
@@ -94,7 +96,11 @@ Terautentikasi seperti semua `/api/*` (tanpa sesi → 401). Satu `ingestion.getS
 
 Di sampingnya: siklus, simbol dipantau, stream (basi), candle tersimpan siklus ini, candle terakhir (relatif + UTC; `closeTime` dikoreksi `clockOffsetMs` agar sebanding dengan jam host), analisis terakhir, status WebSocket, jumlah error, dan heartbeat; di bawahnya 3 error ingesti terakhir.
 
-Mode lain: scanner tidak berjalan → empty state tenang *"Scanner tidak berjalan — tekan Jalankan scanner"* (tanpa angka); worker baru dijalankan → *menunggu heartbeat pertama* (setelah 30 detik tanpa heartbeat: peringatan untuk memeriksa log); menghentikan; heartbeat basi; worker versi lama tanpa progres sync. Supervisor didahulukan: child yang sudah keluar (`stopped`/`crashed`) berarti scanner tidak berjalan walau heartbeat terakhirnya masih tampak segar.
+Langkah *Sinkron jam* menampilkan offset hanya bila offset itu pernah terukur (`clockSynced`); bila belum ada sync jam yang berhasil, langkah itu memberi peringatan *offset belum terukur* tanpa angka (baris *Offset jam Binance* di System Health menampilkan `—`).
+
+Mode lain: scanner tidak berjalan → empty state tenang *"Scanner tidak berjalan — tekan Jalankan scanner"* (tanpa angka); worker baru dijalankan → *menunggu heartbeat pertama* (setelah 30 detik tanpa heartbeat: peringatan untuk memeriksa log); menghentikan; heartbeat basi — termasuk worker yang dijalankan dari website, masih hidup, tetapi heartbeat run-nya berhenti diperbarui (bukan *menunggu heartbeat pertama*); worker versi lama tanpa progres sync. Supervisor didahulukan: child yang sudah keluar (`stopped`/`crashed`) berarti scanner tidak berjalan walau heartbeat terakhirnya masih tampak segar.
+
+**Overview**: setelah *Jalankan scanner* di callout berhasil, callout langsung menampilkan varian ringkas (§8: langkah + bar + `x/y seri`, lalu *Live*) beserta tautan *Lihat proses sync di System Health* ke panel lengkap.
 
 Aksesibilitas: wilayah `aria-live="polite"` (di luar wilayah `aria-busy`) hanya diperbarui saat langkah/mode berubah — bukan setiap polling — dan keadaan pertama setelah halaman dimuat tidak diumumkan. Langkah aktif memakai `aria-current="step"`; bar determinate memakai `role="progressbar"` + `aria-valuenow`. `prefers-reduced-motion`: cincin & bar indeterminate statis, denyut dan transisi lebar dimatikan. DOM stepper dibuat sekali dan diperbarui di tempat, sehingga animasi tidak terulang setiap polling.
 
@@ -129,7 +135,7 @@ requestSyncRefresh();
 
 Dari `frontend/js/app.js` atau `frontend/js/lib/`: `import { requestSyncRefresh, syncProgressInline } from './views/syncProgress.js';` / `'../views/syncProgress.js'`.
 
-Elemen yang tetap terpasang (bar persisten) terus memantau: 10 detik saat diam/live, 2 detik selama sync. Melepasnya dari DOM menghentikan polling tanpa cleanup tambahan. System Health memanggil `requestSyncRefresh()` untuk setiap klik tombol di kartu Kontrol scanner (event delegation di `health.js`, tanpa mengubah `workerControl.js`).
+Elemen yang tetap terpasang (bar persisten) terus memantau: 10 detik saat diam/live, 2 detik selama sync. Melepasnya dari DOM menghentikan polling tanpa cleanup tambahan. System Health memanggil `requestSyncRefresh()` untuk setiap klik tombol di kartu Kontrol scanner (event delegation di `health.js`). Callout Overview (`workerStartCallout` di `workerControl.js`) menyematkan `syncProgressInline({ initial: null })` + tautan `#/health` setelah POST start berhasil, lalu memanggil `requestSyncRefresh()`; elemen itu dibuat sekali dan berhenti memantau saat Overview ditinggalkan.
 
 ## 9. Keterbatasan
 

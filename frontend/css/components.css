@@ -1047,6 +1047,16 @@ th[aria-sort="descending"] .sort-btn::after {
   flex: 1 1 100%;
 }
 
+/* Proses sync ringkas di callout Overview setelah "Jalankan scanner" (syncProgressInline + tautan System Health). */
+.callout__sync {
+  font-size: var(--lr-text-xs);
+}
+
+/* Bar kecil sejajar dengan badge langkah: tanpa margin bar progres callout di atas. */
+.callout__sync .progress-indeterminate {
+  margin-top: 0;
+}
+
 /* ---- Proses sync scanner (frontend/js/views/syncProgress.js, docs/09-proses-sync.md) ---- */
 /* Header panel boleh membungkus: badge langkah dapat lebih panjang dari judul di layar sempit. */
 #sync-progress .panel__header {

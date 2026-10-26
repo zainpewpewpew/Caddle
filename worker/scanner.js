@@ -295,6 +295,11 @@ export function createScanner({
   let discoveryFailures = 0;
   /** Alasan jam server diketahui rusak (OFFSET_OUT_OF_RANGE) dari sync terakhir, null bila sehat/tidak diketahui. */
   let clockFault = null;
+  /**
+   * true setelah sync jam server pertama yang berhasil (offset benar-benar terukur); false selama belum — offset
+   * serverClock masih nilai awalnya, bukan hasil pengukuran; null tanpa serverClock. Untuk status().sync.
+   */
+  let clockSynced = serverClock ? false : null;
   let cycleStats = null;
   const counters = { gaps: 0, duplicates: 0 };
   /**
@@ -307,7 +312,10 @@ export function createScanner({
   };
   /** Waktu (localClock) callback analisis per candle terakhir yang selesai tanpa error. */
   let lastAnalysisAt = null;
-  /** Jumlah heartbeat progres yang ditulis di siklus berjalan (lihat runCycle: heartbeat penutup). */
+  /**
+   * Jumlah heartbeat yang ditulis selama langkah siklus (clock/discovery/bootstrap) di siklus berjalan — heartbeat
+   * progres maupun heartbeat 30 detik yang jatuh di tengah siklus (lihat runCycle: heartbeat penutup).
+   */
   let progressBeats = 0;
 
   const isStopping = () => phase === 'stopping' || phase === 'stopped';
@@ -382,9 +390,7 @@ export function createScanner({
     }
     if (timers.has('progress-heartbeat')) return;
     schedule('progress-heartbeat', cfg.progressHeartbeatMs, async () => {
-      if (!PROGRESS_STEPS.has(sync.step)) return;
-      progressBeats += 1;
-      await heartbeat();
+      if (PROGRESS_STEPS.has(sync.step)) await heartbeat();
     });
   }
 
@@ -933,6 +939,7 @@ export function createScanner({
       if (result?.ok === true) {
         if (clockFault !== null) logger.info({ offsetMs: result.offsetMs }, 'jam server kembali tersinkron');
         clockFault = null;
+        clockSynced = true;
       } else if (result?.ok === false) {
         if (result.reason === 'OFFSET_OUT_OF_RANGE') {
           clockFault = result.reason;
@@ -970,12 +977,14 @@ export function createScanner({
       let statusBySymbol = null;
       try {
         const found = await discover();
-        syncProgress({ symbolsDiscovered: found.selected.length });
         checkStopping();
         stopped = await syncSymbols(found.symbols, found.selected, at);
         target = found.selected;
         statusBySymbol = new Map(found.symbols.map((s) => [s?.symbol, s?.status]));
         discoveryFailures = 0;
+        // Baru dilaporkan setelah hasil discovery diterapkan (syncSymbols berhasil). Bila gagal, symbolsDiscovered tetap
+        // null → UI menampilkan "Discovery gagal", sesuai penanganan catch di bawah (error, backoff, fallback).
+        syncProgress({ symbolsDiscovered: found.selected.length });
       } catch (err) {
         if (err instanceof ScannerStopped) throw err;
         discoveryFailures += 1;
@@ -1013,8 +1022,9 @@ export function createScanner({
       } catch (err) {
         logger.error({ err: errorMessage(err) }, 'gagal mencatat run ingesti');
       }
-      // Heartbeat progres siklus ini memperlihatkan langkah siklus: satu heartbeat penutup agar UI tidak menampilkan
-      // langkah lama sampai heartbeat 30 detik berikutnya. Siklus start ditutup heartbeat di start().
+      // Heartbeat yang ditulis selama siklus ini (progres atau 30 detik) memperlihatkan langkah siklus: satu heartbeat
+      // penutup agar UI tidak menampilkan langkah lama sampai heartbeat 30 detik berikutnya. Siklus start ditutup
+      // heartbeat di start().
       if (kind !== 'start' && progressBeats > 0 && !isStopping()) await heartbeat();
       schedule('rediscovery', nextDelay, () => runCycle('rediscovery'));
     }
@@ -1052,12 +1062,14 @@ export function createScanner({
       clockOffsetMs: serverClock ? serverClock.offsetMs() : null,
       clockFault,
       // Proses sync (salinan): lastCandleAt = closeTime candle tertutup tersimpan terbaru (waktu server, sama dengan
-      // acuan candleLagMs); lastAnalysisAt = jam host saat callback analisis terakhir selesai.
-      sync: { ...sync, lastCandleAt: latestCloseTime, lastAnalysisAt },
+      // acuan candleLagMs); lastAnalysisAt = jam host saat callback analisis terakhir selesai; clockSynced: lihat atas.
+      sync: { ...sync, lastCandleAt: latestCloseTime, lastAnalysisAt, clockSynced },
     };
   }
 
   async function heartbeat() {
+    // Heartbeat apa pun yang memuat langkah siklus dihitung, agar siklus rediscovery ditutup heartbeat penutup.
+    if (PROGRESS_STEPS.has(sync.step)) progressBeats += 1;
     try {
       // `state` = snapshot status() lengkap (memuat field `state`) + `owner` bila ada; disimpan apa adanya
       // sebagai JSON dan dibaca kembali oleh /api/system/status (owner tidak diteruskan) & supervisor worker.
@@ -1104,7 +1116,7 @@ export function createScanner({
       return startPromise;
     },
 
-    /** Graceful stop: hentikan timer & stream, tunggu tugas aktif selesai, heartbeat akhir. Idempoten. */
+    /** Graceful stop: hentikan timer & stream, heartbeat 'stopping', tunggu tugas aktif selesai, heartbeat akhir. Idempoten. */
     stop() {
       if (stopPromise) return stopPromise;
       phase = 'stopping';
@@ -1116,6 +1128,9 @@ export function createScanner({
           stream.stop();
           stream = null;
         }
+        // Satu heartbeat 'stopping' sebelum menunggu tugas aktif (timer tetap batal): selama drain UI menampilkan
+        // "Menghentikan…", bukan progres sebelum berhenti — terutama untuk worker yang dijalankan dari terminal.
+        await heartbeat();
         await drain();
         for (const name of [...timers.keys()]) cancel(name);
         phase = 'stopped';

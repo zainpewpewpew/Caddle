@@ -16,7 +16,9 @@ const SYNC_CYCLES = new Set(['initial', 'rediscovery']);
  * numberOrNull, tanpa field lain (owner/pid tidak pernah ikut). Heartbeat tidak hidup → step 'stopped' (heartbeat
  * akhir) atau 'stale' (basi) dan progres siklus null karena tidak lagi berjalan; lastCandleAt/lastAnalysisAt/updatedAt
  * tetap diteruskan sebagai fakta historis. Heartbeat hidup tanpa objek sync (worker versi lama) → null.
- * `progress` = streamsDone/streamsTotal (0..1) hanya selama backfill dengan streamsTotal > 0.
+ * `progress` = streamsDone/streamsTotal (0..1) hanya selama backfill dengan streamsTotal > 0. `clockSynced` = boolean
+ * atau null; melengkapi clockOffsetMs sehingga diteruskan seperti fakta historis (false = offset jam run itu belum
+ * pernah terukur: nilai awal serverClock, bukan pengukuran).
  */
 function summarizeSync(raw, { live, phase }) {
   const s = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
@@ -37,6 +39,7 @@ function summarizeSync(raw, { live, phase }) {
     lastCandleAt: numberOrNull(s?.lastCandleAt),
     lastAnalysisAt: numberOrNull(s?.lastAnalysisAt),
     updatedAt: numberOrNull(s?.updatedAt),
+    clockSynced: typeof s?.clockSynced === 'boolean' ? s.clockSynced : null,
     progress: step === 'bootstrap' && streamsTotal > 0 && streamsDone !== null
       ? Math.min(1, Math.max(0, streamsDone / streamsTotal)) : null,
   };

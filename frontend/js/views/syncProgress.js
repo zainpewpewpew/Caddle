@@ -72,6 +72,8 @@ function modeOf(d) {
   const beatLive = LIVE_STATUSES.has(sc.status);
   // Heartbeat yang ditulis sebelum child ini dijalankan berasal dari run sebelumnya.
   const previousRun = state === 'running' && isNum(d.worker.startedAt) && isNum(sc.heartbeatAt) && sc.heartbeatAt < d.worker.startedAt;
+  // Heartbeat run ini pernah ditulis lalu basi: child hidup tetapi berhenti melapor — bukan "menunggu heartbeat pertama".
+  if (state === 'running' && sc.status === 'stale' && !previousRun) return 'stale';
   if (state === 'starting' || (state === 'running' && (!beatLive || previousRun))) return 'waiting';
   if (sc.status === 'stale') return 'stale';
   if (!beatLive) return 'off';
@@ -285,6 +287,10 @@ function stepSpecs(d) {
     clock.bar = { kind: 'busy', label: 'Sinkronisasi jam berjalan' };
   } else if (clock.state === 'done' && sc.clockFault === 'OFFSET_OUT_OF_RANGE') {
     clock.detail = 'Jam host menyimpang > 10 menit dari Binance — periksa NTP';
+    clock.tone = 'warn';
+  } else if (clock.state === 'done' && sync.clockSynced === false) {
+    // Belum ada sync jam yang berhasil: offset masih nilai awal serverClock, bukan hasil pengukuran → tanpa angka.
+    clock.detail = 'Sinkron jam gagal — offset belum terukur, dicoba lagi di siklus berikutnya';
     clock.tone = 'warn';
   } else if (clock.state === 'done' && isNum(sc.clockOffsetMs)) {
     clock.detail = `Offset ${formatInteger(sc.clockOffsetMs)} ms terhadap server Binance`;
