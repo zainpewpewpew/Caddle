@@ -8,7 +8,8 @@ import { MigrationError, migrate } from '../../backend/database/migrate.js';
 const REQUIRED_TABLES = ['users', 'sessions', 'symbols', 'candles', 'features', 'pattern_definitions', 'pattern_examples',
   'signals', 'signal_events', 'backtest_runs', 'backtest_results', 'settings', 'audit_logs',
   'sm_wallets', 'sm_labels', 'sm_activities', 'sm_watchlist', 'sm_alerts', 'sm_alert_reads', 'sm_evaluations',
-  'sm_binance_map', 'sm_raw_transfers', 'sm_sync_state'];
+  'sm_binance_map', 'sm_raw_transfers', 'sm_sync_state',
+  'reversal_candidates', 'reversal_events', 'reversal_cursors', 'reversal_provisional'];
 
 const tables = (db) => db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name);
 
@@ -22,7 +23,7 @@ describe('migrasi database', () => {
   it('UNIT-DB-001 seluruh entitas wajib dibuat', () => {
     const db = openDatabase(':memory:');
     const result = migrate(db);
-    expect(result.applied).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(result.applied).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(tables(db)).toEqual(expect.arrayContaining(REQUIRED_TABLES));
   });
 

@@ -159,8 +159,10 @@ const ROW_NAV_KEYS = {
  * `animateRows` (default true): baris pada render pertama masuk bertahap (data-enter + --i, CSS di components.css).
  * Halaman yang membuat ulang tabel tiap polling sebaiknya memberi false pada penyegaran agar tidak berkedip.
  * Mengurutkan ulang tidak pernah menganimasikan baris.
+ * `rowClass(row)` (opsional) → kelas tambahan pada <tr> (mis. 'is-provisional'); dipasang ulang setiap tbody dibuat
+ * ulang (urut header), berbeda dari penanda yang dipasang pemanggil setelah render.
  */
-export function dataTable({ columns, rows, empty, initialSort, compact = false, caption, onRowSelect, isRowSelected, animateRows = true }) {
+export function dataTable({ columns, rows, empty, initialSort, compact = false, caption, onRowSelect, isRowSelected, animateRows = true, rowClass }) {
   let sort = initialSort ?? null;
   let firstRender = animateRows;
   const tbody = h('tbody');
@@ -216,10 +218,15 @@ export function dataTable({ columns, rows, empty, initialSort, compact = false, 
 
   const cellsOf = (row) => columns.map((c) => h('td', { class: c.numeric ? 'num' : undefined }, c.render ? c.render(row) : row[c.key] ?? '—'));
 
+  const extraClass = (row) => {
+    const value = typeof rowClass === 'function' ? rowClass(row) : null;
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  };
+
   const rowEl = (row) => {
-    if (!selectable) return h('tr', null, cellsOf(row));
+    if (!selectable) return h('tr', { class: extraClass(row) }, cellsOf(row));
     const tr = h('tr', {
-      class: 'table__row--selectable',
+      class: ['table__row--selectable', extraClass(row)].filter(Boolean).join(' '),
       tabindex: -1, // satu-satunya tab stop (0) ditetapkan paintSelection()
       on: {
         click: (e) => {

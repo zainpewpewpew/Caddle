@@ -5,7 +5,8 @@ import { onDisconnect } from '../lib/chart.js';
 import { formatTime } from '../lib/format.js';
 import { parseNumberInput, validateSettings } from '../lib/settingsValidation.js';
 
-// Timeframe tetap per arah (selaras DIRECTION_TIMEFRAMES backend): LONG 15m, SHORT 1h. Tidak dapat diubah dari form;
+// Timeframe tetap per arah (selaras DIRECTION_TIMEFRAMES backend): LONG 15m, SHORT 1h; Reversal Radar (REVERSAL_TIMEFRAMES)
+// 5m/15m/1h ditampilkan sebagai informasi. Tidak dapat diubah dari form;
 // nilai ini tetap dikirim agar skema pengaturan lama (field `timeframes` wajib) tetap valid.
 const FIXED_TIMEFRAMES = Object.freeze(['15m', '1h']);
 
@@ -191,8 +192,8 @@ export async function settingsView(ctx) {
         inputField({ label: 'Maks. simbol otomatis', name: 'maxAuto', type: 'number', value: s.symbols.maxAuto, hint: 'Target MVP 30–50 pasangan', attrs: { min: 10, max: 100, step: 1 } }),
         h('div', { class: 'field', 'data-testid': 'settings-timeframes' },
           h('span', { class: 'field__label' }, 'Timeframe'),
-          h('div', { class: 'cluster' }, badge('LONG 15m', 'bull'), badge('SHORT 1h', 'bear')),
-          h('span', { class: 'field__hint' }, 'Tetap: LONG Scanner memakai 15m (konteks 1h), SHORT Scanner memakai 1h.'))),
+          h('div', { class: 'cluster' }, badge('LONG 15m', 'bull'), badge('SHORT 1h', 'bear'), badge('Reversal Radar 5m · 15m · 1h', 'accent')),
+          h('span', { class: 'field__hint' }, 'Tetap: pola SA/PVA LONG memakai 15m (konteks 1h), SHORT Scanner memakai 1h; Reversal Radar di LONG Scanner mengevaluasi 5m, 15m, dan 1h secara terpisah (worker mengingesti ketiganya).'))),
       h('div', { class: 'field', style: { 'margin-top': 'var(--lr-space-4)' } },
         h('label', { class: 'field__label', for: 'f-manual' }, 'Simbol manual'),
         h('textarea', { class: 'input input--mono', id: 'f-manual', name: 'manual', rows: 3, spellcheck: 'false', placeholder: 'BTCUSDT, ETHUSDT' }, s.symbols.manual.join(', ')),

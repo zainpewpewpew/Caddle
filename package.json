@@ -16,6 +16,7 @@
     "user:create": "node --env-file-if-exists=.env scripts/create-user.js",
     "user:password": "node --env-file-if-exists=.env scripts/change-password.js",
     "backtest": "node --env-file-if-exists=.env scripts/backtest.js",
+    "reversal:replay": "node --env-file-if-exists=.env scripts/reversal-replay.js",
     "smart-money:sync": "node --env-file-if-exists=.env scripts/smart-money-sync.js",
     "smart-money:evaluate": "node --env-file-if-exists=.env scripts/smart-money-evaluate.js",
     "smart-money:check": "node --env-file-if-exists=.env scripts/smart-money-check.js",

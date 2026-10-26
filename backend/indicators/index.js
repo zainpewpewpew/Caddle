@@ -5,3 +5,4 @@ export { atr, atrPercent, trueRange } from './atr.js';
 export { rvol, spikeDominance } from './volume.js';
 export { confirmedAt, findSwings, trailingHigherLows } from './swings.js';
 export { normalizedSlope, percentChange } from './slope.js';
+export { rsi } from './rsi.js';

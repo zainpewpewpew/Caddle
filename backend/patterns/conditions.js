@@ -83,7 +83,7 @@ const ratio = (a, b) => (isFiniteNumber(a) && isFiniteNumber(b) && b > 0 ? a / b
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const round1 = (v) => Math.round(v * 10) / 10;
 
-function isValidCandle(c) {
+export function isValidCandle(c) {
   if (typeof c !== 'object' || c === null) return false;
   const { open, high, low, close, volume, quoteVolume, openTime, closeTime } = c;
   if (![open, high, low, close].every((v) => isFiniteNumber(v) && v > 0)) return false;

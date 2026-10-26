@@ -1,0 +1,580 @@
+/* AlphaLens — LONG Scanner "Reversal Radar" (reversalRadar.js + reversalFormat.js), tema "Neural Aurora".
+ *
+ * - Tiga panel tahap bertumpuk urutan tetap (Early Formation, Developing Reversal, Confirmed Breakout) dengan aksen
+ *   warna per tahap; badge jumlah per timeframe di header panel (bukan .badge agar tidak tertukar dengan hitung hasil
+ *   tabel SA/PVA).
+ * - Panel detail di samping memakai tata letak .chart-split (components.css); bagian-bagian detail di bawah grafik.
+ * - Baris provisional-only (.is-provisional) ditandai garis putus-putus + label "provisional" (warna bukan satu-satunya
+ *   penanda).
+ * - Hanya merujuk token --lr-*; token baru selalu dengan fallback. Semua gerak dekoratif dimatikan oleh
+ *   prefers-reduced-motion dan :root[data-motion="off"|"reduced"]. Tidak ada gulir horizontal halaman ≤ 820px.
+ */
+
+/* ---------- Judul ---------- */
+.rr-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--lr-space-2) var(--lr-space-3);
+  min-width: 0;
+}
+
+.rr-title .page__title {
+  margin: 0;
+}
+
+/* "— Reversal Radar": bagian judul yang tampak, di luar <h1> agar nama heading tetap "LONG Scanner". */
+.rr-title__sub {
+  position: relative;
+  padding-left: var(--lr-space-3);
+  font-size: var(--lr-text-lg);
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: -0.01em;
+  background: var(--lr-gradient-brand, linear-gradient(135deg, var(--lr-accent), var(--lr-accent)));
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  white-space: nowrap;
+}
+
+.rr-title__sub::before {
+  content: "—";
+  position: absolute;
+  left: 0;
+  color: var(--lr-text-3);
+}
+
+/* ---------- Toolbar filter ---------- */
+.rr-filter-panel .panel__body--flush {
+  padding: 0;
+}
+
+.rr-toolbar {
+  border-bottom: 0;
+}
+
+.rr-toolbar .rr-toolbar__tf {
+  width: auto;
+}
+
+.rr-toolbar .rr-toolbar__toggles {
+  width: auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--lr-space-3) var(--lr-space-4);
+  align-self: center;
+  padding-bottom: 2px;
+}
+
+.rr-summary {
+  margin: 0;
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.rr-status:empty {
+  display: none;
+}
+
+/* ---------- Panel per tahap ---------- */
+.rr-stage {
+  --lr-rr-tone: var(--lr-accent);
+  border-left: 2px solid color-mix(in srgb, var(--lr-rr-tone) 70%, transparent);
+}
+
+.rr-stage[data-stage="EARLY_FORMATION"] { --lr-rr-tone: var(--lr-accent); }
+.rr-stage[data-stage="DEVELOPING_REVERSAL"] { --lr-rr-tone: var(--lr-neural-cyan, var(--lr-accent)); }
+.rr-stage[data-stage="CONFIRMED_BREAKOUT"] { --lr-rr-tone: var(--lr-bull); }
+
+.rr-stage .panel__title {
+  color: var(--lr-text);
+}
+
+.rr-stage .panel__title::before {
+  background: var(--lr-rr-tone);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--lr-rr-tone) 60%, transparent);
+}
+
+.rr-stage__desc {
+  margin: 0;
+  padding: var(--lr-space-2) var(--lr-space-4) var(--lr-space-3);
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+  border-bottom: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+}
+
+.rr-stage__unavailable {
+  margin: 0;
+  padding: var(--lr-space-4);
+}
+
+/* Badge jumlah per timeframe: "5m 3 · 15m 2 · 1H 1" (chip per timeframe; 0 ditampilkan redup, tetap terbaca). */
+.rr-counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-1);
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-2xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rr-count {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--lr-rr-tone, var(--lr-accent)) 40%, transparent);
+  border-radius: var(--lr-radius-xs);
+  background: color-mix(in srgb, var(--lr-rr-tone, var(--lr-accent)) 12%, transparent);
+  color: var(--lr-text);
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: 0.03em;
+}
+
+.rr-count[data-zero="true"] {
+  border-color: var(--lr-glass-border, var(--lr-border));
+  background: var(--lr-neutral-soft);
+  color: var(--lr-text-3);
+  font-weight: var(--lr-weight-medium);
+}
+
+/* ---------- Sel tabel ---------- */
+.rr-setup {
+  white-space: nowrap;
+}
+
+/* Pill status (Baru / Berkembang / Terkonfirmasi / Batal / Kedaluwarsa). */
+.rr-pill {
+  --lr-rr-pill: var(--lr-text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--lr-rr-pill);
+  font-size: var(--lr-text-xs);
+  font-weight: var(--lr-weight-medium);
+  white-space: nowrap;
+}
+
+.rr-pill[data-status="NEW"] { --lr-rr-pill: var(--lr-accent); }
+.rr-pill[data-status="DEVELOPING"] { --lr-rr-pill: var(--lr-neural-cyan, var(--lr-accent)); }
+.rr-pill[data-status="CONFIRMED"] { --lr-rr-pill: var(--lr-bull); }
+.rr-pill[data-status="CANCELLED"] { --lr-rr-pill: var(--lr-bear); }
+.rr-pill[data-status="EXPIRED"] { --lr-rr-pill: var(--lr-text-3); }
+
+.rr-pill__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.rr-pill[data-status="CONFIRMED"] .rr-pill__text {
+  font-weight: var(--lr-weight-semibold);
+}
+
+/* Label "provisional" (kandidat provisional-only & event provisional di riwayat). */
+.rr-pill__prov,
+.rr-move__badge {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--lr-warn-line);
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-warn-soft);
+  color: var(--lr-warn);
+  font-size: 0.72rem;
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.rr-pill__hint {
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-2xs);
+  font-weight: var(--lr-weight-regular);
+}
+
+.rr-history__prov {
+  margin-left: var(--lr-space-2);
+}
+
+/* Kolom "Sejak deteksi": % · ×ATR + badge Extended / Terlambat. */
+.rr-move {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.rr-move__text[data-sign="up"] { color: var(--lr-bull); }
+.rr-move__text[data-sign="down"] { color: var(--lr-bear); }
+
+.rr-move__badge[data-kind="late"] {
+  border-color: var(--lr-glass-border-strong, var(--lr-border));
+  background: var(--lr-neutral-soft);
+  color: var(--lr-text-2);
+}
+
+.rr-evidence-cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--lr-space-2);
+  max-width: 260px;
+  white-space: nowrap;
+}
+
+.rr-evidence-cell__count {
+  font-weight: var(--lr-weight-semibold);
+}
+
+.rr-evidence-cell__labels {
+  overflow: hidden;
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+  text-overflow: ellipsis;
+}
+
+/* Baris kandidat provisional-only: evaluasi candle berjalan, belum menjadi kandidat. */
+.page--reversal .table tbody tr.is-provisional > td {
+  background: repeating-linear-gradient(135deg, transparent 0 10px, color-mix(in srgb, var(--lr-warn) 5%, transparent) 10px 12px);
+  color: var(--lr-text-2);
+}
+
+.page--reversal .table tbody tr.is-provisional > td:first-child {
+  box-shadow: inset 2px 0 0 var(--lr-warn);
+}
+
+.page--reversal .table tbody tr.is-provisional .mono {
+  font-style: italic;
+}
+
+/* Tabel per tahap: tanpa sudut ganda di dalam panel flush. */
+.rr-stage__host .table-empty {
+  padding: 0;
+}
+
+/* ---------- Panel detail di samping ---------- */
+.rr-split .chart-split__aside {
+  padding: var(--lr-space-3);
+}
+
+.rr-detail {
+  gap: var(--lr-space-4);
+}
+
+.rr-detail__head {
+  gap: var(--lr-space-2);
+}
+
+.rr-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  min-width: 0;
+}
+
+.rr-section__title {
+  margin: 0;
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-2xs);
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: var(--lr-tracking-caps);
+  text-transform: uppercase;
+}
+
+.rr-section__text {
+  margin: 0;
+  color: var(--lr-text);
+  font-size: var(--lr-text-sm);
+  overflow-wrap: anywhere;
+}
+
+.rr-section[data-section="cancel"] .rr-section__title { color: var(--lr-bear); }
+.rr-section[data-section="next"] .rr-section__title { color: var(--lr-bull); }
+
+.rr-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rr-evidence__item {
+  --lr-rr-group: var(--lr-accent);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--lr-space-2);
+  padding: var(--lr-space-1) var(--lr-space-2);
+  border-left: 2px solid var(--lr-rr-group);
+  border-radius: var(--lr-radius-xs);
+  background: color-mix(in srgb, var(--lr-rr-group) 7%, transparent);
+  font-size: var(--lr-text-xs);
+  overflow-wrap: anywhere;
+}
+
+.rr-evidence__item[data-group="EXHAUSTION"] { --lr-rr-group: var(--lr-accent); }
+.rr-evidence__item[data-group="BASE"] { --lr-rr-group: var(--lr-neural-violet, var(--lr-accent)); }
+.rr-evidence__item[data-group="STRUCTURE"] { --lr-rr-group: var(--lr-neural-cyan, var(--lr-accent)); }
+.rr-evidence__item[data-group="VOLUME"] { --lr-rr-group: var(--lr-warn); }
+.rr-evidence__item[data-group="TRIGGER"] { --lr-rr-group: var(--lr-bull); }
+
+.rr-evidence__label {
+  color: var(--lr-text);
+  font-weight: var(--lr-weight-medium);
+}
+
+.rr-evidence__detail {
+  color: var(--lr-text-2);
+}
+
+.rr-evidence__meta {
+  flex-basis: 100%;
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.rr-levels {
+  font-size: var(--lr-text-xs);
+}
+
+/* Lima bar komponen skor (poin/maks per grup). */
+.rr-bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rr-bar {
+  --lr-rr-group: var(--lr-accent);
+  display: grid;
+  grid-template-columns: minmax(96px, 0.9fr) minmax(0, 1.4fr) auto;
+  gap: var(--lr-space-3);
+  align-items: center;
+  font-size: var(--lr-text-xs);
+}
+
+.rr-bar[data-group="EXHAUSTION"] { --lr-rr-group: var(--lr-accent); }
+.rr-bar[data-group="BASE"] { --lr-rr-group: var(--lr-neural-violet, var(--lr-accent)); }
+.rr-bar[data-group="STRUCTURE"] { --lr-rr-group: var(--lr-neural-cyan, var(--lr-accent)); }
+.rr-bar[data-group="VOLUME"] { --lr-rr-group: var(--lr-warn); }
+.rr-bar[data-group="TRIGGER"] { --lr-rr-group: var(--lr-bull); }
+
+.rr-bar__label {
+  color: var(--lr-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rr-bar__track {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--lr-radius-pill);
+  background: color-mix(in srgb, var(--lr-glass-border, var(--lr-border)) 80%, transparent);
+}
+
+.rr-bar__fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--lr-rr-group) 40%, transparent), var(--lr-rr-group));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--lr-rr-group) 50%, transparent);
+  transform: scaleX(var(--lr-meter, 0));
+  transform-origin: left center;
+  animation: lr-rr-meter 900ms var(--lr-ease-out-expo, var(--lr-ease)) both;
+}
+
+@keyframes lr-rr-meter {
+  from { transform: scaleX(0); }
+}
+
+.rr-bar__value {
+  color: var(--lr-rr-group);
+  font-family: var(--lr-font-mono);
+  white-space: nowrap;
+}
+
+.rr-history .timeline__item {
+  grid-template-columns: 18px 1fr;
+}
+
+.rr-history .timeline__item[data-provisional="true"] .timeline__dot {
+  border-style: dashed;
+  border-color: var(--lr-warn);
+  background: var(--lr-surface);
+  box-shadow: none;
+}
+
+.rr-history .timeline__item[data-type="CANCELLED"] .timeline__dot {
+  background: var(--lr-bear);
+  border-color: var(--lr-bear);
+  box-shadow: 0 0 8px var(--lr-bear-line);
+}
+
+/* ---------- Panel sekunder SA/PVA (mesin lama), terlipat ---------- */
+.rr-legacy {
+  min-width: 0;
+  border: 1px solid var(--lr-glass-border, var(--lr-border));
+  border-left: 2px solid var(--lr-border-strong);
+  border-radius: var(--lr-radius-lg);
+  background: var(--lr-glass, var(--lr-surface));
+}
+
+.rr-legacy__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-1) var(--lr-space-3);
+  padding: var(--lr-space-3) var(--lr-space-4);
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-sm);
+  cursor: pointer;
+  list-style: none;
+}
+
+.rr-legacy__summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Chevron pengganti penanda bawaan: ke kanan saat terlipat, ke bawah saat terbuka. */
+.rr-legacy__summary::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--lr-dur-fast) var(--lr-ease);
+}
+
+.rr-legacy[open] > .rr-legacy__summary::before {
+  transform: rotate(45deg);
+}
+
+.rr-legacy__summary:focus-visible {
+  outline: none;
+  box-shadow: var(--lr-focus-ring);
+  border-radius: var(--lr-radius-lg);
+}
+
+.rr-legacy__title {
+  color: var(--lr-text);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.rr-legacy__count {
+  padding: 0 7px;
+  border: 1px solid var(--lr-glass-border-strong, var(--lr-border));
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-neutral-soft);
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-2xs);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.rr-legacy__hint {
+  font-size: var(--lr-text-xs);
+}
+
+.rr-legacy__body {
+  min-width: 0;
+  padding: 0 var(--lr-space-3) var(--lr-space-3);
+}
+
+.rr-legacy__body > .panel {
+  box-shadow: none;
+}
+
+/* ---------- Responsif ---------- */
+@media (max-width: 820px) {
+  .rr-title__sub {
+    font-size: var(--lr-text-md);
+  }
+
+  .rr-toolbar .field,
+  .rr-toolbar .rr-toolbar__tf,
+  .rr-toolbar .rr-toolbar__toggles {
+    width: 100%;
+  }
+
+  .rr-toolbar .segmented {
+    flex-wrap: wrap;
+  }
+
+  .rr-counts {
+    white-space: normal;
+  }
+
+  .rr-evidence-cell {
+    max-width: 200px;
+  }
+
+  .rr-bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .rr-bar__track {
+    grid-column: 1 / -1;
+  }
+
+  .rr-legacy__summary {
+    padding: var(--lr-space-3);
+  }
+
+  .rr-legacy__body {
+    padding: 0 var(--lr-space-2) var(--lr-space-2);
+  }
+}
+
+/* ---------- Gerak dimatikan ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .rr-bar__fill {
+    animation: none;
+  }
+
+  .rr-legacy__summary::before {
+    transition: none;
+  }
+}
+
+:root[data-motion="off"] .rr-bar__fill,
+:root[data-motion="reduced"] .rr-bar__fill {
+  animation: none;
+}
+
+/* ---------- Mode warna paksa ---------- */
+@media (forced-colors: active) {
+  .rr-title__sub {
+    background: none;
+    color: CanvasText;
+  }
+
+  .rr-count,
+  .rr-pill__prov,
+  .rr-move__badge,
+  .rr-legacy__count {
+    border-color: CanvasText;
+  }
+
+  .page--reversal .table tbody tr.is-provisional > td:first-child {
+    border-left: 3px dashed Highlight;
+  }
+}

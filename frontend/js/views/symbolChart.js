@@ -8,8 +8,9 @@ import { h, icon } from '../lib/dom.js';
 import { formatPrice, formatTime } from '../lib/format.js';
 import { alignmentBadge, directionBadge, directionOf, patternBadge, riskBadges, signalStage } from './signalFormat.js';
 
-// 5m tidak lagi diingesti (LONG 15m, SHORT 1h), sehingga grafik hanya menawarkan timeframe yang datanya diperbarui.
-export const CHART_TIMEFRAMES = Object.freeze(['15m', '1h']);
+// Timeframe yang diingesti worker: 5m kembali diingesti untuk Reversal Radar (REVERSAL_TIMEFRAMES, docs/19), di samping
+// 15m (LONG SA/PVA) dan 1h (SHORT SD/PVD + konteks HTF). Grafik hanya menawarkan timeframe yang datanya diperbarui.
+export const CHART_TIMEFRAMES = Object.freeze(['5m', '15m', '1h']);
 export const SYMBOL_RE = /^[A-Z0-9]{2,30}$/;
 const DEFAULT_TIMEFRAME = '15m';
 // Cukup untuk EMA25 dan ±3 hari candle 15m; batas API 1–1000.
@@ -91,14 +92,15 @@ let panelSeq = 0;
  *   levels?: object[], markers?: object[] | ((timeframe: string) => object[]), variant?: 'side'|'detail',
  *   detailLink?: boolean, onClose?: () => void, onTimeframeChange?: (timeframe: string) => void }} options
  *   Tombol tutup tampil bila `onClose` diberikan; menutup juga memancarkan event DOM 'symbolchart:close' (bubbles).
- * @returns {{ el: HTMLElement, close: () => void, destroy: () => void, readonly timeframe: string }}
+ * @returns {{ el: HTMLElement, close: () => void, destroy: () => void, setMarkers: (markers: object[] | ((timeframe: string) => object[])) => void,
+ *   readonly timeframe: string }}
  */
 export function createSymbolChartPanel(options) {
   const { symbol, signal = null, onClose, onTimeframeChange, detailLink = true, variant = 'side' } = options;
   if (!isValidSymbol(symbol)) throw new RangeError('Simbol tidak valid');
   const direction = normalizeDirection(options.direction ?? signal?.direction);
   const levels = options.levels ?? signalLevels(signal);
-  const markersFor = typeof options.markers === 'function' ? options.markers : () => options.markers ?? [];
+  let markersFor = typeof options.markers === 'function' ? options.markers : () => options.markers ?? [];
   const uid = ++panelSeq;
   let timeframe = normalizeTimeframe(options.timeframe ?? signal?.timeframe);
   let chart = null;
@@ -258,8 +260,14 @@ export function createSymbolChartPanel(options) {
     });
   }
 
+  /** Mengganti penanda grafik (mis. setelah riwayat event kandidat dimuat); grafik yang sedang tampil diperbarui langsung. */
+  function setMarkers(next) {
+    markersFor = typeof next === 'function' ? next : () => (Array.isArray(next) ? next : []);
+    if (chart && !chart.destroyed) chart.setMarkers(markersFor(timeframe));
+  }
+
   load();
-  return { el, close, destroy, get timeframe() { return timeframe; } };
+  return { el, close, destroy, setMarkers, get timeframe() { return timeframe; } };
 }
 
 /** Bentuk ringkas: hanya elemen panel (grafik tetap dibersihkan otomatis saat panel dilepas dari DOM). */
