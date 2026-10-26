@@ -5,7 +5,7 @@
 // Arah (migrasi 005): setiap sinyal punya `direction` 'LONG' | 'SHORT' (baris lama = LONG). Satu sinyal
 // terbuka per simbol × timeframe × ARAH (indeks unik parsial idx_signals_one_open), dan kursor analisis
 // per simbol × timeframe × arah. Argumen `direction` yang tidak diberikan = 'LONG', sehingga pemanggil
-// lama tidak berubah perilakunya; pengecualian: history() tanpa arah mengembalikan kedua arah.
+// lama tidak berubah perilakunya (termasuk history(); kedua arah hanya dengan `direction: null` eksplisit).
 //
 // Catatan skema: migrasi 002 belum memiliki kolom untuk lastCandleTime, lastEvaluatedAt,
 // barsInState, peakPrice, dan peakState yang dibutuhkan untuk melanjutkan state machine
@@ -586,9 +586,10 @@ export function createSignalRepository(db, { clock = () => Date.now() } = {}) {
 
     /**
      * Riwayat sinyal (terbuka & tertutup) terbaru dulu, lengkap dengan event transisinya.
-     * `direction` null/tidak diberikan = kedua arah; 'LONG' / 'SHORT' = satu arah saja.
+     * `direction` tidak diberikan = 'LONG' (pemanggil lama); 'LONG' / 'SHORT' = satu arah saja; null eksplisit =
+     * kedua arah (dipakai GET /api/signals/history tanpa direction).
      */
-    async history({ symbol = null, limit = 50, direction = null } = {}) {
+    async history({ symbol = null, limit = 50, direction = 'LONG' } = {}) {
       if (symbol !== null) assertSymbol(symbol);
       assertLimit(limit, HISTORY_MAX);
       if (direction !== null) assertDirection(direction);

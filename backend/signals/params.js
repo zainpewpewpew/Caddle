@@ -49,10 +49,14 @@ export const DEFAULT_SIGNAL_PARAMS = Object.freeze({
   breakoutRvol: 2,
   /**
    * Batas bar tanpa kemajuan (tanpa perpindahan state) per state sebelum EXPIRED. State SHORT memakai
-   * nilai yang sama dengan state cerminnya (EARLY_BEARISH = EARLY_BULLISH, BREAKDOWN = BREAKOUT).
+   * nilai yang sama dengan state cerminnya (EARLY_BEARISH = EARLY_BULLISH, BREAKDOWN = BREAKOUT): bila tidak
+   * di-override eksplisit, resolveSignalParams menyalin nilai cermin hasil resolve (termasuk override-nya).
    */
   expiryBars: Object.freeze({ QUIET: 48, EARLY_BULLISH: 36, MOMENTUM_BUILDING: 24, BREAKOUT: 12, EARLY_BEARISH: 36, BREAKDOWN: 12 }),
 });
+
+/** State khusus SHORT → state LONG cerminnya, untuk expiryBars SHORT yang tidak di-override eksplisit. */
+const EXPIRY_MIRROR_STATE = Object.freeze({ EARLY_BEARISH: 'EARLY_BULLISH', BREAKDOWN: 'BREAKOUT' });
 
 /** Parameter turunan indikator untuk deriveMarketInputs (ATR, RVOL, swing high/low terkonfirmasi). */
 export const DEFAULT_MARKET_PARAMS = Object.freeze({ atrPeriod: 14, rvolPeriod: 20, swingLeft: 2, swingRight: 2 });
@@ -75,7 +79,13 @@ export function resolveSignalParams(overrides = {}) {
   for (const key of Object.keys(expiryOverrides)) {
     if (!PATTERN_STATES.includes(key)) throw new TypeError(`expiryBars untuk state tidak dikenal: ${key}`);
   }
-  const p = { ...DEFAULT_SIGNAL_PARAMS, ...overrides, expiryBars: { ...DEFAULT_SIGNAL_PARAMS.expiryBars, ...expiryOverrides } };
+  const expiryBars = { ...DEFAULT_SIGNAL_PARAMS.expiryBars, ...expiryOverrides };
+  // Override expiry LONG (mis. backtest/sweep parameter) ikut berlaku untuk state SHORT cerminnya, agar kedua
+  // arah tetap kedaluwarsa dengan cara yang sama; kunci SHORT yang diberikan eksplisit tetap dihormati.
+  for (const [shortState, longState] of Object.entries(EXPIRY_MIRROR_STATE)) {
+    if (!Object.hasOwn(expiryOverrides, shortState)) expiryBars[shortState] = expiryBars[longState];
+  }
+  const p = { ...DEFAULT_SIGNAL_PARAMS, ...overrides, expiryBars };
 
   if (typeof p.earlyMinScore !== 'number' || !(p.earlyMinScore >= 0 && p.earlyMinScore <= 100)) {
     throw new RangeError('earlyMinScore harus 0..100');

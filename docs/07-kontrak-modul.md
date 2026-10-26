@@ -339,6 +339,8 @@ deriveDirectionalMarketInputs(candles, params?) → { LONG: { atr, rvol, resista
 isTerminal(state) → boolean
 DEFAULT_SIGNAL_PARAMS = { earlyMinScore: 60, momentumAtrMultiple: 1, momentumRvol: 1.5, breakoutRvol: 2,
   expiryBars: { QUIET: 48, EARLY_BULLISH: 36, MOMENTUM_BUILDING: 24, BREAKOUT: 12, EARLY_BEARISH: 36, BREAKDOWN: 12 } }
+  // expiryBars.EARLY_BEARISH / BREAKDOWN yang tidak di-override eksplisit mengikuti EARLY_BULLISH / BREAKOUT hasil
+  // resolveSignalParams (termasuk override-nya), sehingga LONG & SHORT kedaluwarsa sama; kunci SHORT eksplisit dihormati.
 LONG_PATTERN_STATES  = QUIET, EARLY_BULLISH, MOMENTUM_BUILDING, BREAKOUT
 SHORT_PATTERN_STATES = QUIET, EARLY_BEARISH, MOMENTUM_BUILDING, BREAKDOWN
 PATTERN_STATES = gabungan state terbuka kedua arah (urutan LONG dulu); PATTERN_STATES_BY_DIRECTION = { LONG, SHORT }
@@ -391,8 +393,9 @@ createSignalRepository(db, { clock }) → {
       // hanya state aktif; alignment ∈ ALIGNMENTS (alignment null tidak dapat dipilih sebagai filter, tetapi tampil
       // tanpa filter); semua filter diterapkan SEBELUM LIMIT; urut pattern_score DESC, updated_at DESC, id DESC.
       // Nilai tidak valid / limit > 500 → RangeError (tidak dipotong); kunci filter tak dikenal → TypeError.
-  history({ symbol?, limit = 50 (1..500), direction? = null }),       // termasuk events[]; urut first_detected_at DESC, id DESC
-      // direction null = kedua arah (perilaku lama); 'LONG'/'SHORT' = satu arah. Setiap baris memuat `direction`.
+  history({ symbol?, limit = 50 (1..500), direction? = 'LONG' }),     // termasuk events[]; urut first_detected_at DESC, id DESC
+      // direction tidak diberikan = 'LONG' (pemanggil lama); 'LONG'/'SHORT' = satu arah; null eksplisit = kedua arah
+      // (GET /api/signals/history tanpa direction meneruskan null). Setiap baris memuat `direction`.
 }
 ```
 
