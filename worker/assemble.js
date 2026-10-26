@@ -10,6 +10,7 @@ import { createKlineStream } from '../backend/ingestion/binance/wsClient.js';
 import { CLOSE_MARGIN_MS } from '../backend/ingestion/backfill.js';
 import { createServerClock } from '../backend/ingestion/serverClock.js';
 import { discoverSymbols } from '../backend/ingestion/symbolDiscovery.js';
+import { DIRECTIONS } from '../backend/market/contracts.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY } from '../backend/settings/scannerSettings.js';
 import { createScanner } from './scanner.js';
 
@@ -32,6 +33,7 @@ const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {}
  *   settleMs?: number,
  *   pipelineSleep?: (ms: number) => Promise<void>,
  *   onAlert?: (alert: object) => void,
+ *   directions?: Array<'LONG'|'SHORT'>,
  *   onAnalysed?: (e: { symbol: string, timeframe: string, candles: object[], reason: string, result: object }) => void,
  *   onMonitoringStopped?: (e: { symbol: string, timeframes: string[]|null, reason: string, at: number }) => void,
  *   heartbeatOwner?: { pid: number, host: string } | null,
@@ -41,6 +43,9 @@ const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {}
  *   `localClock` scanner untuk stempel operasional (heartbeat, run, error, lastIngestionAt).
  *   fetch/restSleep/restRandom/streamFactory/setTimer/clearTimer/pipelineSleep: injeksi I/O (default produksi).
  *   onAnalysed/onMonitoringStopped: pengamat (log/tes) — dipanggil SETELAH analisis / SEBELUM penutupan sinyal.
+ *   onAlert: menerima { symbol, timeframe, direction, state, event, view } (lihat createAnalysisPipeline).
+ *   directions: arah yang dipindai (default kedua arah: LONG = SA/PVA, SHORT = SD/PVD). Satu worker, satu
+ *   pipeline; setiap candle tertutup dievaluasi untuk semua arah dengan candle & fitur bersama.
  *   heartbeatOwner: identitas proses untuk heartbeat (worker/index.js mengisi pid + hostname; default null).
  * @returns {{ serverClock: object, repos: object, rest: object, pipeline: object, scanner: object,
  *   getSettings: () => Promise<object> }}
@@ -63,6 +68,7 @@ export function assembleWorker({
   onAnalysed,
   onMonitoringStopped,
   heartbeatOwner = null,
+  directions = DIRECTIONS,
 } = {}) {
   if (!db) throw new TypeError('db wajib ada');
 
@@ -81,7 +87,8 @@ export function assembleWorker({
 
   const getSettings = async () => (await repos.settings.get(SCANNER_SETTINGS_KEY))?.value ?? DEFAULT_SCANNER_SETTINGS;
 
-  // Pipeline analisis per candle tertutup: pola → konteks multi-timeframe → skor → state machine → SQLite.
+  // Pipeline analisis per candle tertutup: pola → konteks multi-timeframe → skor → state machine → SQLite,
+  // untuk arah LONG dan SHORT sekaligus (Short Scanner — kandidat riset, bukan eksekusi order).
   // settleMs: stream per timeframe diproses paralel; beri jeda singkat agar candle 15m/1h yang tutup
   // bersamaan sudah tersimpan sebelum candle 5m dievaluasi (konteks live = replay).
   let scanner = null;
@@ -93,6 +100,7 @@ export function assembleWorker({
     sleep: pipelineSleep,
     logger,
     onAlert,
+    directions,
   });
 
   scanner = createScanner({

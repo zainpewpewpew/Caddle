@@ -58,6 +58,19 @@
 
 Laporan pengujian: `docs/laporan/milestone-2-3-pengujian.md`.
 
+## Short Scanner — kandidat SHORT riset (dalam pengerjaan, belum di `main`)
+
+Status: backend & dokumentasi selesai di cabang kerja; pengujian belum dijalankan untuk perubahan ini. Sinyal SHORT adalah kandidat riset (struktur bearish), bukan rekomendasi jual/short; tidak ada eksekusi order.
+
+| Item | Status | Lokasi |
+|---|---|---|
+| Pola Silent Distribution (#003) & Progressive Volume Distribution (#004) sebagai cermin SA/PVA (harga → 1/harga), klasifikasi SD/PVD/BOTH/NONE, versi `SHORT_PATTERN_VERSION` | Backend selesai | `backend/patterns/mirror.js`, `silentDistribution.js`, `progressiveDistribution.js` |
+| State SHORT (`EARLY_BEARISH`, `BREAKDOWN`, invalidasi di atas harga), alignment & risk flag relatif arah | Backend selesai | `backend/signals/`, `backend/timeframe/`, `backend/scoring/` |
+| Satu worker memindai LONG & SHORT dengan candle & fitur bersama; kursor analisis per arah; migrasi `005` (`signals.direction`, satu sinyal terbuka per simbol × timeframe × arah, baris lama = LONG) | Backend selesai | `backend/analysis/pipeline.js`, `worker/assemble.js`, `backend/database/migrations/005_signal_direction.sql` |
+| API `direction` (`/api/signals/active` default LONG, `/api/signals/history` default kedua arah) + rincian Overview per arah | Backend selesai | `backend/api/signalRoutes.js`, `backend/database/repositories/overviewRepository.js` |
+| Tes khusus SHORT (unit, integrasi, E2E) | **Belum** — tes yang ada hanya disesuaikan dengan migrasi `005` dan pemindaian dua arah | `tests/` |
+| Validasi out-of-sample pola SHORT | **Belum** — butuh data historis nyata & backtest (M6). Tidak ada klaim profitabilitas | — |
+
 ## Milestone 4–8
 
 Mengikuti roadmap spesifikasi. Prioritas teknis yang sudah diputuskan:
@@ -75,4 +88,4 @@ Mengikuti roadmap spesifikasi. Prioritas teknis yang sudah diputuskan:
 | Peran pengguna kedua | `analyst` (baca saja untuk pengaturan) atau `admin` — dapat dipilih saat `user:create`. |
 | Bahasa UI | Bahasa Indonesia dengan istilah trading standar dalam bahasa Inggris (Screener, Breakout, dll.). |
 | Lanjut ke Milestone 4 | Prasyarat uji live sudah terpenuhi (2026-10-25); menunggu keputusan pemilik untuk mulai M4. |
-| Migrasi `005` kolom tracking sinyal | Usulan di `docs/05-database.md` §6 (nomor `004` sudah dipakai kursor analisis); dibuat sebelum M6. |
+| Migrasi `006` kolom tracking sinyal | Usulan di `docs/05-database.md` §6 (di sana masih bernomor `005`; `004` dipakai kursor analisis, `005` arah sinyal Short Scanner); dibuat sebelum M6. |

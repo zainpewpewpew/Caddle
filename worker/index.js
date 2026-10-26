@@ -1,8 +1,9 @@
 // Entry point proses worker scanner (Milestone 2–3): `npm run worker`, atau dijalankan server sebagai child
 // process lewat tombol "Jalankan scanner" (backend/system/workerSupervisor.js).
 // Membuka SQLite + migrasi, merakit dependensi nyata lewat worker/assemble.js (REST/WS Binance, jam
-// server, repositori, pipeline analisis SA/PVA), menjalankan scanner, dan menangani graceful shutdown
-// (SIGTERM/SIGINT/SIGHUP — SIGHUP dikirim saat jendela terminal ditutup).
+// server, repositori, pipeline analisis LONG SA/PVA + SHORT SD/PVD), menjalankan scanner, dan menangani
+// graceful shutdown (SIGTERM/SIGINT/SIGHUP — SIGHUP dikirim saat jendela terminal ditutup).
+// Riset saja: worker tidak pernah mengirim order (LONG maupun SHORT).
 // Log terstruktur JSON per baris ke stdout.
 
 import { hostname } from 'node:os';
@@ -82,7 +83,9 @@ async function main() {
     // Identitas proses di heartbeat: server yang baru start dapat mengenali heartbeat segar dari worker yang sudah
     // mati (SIGKILL/OOM) sebelum sempat menulis heartbeat akhir, sehingga tombol scanner tidak tertahan 90 detik.
     heartbeatOwner: { pid: process.pid, host: hostname() },
-    onAlert: (alert) => logger.info({ symbol: alert.symbol, timeframe: alert.timeframe, state: alert.state, reason: alert.event?.reason }, 'sinyal baru / naik tahap'),
+    onAlert: (alert) => logger.info({
+      symbol: alert.symbol, timeframe: alert.timeframe, direction: alert.direction, state: alert.state, reason: alert.event?.reason,
+    }, 'sinyal baru / naik tahap'),
     onAnalysed: ({ symbol, timeframe, reason, candles, result }) => {
       logger.debug({ symbol, timeframe, reason, count: candles.length, ...result }, 'candle tertutup dianalisis');
     },

@@ -8,8 +8,11 @@
 // - Pemilihan skor menurut klasifikasi:
 //     SA → hasil SA, PVA → hasil PVA, BOTH → maksimum SA/PVA (patternScore & earlyScore
 //     dipilih terpisah), NONE → maksimum hasil yang tersedia (diagnostik; bukan sinyal).
+// - Arah SHORT (patterns.direction === 'SHORT', hasil evaluateShortPatterns) memakai aturan yang
+//   sama dengan SD menggantikan SA dan PVD menggantikan PVA. Objek pola tanpa `direction` = LONG,
+//   sehingga perilaku & keluaran LONG tidak berubah (kecuali field `direction` pada view).
 
-import { ALIGNMENTS, CLASSIFICATIONS, RISK_FLAGS } from '../market/contracts.js';
+import { ALIGNMENTS, CLASSIFICATIONS_BY_DIRECTION, RISK_FLAGS, resolveDirection } from '../market/contracts.js';
 import { DEFAULT_SCANNER_SETTINGS } from '../settings/scannerSettings.js';
 
 export const DEFAULT_VIEW_PARAMS = Object.freeze({
@@ -38,19 +41,39 @@ function assertScore(r, key) {
 }
 
 /**
- * Hasil pola yang relevan dengan klasifikasi (urutan SA lalu PVA).
+ * Pola per arah: kunci klasifikasi pertama/kedua dan field hasilnya pada objek patterns.
+ * LONG { classification, sa, pva }, SHORT { direction: 'SHORT', classification, sd, pvd }.
+ */
+const PATTERN_FIELDS = Object.freeze({
+  LONG: Object.freeze([['SA', 'sa'], ['PVA', 'pva']]),
+  SHORT: Object.freeze([['SD', 'sd'], ['PVD', 'pvd']]),
+});
+
+/** Arah objek patterns (tanpa `direction` = LONG). */
+export function directionOf(patterns) {
+  return resolveDirection(patterns?.direction);
+}
+
+/**
+ * Hasil pola yang relevan dengan klasifikasi (urutan SA lalu PVA; SHORT: SD lalu PVD).
  * @returns {object[]} PatternResult
  */
 export function relevantResults(patterns) {
   if (patterns === null || typeof patterns !== 'object') throw new TypeError('patterns harus objek { classification, sa, pva }');
-  const { classification, sa, pva } = patterns;
-  if (!CLASSIFICATIONS.includes(classification)) throw new RangeError(`Klasifikasi tidak dikenal: ${classification}`);
-  const need = { SA: ['SA'], PVA: ['PVA'], BOTH: ['SA', 'PVA'], NONE: [] }[classification];
+  const direction = directionOf(patterns);
+  const { classification } = patterns;
+  if (!CLASSIFICATIONS_BY_DIRECTION[direction].includes(classification)) throw new RangeError(`Klasifikasi tidak dikenal: ${classification}`);
+  const [[firstKey, firstField], [secondKey, secondField]] = PATTERN_FIELDS[direction];
+  const first = patterns[firstField];
+  const second = patterns[secondField];
+  const need = { [firstKey]: [firstKey], [secondKey]: [secondKey], BOTH: [firstKey, secondKey], NONE: [] }[classification];
   for (const key of need) {
-    const r = key === 'SA' ? sa : pva;
+    const r = key === firstKey ? first : second;
     if (!r || typeof r !== 'object') throw new TypeError(`Hasil pola ${key} wajib ada untuk klasifikasi ${classification}`);
   }
-  const list = classification === 'NONE' ? [sa, pva].filter((r) => r && typeof r === 'object') : need.map((k) => (k === 'SA' ? sa : pva));
+  const list = classification === 'NONE'
+    ? [first, second].filter((r) => r && typeof r === 'object')
+    : need.map((k) => (k === firstKey ? first : second));
   for (const r of list) { assertScore(r, 'patternScore'); assertScore(r, 'earlyScore'); }
   return list;
 }
@@ -63,7 +86,7 @@ function best(list, key) {
 
 /**
  * Memilih patternScore & earlyScore sesuai klasifikasi (lihat aturan di atas).
- * @returns {{ patternScore: number, earlyScore: number, patternSource: 'SA'|'PVA'|null, earlySource: 'SA'|'PVA'|null }}
+ * @returns {{ patternScore: number, earlyScore: number, patternSource: 'SA'|'PVA'|'SD'|'PVD'|null, earlySource: 'SA'|'PVA'|'SD'|'PVD'|null }}
  */
 export function selectScores(patterns) {
   const list = relevantResults(patterns);
@@ -111,8 +134,14 @@ export function collectRiskFlags({ patterns, timeframe, context, liquidity, data
   for (const [flag, sources] of byFlag) add(flag, `Ditandai detektor ${sources.join(', ')}`);
 
   if (context?.alignment === 'COUNTERTREND') {
-    const bearish = htfByTrend(context, timeframe, 'BEARISH');
-    add('COUNTERTREND_HTF', `Timeframe lebih tinggi bearish${bearish.length ? `: ${bearish.join(', ')}` : ''}`);
+    // COUNTERTREND relatif terhadap arah: LONG melawan HTF bearish, SHORT melawan HTF bullish.
+    if (directionOf(patterns) === 'SHORT') {
+      const bullish = htfByTrend(context, timeframe, 'BULLISH');
+      add('COUNTERTREND_HTF', `Timeframe lebih tinggi bullish (berlawanan arah SHORT)${bullish.length ? `: ${bullish.join(', ')}` : ''}`);
+    } else {
+      const bearish = htfByTrend(context, timeframe, 'BEARISH');
+      add('COUNTERTREND_HTF', `Timeframe lebih tinggi bearish${bearish.length ? `: ${bearish.join(', ')}` : ''}`);
+    }
   }
   const qv = liquidity?.quoteVolume24h;
   if (typeof qv === 'number' && Number.isFinite(qv) && qv < p.minQuoteVolume24h) {
@@ -156,17 +185,25 @@ function trendSummary(context, baseTimeframe) {
     .join(', ');
 }
 
+/** Penjelasan arah SHORT (informatif, kontribusi 0) — hanya untuk SHORT agar penjelasan LONG tidak berubah. */
+const SHORT_DIRECTION_DETAIL = 'Arah SHORT: struktur bearish (SD/PVD = cermin SA/PVA pada harga 1/harga). '
+  + 'Kandidat riset, bukan rekomendasi jual/short dan bukan probabilitas';
+
 /**
  * Menyusun tampilan skor sinyal yang dapat dijelaskan.
- * @param {{ symbol?: string, timeframe?: string, patterns: { classification: string, sa?: object|null, pva?: object|null },
+ * @param {{ symbol?: string, timeframe?: string, patterns: { direction?: 'LONG'|'SHORT', classification: string,
+ *   sa?: object|null, pva?: object|null, sd?: object|null, pvd?: object|null },
  *   context?: { alignment: string, trends?: object }, liquidity?: { quoteVolume24h?: number, spreadBps?: number },
  *   dataQuality?: { ok: boolean, issues?: string[] }, params?: Partial<typeof DEFAULT_VIEW_PARAMS> }} input
- * @returns {{ symbol: string|undefined, timeframe: string|undefined, classification: string, alignment: string|null,
- *   patternScore: number, earlyScore: number, riskFlags: string[], explanation: Array<{ factor: string, contribution: number, detail: string }> }}
+ *   context.alignment wajib sudah relatif terhadap arah pola (buildTimeframeContext/contextForDirection).
+ * @returns {{ symbol: string|undefined, timeframe: string|undefined, direction: 'LONG'|'SHORT', classification: string,
+ *   alignment: string|null, patternScore: number, earlyScore: number, riskFlags: string[],
+ *   explanation: Array<{ factor: string, contribution: number, detail: string }> }}
  */
 export function buildSignalView({ symbol, timeframe, patterns, context, liquidity, dataQuality, params } = {}) {
   const alignment = context?.alignment ?? null;
   if (alignment !== null && !ALIGNMENTS.includes(alignment)) throw new RangeError(`Alignment tidak dikenal: ${alignment}`);
+  const direction = directionOf(patterns);
   const scores = selectScores(patterns);
   const { flags, details } = collectRiskFlags({ patterns, timeframe, context, liquidity, dataQuality, params });
   const p = resolveViewParams(params);
@@ -191,11 +228,12 @@ export function buildSignalView({ symbol, timeframe, patterns, context, liquidit
       : 'Tidak ada hasil pola',
   });
 
+  if (direction === 'SHORT') explanation.push({ factor: 'CONTEXT:DIRECTION', contribution: 0, detail: SHORT_DIRECTION_DETAIL });
   explanation.push({
     factor: 'CONTEXT:ALIGNMENT',
     contribution: 0,
     detail: alignment
-      ? `${alignment} — ${trendSummary(context, timeframe) || 'tanpa rincian trend'} (konteks saja, tidak mengubah skor)`
+      ? `${alignment}${direction === 'SHORT' ? ' (relatif terhadap arah SHORT)' : ''} — ${trendSummary(context, timeframe) || 'tanpa rincian trend'} (konteks saja, tidak mengubah skor)`
       : 'Konteks timeframe tidak tersedia',
   });
   const hasLiquidity = Number.isFinite(liquidity?.quoteVolume24h) || Number.isFinite(liquidity?.spreadBps);
@@ -211,7 +249,7 @@ export function buildSignalView({ symbol, timeframe, patterns, context, liquidit
   }
 
   return {
-    symbol, timeframe, classification: patterns.classification, alignment,
+    symbol, timeframe, direction, classification: patterns.classification, alignment,
     patternScore: scores.patternScore, earlyScore: scores.earlyScore, riskFlags: flags, explanation,
   };
 }

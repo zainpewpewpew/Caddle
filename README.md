@@ -1,6 +1,6 @@
 # AlphaLens
 
-Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — mendeteksi struktur bullish lebih awal pada USDT-M perpetual Binance, dengan sinyal yang dapat dijelaskan. Aplikasi ini **bukan** sistem trading otomatis dan tidak mengeksekusi order.
+Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — mendeteksi struktur bullish (kandidat LONG) dan, lewat [Short Scanner](#short-scanner-riset), struktur bearish (kandidat SHORT) lebih awal pada USDT-M perpetual Binance, dengan sinyal yang dapat dijelaskan. Aplikasi ini **bukan** sistem trading otomatis dan tidak mengeksekusi order di arah mana pun.
 
 > Skor pola bukan probabilitas profit yang terkalibrasi. Jangan menganggap strategi apa pun menguntungkan tanpa bukti out-of-sample yang andal.
 
@@ -11,6 +11,7 @@ Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — men
 | 1 — Fondasi | Audit, arsitektur, autentikasi, shell frontend, API, migrasi | **Selesai (di `main`)** |
 | 2 — Data pasar | Binance REST/WS, candle historis, validasi, worker | **Selesai (di `main`; REST + WebSocket live terverifikasi di Mac pemilik, lihat laporan)** |
 | 3 — Mesin pola | SA, PVA, hybrid timeframe, skor, state machine | **Selesai (di `main`)** |
+| Short Scanner (lanjutan M3) | Pola SHORT SD & PVD, state SHORT, API `direction`, migrasi `005` | **Dalam pengerjaan** — backend selesai, belum diuji & belum di `main` |
 | 4 — Dashboard premium | Screener, grafik, real-time | Belum dimulai |
 | 5 — Pattern Discovery Lab | Upload, anotasi, definisi pola berversi | Belum dimulai |
 | 6 — Backtesting | Replay historis, metrik, out-of-sample | Belum dimulai |
@@ -85,6 +86,25 @@ Worker scanner selalu berjalan sebagai **proses terpisah** dari server API, deng
 
 Nilai selain `true`/`false` membuat server menolak start (fail fast).
 
+## Short Scanner (riset)
+
+Selain kandidat **LONG** (struktur bullish), worker yang sama memindai kandidat **SHORT** (struktur bearish) pada setiap candle tertutup. Sinyal SHORT adalah **kandidat riset** untuk diteliti lebih lanjut — bukan rekomendasi jual/short, bukan probabilitas, dan tidak ada klaim profitabilitas. Aplikasi tidak pernah mengirim order, baik LONG maupun SHORT.
+
+| | LONG | SHORT |
+|---|---|---|
+| Pola | Silent Accumulation (SA, #001), Progressive Volume Accumulation (PVA, #002) | Silent Distribution (SD, #003), Progressive Volume Distribution (PVD, #004) |
+| Klasifikasi | `SA`, `PVA`, `BOTH` | `SD`, `PVD`, `BOTH` |
+| Tahap | `QUIET` → `EARLY_BULLISH` → `MOMENTUM_BUILDING` → `BREAKOUT` | `QUIET` → `EARLY_BEARISH` → `MOMENTUM_BUILDING` → `BREAKDOWN` |
+| Invalidasi | close di bawah `invalidationPrice` (di bawah swing low) | close di atas `invalidationPrice` (di atas swing high) |
+| Alignment `ALIGNED` | semua timeframe lebih tinggi bullish | semua timeframe lebih tinggi bearish |
+
+- **SD/PVD adalah cermin SA/PVA:** candle dicerminkan (harga → 1/harga, high ↔ low) lalu detektor SA/PVA yang sama dijalankan, sehingga aturan kedua arah selalu konsisten. Semua harga yang disimpan dan ditampilkan adalah harga nyata. Parameter default SD/PVD sama dengan SA/PVA — titik awal, bukan hasil optimasi; wajib divalidasi backtest out-of-sample (Milestone 6).
+- **`BREAKDOWN`** = close di bawah support (swing low terkonfirmasi terakhir) **dan** di bawah harga deteksi pertama, dengan RVOL ≥ ambang breakout. Sinyal SHORT dan LONG pada simbol & timeframe yang sama berjalan terpisah.
+- **API:** `GET /api/signals/active?direction=SHORT` (tanpa `direction` = LONG, seperti sebelumnya); `GET /api/signals/history?direction=LONG|SHORT` (tanpa `direction` = kedua arah). Setiap item memuat field `direction`. `GET /api/overview` menambah `activeByDirection`, `earlyByDirection`, dan `alignedByDirection`; field lama (`activeSignals`, `earlySignals`, `alignedSignals`) tetap menghitung LONG.
+- **Upgrade database:** jalankan `npm run migrate` (server dan worker juga menerapkannya otomatis saat start). Migrasi `005` menambah kolom `signals.direction`; semua sinyal lama menjadi LONG. Setelah upgrade, pemindaian SHORT dimulai dari candle terbaru (tanpa replay histori).
+
+Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
+
 ## Perintah
 
 | Perintah | Fungsi |
@@ -92,7 +112,7 @@ Nilai selain `true`/`false` membuat server menolak start (fail fast).
 | `npm start` | Menjalankan server (memuat `.env` bila ada); scanner dijalankan dari tombol di System Health |
 | `npm run dev` | Server dengan auto-reload |
 | `npm run worker` | Worker scanner di terminal terpisah (alternatif tombol website; jangan dijalankan bersamaan) |
-| `npm run migrate` | Menerapkan migrasi database |
+| `npm run migrate` | Menerapkan migrasi database (termasuk `005` arah sinyal Short Scanner) |
 | `npm run user:create -- --username <u> --role admin\|analyst` | Membuat pengguna |
 | `npm run user:password -- --username <u>` | Mengganti kata sandi pengguna (prompt tersembunyi) dan mencabut semua sesinya |
 | `npm run lint` | ESLint |
@@ -115,10 +135,10 @@ backend/
   database/     koneksi, runner migrasi, migrations/, repositories/
   ingestion/    klien REST/WebSocket Binance, validasi candle, discovery, backfill
   indicators/   EMA, ATR, RVOL, swing (fungsi murni)
-  patterns/     detektor SA & PVA berversi
+  patterns/     detektor SA & PVA (LONG) serta SD & PVD (SHORT, cermin SA/PVA) berversi
   timeframe/    trend & alignment multi-timeframe
   scoring/      skor, risk flag, penjelasan
-  signals/      state machine sinyal & repositori
+  signals/      state machine sinyal (LONG & SHORT) & repositori
   analysis/     pipeline analisis (live & backtest)
   system/       status worker, supervisor worker (tombol scanner), konteks pasar
 worker/         proses scanner terpisah (dijalankan server lewat tombol, atau npm run worker)

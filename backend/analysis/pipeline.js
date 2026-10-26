@@ -1,21 +1,43 @@
-// Pipeline analisis per candle tertutup: pola (SA/PVA) → konteks timeframe → skor → state machine → persistensi.
+// Pipeline analisis per candle tertutup: pola → konteks timeframe → skor → state machine → persistensi.
+// Arah LONG (pola SA/PVA) dan SHORT (pola SD/PVD = cermin SA/PVA, lihat backend/patterns/mirror.js). Kedua
+// arah berbagi candle, kualitas seri, trend HTF, dan input pasar (ATR, RVOL, swing) per candle; yang dihitung
+// per arah hanya deteksi pola, alignment (relatif terhadap arah), skor, dan state machine.
 // Worker live memanggil `createAnalysisPipeline(...).onClosedCandles`; replay/backtest (M6) memanggil
-// `analyzeAt` yang sama dengan sumber candle historis, sehingga live dan backtest memakai logika identik.
-// Skor adalah skor aturan yang dapat dijelaskan, bukan probabilitas.
+// `analyzeAt` / `analyzeDirectionsAt` yang sama dengan sumber candle historis, sehingga live dan backtest
+// memakai logika identik. Skor adalah skor aturan yang dapat dijelaskan, bukan probabilitas; sinyal SHORT
+// adalah kandidat riset, bukan rekomendasi jual/short.
 import { setImmediate as nextMacrotask } from 'node:timers/promises';
-import { HIGHER_TIMEFRAMES, TIMEFRAME_MS, TIMEFRAMES } from '../market/contracts.js';
+import { DIRECTIONS, HIGHER_TIMEFRAMES, TIMEFRAME_MS, TIMEFRAMES, resolveDirection } from '../market/contracts.js';
 import {
-  PATTERN_VERSION, PVA_CONDITIONS, SA_CONDITIONS, evaluatePatterns, requiredCandles, resolveParams,
+  MIRROR_BASE, PATTERN_VERSION, PVA_CONDITIONS, PVD_CONDITIONS, SA_CONDITIONS, SD_CONDITIONS, SHORT_PATTERN_VERSION,
+  evaluatePatterns, evaluateShortPatterns, requiredCandles, resolveParams,
 } from '../patterns/index.js';
 import { buildSignalView } from '../scoring/index.js';
-import { deriveMarketInputs, transition } from '../signals/index.js';
-import { buildTimeframeContext } from '../timeframe/index.js';
+import { deriveDirectionalMarketInputs, transition } from '../signals/index.js';
+import { buildTimeframeContext, contextForDirection } from '../timeframe/index.js';
 
-// Candle historis yang dimuat per timeframe: warm-up pola (SA 63, PVA 70), trend (29) dan swing
-// resistance, dengan cadangan agar ATR/EMA stabil.
+// Candle historis yang dimuat per timeframe: warm-up pola (SA/SD 63, PVA/PVD 70), trend (29) dan swing
+// resistance/support, dengan cadangan agar ATR/EMA stabil.
 export const ANALYSIS_LOOKBACK = 300;
 
-const PATTERN_NAMES = Object.freeze({ SA: 'Silent Accumulation', PVA: 'Progressive Volume Accumulation' });
+const PATTERN_NAMES = Object.freeze({
+  SA: 'Silent Accumulation',
+  PVA: 'Progressive Volume Accumulation',
+  SD: 'Silent Distribution',
+  PVD: 'Progressive Volume Distribution',
+});
+
+/** Pola per arah: kunci, metadata kondisi, kunci override di `params`, dan versi metodologi. */
+const PATTERNS_BY_DIRECTION = Object.freeze({
+  LONG: Object.freeze([
+    { key: 'SA', conditions: SA_CONDITIONS, paramsKey: 'sa', version: PATTERN_VERSION },
+    { key: 'PVA', conditions: PVA_CONDITIONS, paramsKey: 'pva', version: PATTERN_VERSION },
+  ]),
+  SHORT: Object.freeze([
+    { key: 'SD', conditions: SD_CONDITIONS, paramsKey: 'sd', version: SHORT_PATTERN_VERSION },
+    { key: 'PVD', conditions: PVD_CONDITIONS, paramsKey: 'pvd', version: SHORT_PATTERN_VERSION },
+  ]),
+});
 
 /** Penjelasan likuiditas untuk candle historis hasil replay (ukuran saat ini tidak dipakai — tanpa lookahead). */
 export const REPLAY_LIQUIDITY_DETAIL = 'Data likuiditas tidak tersedia untuk candle historis (replay): ukuran 24 jam '
@@ -23,6 +45,14 @@ export const REPLAY_LIQUIDITY_DETAIL = 'Data likuiditas tidak tersedia untuk can
 
 function withReplayLiquidity(view) {
   return { ...view, explanation: view.explanation.map((e) => (e.factor === 'CONTEXT:LIQUIDITY' ? { ...e, detail: REPLAY_LIQUIDITY_DETAIL } : e)) };
+}
+
+/** Daftar arah tervalidasi (tidak kosong, tanpa duplikat), urut DIRECTIONS (LONG lebih dulu). */
+function resolveDirections(directions) {
+  if (!Array.isArray(directions) || directions.length === 0) throw new TypeError('directions harus array arah yang tidak kosong');
+  for (const d of directions) if (!DIRECTIONS.includes(d)) throw new RangeError(`Arah tidak dikenal: ${String(d)}`);
+  if (new Set(directions).size !== directions.length) throw new RangeError('directions tidak boleh berisi arah ganda');
+  return Object.freeze(DIRECTIONS.filter((d) => directions.includes(d)));
 }
 
 /**
@@ -46,49 +76,97 @@ export function assessSeriesQuality(candles, timeframe) {
 }
 
 /**
- * Evaluasi murni pada satu titik waktu (closeTime candle dasar terakhir). Tidak menyentuh database.
- * Hanya candle dengan closeTime ≤ waktu evaluasi yang dipakai, termasuk timeframe lebih tinggi.
+ * Evaluasi murni BEBERAPA arah pada satu titik waktu (closeTime candle dasar terakhir). Tidak menyentuh
+ * database. Candle, kualitas seri, trend per timeframe, dan input pasar dihitung SEKALI untuk semua arah;
+ * per arah: pola (LONG: SA/PVA, SHORT: SD/PVD pada candle cermin), alignment relatif arah, skor, transisi.
+ * Hasil tiap arah identik dengan analyzeAt({ ..., direction }) untuk arah itu.
  * @param {{ symbol: string, timeframe: string,
  *   candlesByTimeframe: Record<string, import('../market/contracts.js').Candle[]>,
- *   prev: object|null, liquidity?: { quoteVolume24h?: number, spreadBps?: number },
+ *   prevByDirection?: { LONG?: object|null, SHORT?: object|null },
+ *   liquidity?: { quoteVolume24h?: number, spreadBps?: number },
  *   dataQuality?: { ok: boolean, issues?: string[] },
- *   params?: { sa?: object, pva?: object, signals?: object, view?: { minQuoteVolume24h?: number, maxSpreadBps?: number } } }} input
- *   `params.view`: ambang risk flag likuiditas/spread (default DEFAULT_VIEW_PARAMS). Worker live mengisinya
- *   dengan ambang pengaturan scanner yang dipakai discovery; backtest dapat memberikan ambangnya sendiri.
- * @returns {null | { evaluationTime: number, patterns: object, context: object, view: object,
- *   market: object, next: object, event: object|null, alert: boolean }}
+ *   params?: { sa?: object, pva?: object, sd?: object, pvd?: object, signals?: object,
+ *     view?: { minQuoteVolume24h?: number, maxSpreadBps?: number } },
+ *   directions?: Array<'LONG'|'SHORT'> }} input
+ *   prevByDirection: sinyal terbuka per arah (tidak ada = null). directions: default kedua arah.
+ *   params.sd/pvd: override parameter pola SHORT (terpisah dari sa/pva; default = default SA/PVA).
+ * @returns {null | Partial<Record<'LONG'|'SHORT', { direction: 'LONG'|'SHORT', evaluationTime: number,
+ *   patterns: object, context: object, view: object, market: object, next: object, event: object|null, alert: boolean }>>}
  */
-export function analyzeAt({ symbol, timeframe, candlesByTimeframe, prev, liquidity, dataQuality, params = {} }) {
+export function analyzeDirectionsAt({
+  symbol, timeframe, candlesByTimeframe, prevByDirection = {}, liquidity, dataQuality, params = {}, directions = DIRECTIONS,
+}) {
   if (!TIMEFRAMES.includes(timeframe)) throw new RangeError(`Timeframe tidak didukung: ${timeframe}`);
+  const active = resolveDirections(directions);
+  if (prevByDirection === null || typeof prevByDirection !== 'object') throw new TypeError('prevByDirection harus objek');
   const base = candlesByTimeframe?.[timeframe] ?? [];
   if (!base.length) return null;
   const last = base[base.length - 1];
   const evaluationTime = last.closeTime;
 
   const quality = dataQuality ?? assessSeriesQuality(base, timeframe);
-  const patterns = evaluatePatterns(base, { sa: params.sa, pva: params.pva });
+  const patternsByDirection = {};
+  for (const direction of active) {
+    patternsByDirection[direction] = direction === 'SHORT'
+      ? evaluateShortPatterns(base, { sd: params.sd, pvd: params.pvd })
+      : evaluatePatterns(base, { sa: params.sa, pva: params.pva });
+  }
+  // Trend per timeframe dihitung sekali. Alignment LONG = hasil buildTimeframeContext apa adanya; arah lain
+  // hanya menghitung ulang alignment dari trend yang sama (contextForDirection).
   const context = buildTimeframeContext({ baseTimeframe: timeframe, evaluationTime, candlesByTimeframe });
-  const view = buildSignalView({ symbol, timeframe, patterns, context, liquidity, dataQuality: quality, params: params.view });
-  const market = deriveMarketInputs(base);
-  const result = transition(prev ?? null, { candle: last, patterns, context, market, view }, params.signals);
-  return { evaluationTime, patterns, context, view, market, ...result };
+  const markets = deriveDirectionalMarketInputs(base);
+
+  const out = {};
+  for (const direction of active) {
+    const patterns = patternsByDirection[direction];
+    const directionContext = direction === 'LONG' ? context : contextForDirection(context, timeframe, direction);
+    const view = buildSignalView({ symbol, timeframe, patterns, context: directionContext, liquidity, dataQuality: quality, params: params.view });
+    const market = markets[direction];
+    const result = transition(prevByDirection[direction] ?? null, { candle: last, patterns, context: directionContext, market, view }, params.signals);
+    out[direction] = { direction, evaluationTime, patterns, context: directionContext, view, market, ...result };
+  }
+  return out;
+}
+
+/**
+ * Evaluasi murni SATU arah pada satu titik waktu (closeTime candle dasar terakhir). Tidak menyentuh database.
+ * Hanya candle dengan closeTime ≤ waktu evaluasi yang dipakai, termasuk timeframe lebih tinggi.
+ * @param {{ symbol: string, timeframe: string,
+ *   candlesByTimeframe: Record<string, import('../market/contracts.js').Candle[]>,
+ *   prev: object|null, liquidity?: { quoteVolume24h?: number, spreadBps?: number },
+ *   dataQuality?: { ok: boolean, issues?: string[] },
+ *   params?: { sa?: object, pva?: object, sd?: object, pvd?: object, signals?: object, view?: { minQuoteVolume24h?: number, maxSpreadBps?: number } },
+ *   direction?: 'LONG'|'SHORT' }} input
+ *   `direction` default LONG (pola SA/PVA, perilaku lama); SHORT = pola SD/PVD dan `prev` wajib sinyal SHORT.
+ *   `params.view`: ambang risk flag likuiditas/spread (default DEFAULT_VIEW_PARAMS). Worker live mengisinya
+ *   dengan ambang pengaturan scanner yang dipakai discovery; backtest dapat memberikan ambangnya sendiri.
+ * @returns {null | { direction: 'LONG'|'SHORT', evaluationTime: number, patterns: object, context: object, view: object,
+ *   market: object, next: object, event: object|null, alert: boolean }}
+ */
+export function analyzeAt({ symbol, timeframe, candlesByTimeframe, prev, liquidity, dataQuality, params = {}, direction = 'LONG' }) {
+  if (!TIMEFRAMES.includes(timeframe)) throw new RangeError(`Timeframe tidak didukung: ${timeframe}`);
+  const dir = resolveDirection(direction);
+  const results = analyzeDirectionsAt({
+    symbol, timeframe, candlesByTimeframe, prevByDirection: { [dir]: prev ?? null }, liquidity, dataQuality, params, directions: [dir],
+  });
+  return results === null ? null : results[dir];
 }
 
 /**
  * Definisi pola berversi yang dipersistensi (pattern_definitions) — parameter efektif + metadata kondisi.
  * `maxWarmup` = jumlah candle yang benar-benar dimuat pemanggil (lookback pipeline); parameter yang
  * warm-up-nya melebihi itu ditolak PatternParamsError alih-alih membuat pola diam-diam selalu insufficientData.
+ * `directions` default ['LONG'] (SA, PVA — bentuk definisi tidak berubah); SHORT menambah SD & PVD dengan
+ * `direction: 'SHORT'` dan `mirrorOf` (pola & versi LONG yang dicerminkan), sehingga perubahan SA/PVA tanpa
+ * menaikkan SHORT_PATTERN_VERSION ditolak DEFINITION_CONFLICT saat definisi didaftarkan.
  */
-export function patternDefinitions(params = {}, { maxWarmup } = {}) {
+export function patternDefinitions(params = {}, { maxWarmup, directions = ['LONG'] } = {}) {
   const options = maxWarmup === undefined ? undefined : { maxWarmup };
-  return [
-    { key: 'SA', conditions: SA_CONDITIONS, params: resolveParams('SA', params.sa, options) },
-    { key: 'PVA', conditions: PVA_CONDITIONS, params: resolveParams('PVA', params.pva, options) },
-  ].map(({ key, conditions, params: p }) => ({
-    key,
-    version: PATTERN_VERSION,
-    name: PATTERN_NAMES[key],
-    definition: { params: { ...p }, conditions: conditions.map((c) => ({ ...c })), requiredCandles: requiredCandles(key, p) },
+  return resolveDirections(directions).flatMap((direction) => PATTERNS_BY_DIRECTION[direction].map(({ key, conditions, paramsKey, version }) => {
+    const p = resolveParams(key, params[paramsKey], options);
+    const definition = { params: { ...p }, conditions: conditions.map((c) => ({ ...c })), requiredCandles: requiredCandles(key, p) };
+    if (direction === 'SHORT') Object.assign(definition, { direction, mirrorOf: { pattern: MIRROR_BASE[key], version: PATTERN_VERSION } });
+    return { key, version, name: PATTERN_NAMES[key], definition };
   }));
 }
 
@@ -99,19 +177,26 @@ export function patternDefinitions(params = {}, { maxWarmup } = {}) {
  * Setiap candle dasar BARU dievaluasi berurutan (replay) — mis. setelah backfill gap beberapa candle
  * sekaligus — sehingga transisi state terjadi pada candle yang benar, sama seperti backtest.
  * Alert hanya untuk candle terbaru; transisi historis hasil replay disimpan tanpa alert.
- * Titik awal replay = kursor analisis persisten (signals.lastEvaluatedCandleTime: candle terakhir yang
- * dievaluasi, termasuk candle tanpa event), sehingga restart hanya mengevaluasi candle setelah kursor.
- * Evaluasi pertama sebuah seri tanpa kursor hanya memakai candle terakhir (bootstrap = histori).
+ * Titik awal replay = kursor analisis persisten PER ARAH (signals.lastEvaluatedCandleTime: candle terakhir
+ * yang dievaluasi, termasuk candle tanpa event), sehingga restart hanya mengevaluasi candle setelah kursor.
+ * Evaluasi pertama sebuah seri (atau arah) tanpa kursor hanya memakai candle terakhir (bootstrap = histori).
  * Replay panjang memberi giliran ke event loop tiap `yieldEvery` candle TOTAL di seluruh pipeline — anggaran
  * bersama antar seri, bukan per seri — sehingga banyak seri yang me-replay bersamaan (mis. setelah gap
  * panjang di-backfill) tetap menahan timer/heartbeat/WS paling lama ±`yieldEvery` candle, bukan N × `yieldEvery`.
+ *
+ * Arah (`directions`, default ['LONG'] — perilaku lama; worker memakai kedua arah): setiap candle dievaluasi
+ * sekali untuk semua arah yang belum mengevaluasinya (candle, trend HTF, dan input pasar dipakai bersama; satu
+ * giliran anggaran `yieldEvery` per candle). Sinyal, event, dan kursor disimpan per arah (LONG lebih dulu).
+ * Panggilan repositori untuk LONG tidak membawa argumen `direction` (bentuk lama); SHORT memakai
+ * `direction: 'SHORT'`.
  *
  * @param {{ repos: { candles: any }, signals: any,
  *   getLiquidity?: (symbol: string) => { quoteVolume24h: number|null, spreadBps: number|null,
  *     thresholds?: { minQuoteVolume24h: number, maxSpreadBps: number } } | null | undefined,
  *   logger?: any, params?: object, lookback?: number, maxReplay?: number, settleMs?: number,
  *   sleep?: (ms: number) => Promise<void>, yieldEvery?: number, yieldToEventLoop?: () => Promise<void>,
- *   onAlert?: (alert: { symbol: string, timeframe: string, state: string, event: object, view: object }) => void }} deps
+ *   directions?: Array<'LONG'|'SHORT'>,
+ *   onAlert?: (alert: { symbol: string, timeframe: string, direction: 'LONG'|'SHORT', state: string, event: object, view: object }) => void }} deps
  *   settleMs: bila candle timeframe lebih tinggi yang tutup bersamaan belum tersimpan, tunggu sekali
  *   selama ini agar konteks live sama dengan replay (stream per timeframe diproses paralel).
  *   getLiquidity: ukuran likuiditas dari discovery terakhir; `thresholds` (ambang pengaturan yang dipakai
@@ -123,17 +208,18 @@ export function patternDefinitions(params = {}, { maxWarmup } = {}) {
 export function createAnalysisPipeline({
   repos, signals, getLiquidity = () => undefined, logger, params = {}, lookback = ANALYSIS_LOOKBACK,
   maxReplay = 288, settleMs = 0, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), onAlert,
-  yieldEvery = 25, yieldToEventLoop = () => nextMacrotask(),
+  yieldEvery = 25, yieldToEventLoop = () => nextMacrotask(), directions = ['LONG'],
 }) {
   if (!repos?.candles || !signals) throw new TypeError('repos.candles dan signals wajib ada');
   if (!Number.isInteger(lookback) || lookback < 100 || lookback > 1500) throw new RangeError('lookback harus 100..1500');
   if (!Number.isInteger(maxReplay) || maxReplay < 1 || maxReplay > 5000) throw new RangeError('maxReplay harus 1..5000');
   if (!Number.isInteger(settleMs) || settleMs < 0 || settleMs > 30_000) throw new RangeError('settleMs harus 0..30000');
   if (!Number.isInteger(yieldEvery) || yieldEvery < 1 || yieldEvery > 5000) throw new RangeError('yieldEvery harus 1..5000');
-  const definitions = patternDefinitions(params, { maxWarmup: lookback });
+  const activeDirections = resolveDirections(directions);
+  const definitions = patternDefinitions(params, { maxWarmup: lookback, directions: activeDirections });
   let definitionsReady = null;
   const queues = new Map();
-  // openTime candle dasar terakhir yang dievaluasi per seri (cache dari kursor analisis persisten, diisi
+  // openTime candle dasar terakhir yang dievaluasi per seri × arah (cache dari kursor analisis persisten, diisi
   // saat pertama kali sehingga tetap berlaku setelah restart) — mencegah candle yang sama dievaluasi dua
   // kali, termasuk membuka sinyal baru pada candle yang baru saja menutup sinyal sebelumnya.
   const lastEvaluated = new Map();
@@ -147,6 +233,10 @@ export function createAnalysisPipeline({
   let sliceUsed = 0;
   let sliceTurn = null;
   let activeEvaluations = 0;
+
+  /** Argumen repositori per arah: LONG tanpa `direction` (bentuk lama), SHORT dengan `direction`. */
+  const scoped = (direction, args) => (direction === 'LONG' ? args : { ...args, direction });
+  const cursorKey = (symbol, timeframe, direction) => `${symbol}:${timeframe}:${direction}`;
 
   async function takeEvaluationSlot() {
     while (sliceUsed >= yieldEvery) {
@@ -212,18 +302,28 @@ export function createAnalysisPipeline({
   async function evaluateSeries({ symbol, timeframe }) {
     if (!TIMEFRAMES.includes(timeframe)) throw new RangeError(`Timeframe tidak didukung: ${timeframe}`);
     await ensureDefinitions();
-    const key = `${symbol}:${timeframe}`;
     const base = await repos.candles.getLatest({ symbol, timeframe, limit: lookback + maxReplay });
     if (!base.length) return { symbol, timeframe, skipped: 'NO_DATA' };
     const last = base[base.length - 1];
-    if (!lastEvaluated.has(key)) lastEvaluated.set(key, await signals.lastEvaluatedCandleTime({ symbol, timeframe }));
-    const seen = lastEvaluated.get(key);
-    if (seen !== null && last.openTime <= seen) return { symbol, timeframe, skipped: 'ALREADY_EVALUATED' };
 
-    const fresh = seen === null ? [base.length - 1] : base.map((c, i) => (c.openTime > seen ? i : -1)).filter((i) => i >= 0);
-    const pending = fresh.slice(-maxReplay);
-    if (pending.length < fresh.length) {
-      logger?.warn?.({ symbol, timeframe, dropped: fresh.length - pending.length, maxReplay }, 'replay dipotong: candle lama tidak dievaluasi');
+    // Candle yang belum dievaluasi per arah (indeks di `base`): selalu sufiks seri yang berakhir di candle terakhir.
+    const pendingByDirection = new Map();
+    let dropped = 0;
+    for (const direction of activeDirections) {
+      const key = cursorKey(symbol, timeframe, direction);
+      if (!lastEvaluated.has(key)) lastEvaluated.set(key, await signals.lastEvaluatedCandleTime(scoped(direction, { symbol, timeframe })));
+      const seen = lastEvaluated.get(key);
+      if (seen !== null && last.openTime <= seen) continue;
+      const fresh = seen === null ? [base.length - 1] : base.map((c, i) => (c.openTime > seen ? i : -1)).filter((i) => i >= 0);
+      const kept = fresh.slice(-maxReplay);
+      dropped = Math.max(dropped, fresh.length - kept.length);
+      pendingByDirection.set(direction, new Set(kept));
+    }
+    if (pendingByDirection.size === 0) return { symbol, timeframe, skipped: 'ALREADY_EVALUATED' };
+    // Gabungan semua arah, urut naik: satu evaluasi per candle untuk arah yang belum mengevaluasinya.
+    const pending = [...new Set([...pendingByDirection.values()].flatMap((s) => [...s]))].sort((a, b) => a - b);
+    if (dropped > 0) {
+      logger?.warn?.({ symbol, timeframe, dropped, maxReplay }, 'replay dipotong: candle lama tidak dievaluasi');
     }
 
     await settleHigherTimeframes(symbol, timeframe, last.closeTime);
@@ -235,34 +335,56 @@ export function createAnalysisPipeline({
 
     const { liquidity, params: runParams } = liquidityInputs(getLiquidity(symbol));
     const latest = pending[pending.length - 1];
-    let result = null;
+    const results = new Map();
     for (let n = 0; n < pending.length; n += 1) {
       // Repositori better-sqlite3 resolve sinkron: tanpa jeda eksplisit replay panjang menahan timer & I/O.
       await takeEvaluationSlot();
       const index = pending[n];
       const candle = base[index];
       const window = base.slice(Math.max(0, index + 1 - lookback), index + 1);
-      const prev = await signals.getOpen({ symbol, timeframe });
+      const due = activeDirections.filter((d) => pendingByDirection.get(d)?.has(index));
+      const prevByDirection = {};
+      for (const direction of due) prevByDirection[direction] = await signals.getOpen(scoped(direction, { symbol, timeframe }));
       const historical = index !== latest;
-      result = analyzeAt({ symbol, timeframe, candlesByTimeframe: { [timeframe]: window, ...higher }, prev,
-        liquidity: historical ? undefined : liquidity, params: runParams });
-      if (historical) result = { ...result, view: withReplayLiquidity(result.view) };
-      let saved = null;
-      if (result.event || (prev && result.next !== prev)) {
-        // save() memajukan kursor analisis dalam transaksi yang sama dengan sinyal + event.
-        saved = await signals.save({ symbol, timeframe, snapshot: result.next, event: result.event, explanation: result.view.explanation });
+      const evaluated = analyzeDirectionsAt({ symbol, timeframe, candlesByTimeframe: { [timeframe]: window, ...higher }, prevByDirection,
+        liquidity: historical ? undefined : liquidity, params: runParams, directions: due });
+      for (const direction of due) {
+        let result = evaluated[direction];
+        if (historical) result = { ...result, view: withReplayLiquidity(result.view) };
+        const prev = prevByDirection[direction];
+        let saved = null;
+        if (result.event || (prev && result.next !== prev)) {
+          // save() memajukan kursor analisis arah snapshot dalam transaksi yang sama dengan sinyal + event.
+          saved = await signals.save({ symbol, timeframe, snapshot: result.next, event: result.event, explanation: result.view.explanation });
+        }
+        if (saved?.saved !== true) {
+          await signals.markEvaluated(scoped(direction, { symbol, timeframe, openTime: candle.openTime, now: candle.closeTime }));
+        }
+        lastEvaluated.set(cursorKey(symbol, timeframe, direction), candle.openTime);
+        results.set(direction, result);
       }
-      if (saved?.saved !== true) await signals.markEvaluated({ symbol, timeframe, openTime: candle.openTime, now: candle.closeTime });
-      lastEvaluated.set(key, candle.openTime);
     }
 
-    if (result.alert) {
-      logger?.info?.({ symbol, timeframe, state: result.next.state, reason: result.event?.reason }, 'alert sinyal');
-      onAlert?.({ symbol, timeframe, state: result.next.state, event: result.event, view: result.view });
+    // Setiap arah yang dievaluasi berakhir di candle terbaru; alert hanya dari hasil candle itu.
+    for (const direction of activeDirections) {
+      const result = results.get(direction);
+      if (!result?.alert) continue;
+      logger?.info?.({ symbol, timeframe, direction, state: result.next.state, reason: result.event?.reason }, 'alert sinyal');
+      onAlert?.({ symbol, timeframe, direction, state: result.next.state, event: result.event, view: result.view });
     }
+    const perDirection = {};
+    for (const [direction, result] of results) {
+      perDirection[direction] = {
+        state: result.next.state, classification: result.patterns.classification, event: result.event, alert: result.alert,
+        evaluated: pendingByDirection.get(direction).size,
+      };
+    }
+    // Field tingkat atas = arah utama (LONG bila ikut dievaluasi); `evaluated` = jumlah candle yang dievaluasi.
+    const direction = activeDirections.find((d) => results.has(d));
+    const primary = results.get(direction);
     return {
-      symbol, timeframe, evaluationTime: result.evaluationTime, state: result.next.state, evaluated: pending.length,
-      classification: result.patterns.classification, event: result.event, alert: result.alert,
+      symbol, timeframe, direction, evaluationTime: primary.evaluationTime, state: primary.next.state, evaluated: pending.length,
+      classification: primary.patterns.classification, event: primary.event, alert: primary.alert, directions: perDirection,
     };
   }
 
@@ -283,9 +405,9 @@ export function createAnalysisPipeline({
       return serialize([`${series?.symbol}:${series?.timeframe}`], () => evaluate(series));
     },
     /**
-     * Simbol berhenti dipantau (delisted / keluar dari set pantauan): tutup sinyal terbukanya menjadi EXPIRED
-     * dengan `reason` (signals.closeOpenForSymbol), diserialkan dengan evaluasi yang masih berjalan untuk
-     * seri yang sama. Tanpa alert. `timeframes` null → semua timeframe.
+     * Simbol berhenti dipantau (delisted / keluar dari set pantauan): tutup sinyal terbukanya (kedua arah)
+     * menjadi EXPIRED dengan `reason` (signals.closeOpenForSymbol), diserialkan dengan evaluasi yang masih
+     * berjalan untuk seri yang sama. Tanpa alert. `timeframes` null → semua timeframe.
      * @param {{ symbol: string, timeframes?: string[]|null, reason: string, at: number }} input
      * @returns {Promise<{ closed: Array<{ id: number, timeframe: string, fromState: string, price: number|null }> }>}
      */
@@ -301,5 +423,7 @@ export function createAnalysisPipeline({
       });
     },
     ensureDefinitions,
+    /** Arah yang dievaluasi pipeline ini (urut LONG, SHORT). */
+    directions: activeDirections,
   };
 }
