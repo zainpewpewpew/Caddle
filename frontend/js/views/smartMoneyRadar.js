@@ -1,5 +1,7 @@
 // Smart Money Radar (#/smart-money): Token Accumulation Radar — token yang dibeli lewat SWAP oleh wallet berkualitas
 // yang saling independen, dengan bukti per wallet/tx. GET /api/smart-money/radar (docs/15 §5).
+// Panel "Evaluasi historis" (GET /api/smart-money/evaluation) menampilkan laporan terakhir `npm run smart-money:evaluate`
+// apa adanya, atau keadaan kosong yang jujur bila belum pernah dijalankan.
 import { api } from '../lib/api.js';
 import { badge, dataTable, emptyState, page, panel, segmented, selectField, toggle } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
@@ -7,12 +9,12 @@ import { formatRelative, formatUtc } from '../lib/format.js';
 import { hashQuery } from '../lib/router.js';
 import {
   addressLink, binanceBadge, chainBadge, componentBars, disclaimerBox, externalLink, labelChips, loadable, meter,
-  metaHeader, noSourceState, stateBadge, textList, txLink, typeBadge, usdText, watchButton,
+  metaHeader, noSourceState, simBadge, stateBadge, textList, txLink, typeBadge, usdText, watchButton,
 } from './smartMoneyCommon.js';
 import {
-  CHAINS, CHAIN_LABELS, CONVICTION_COMPONENT_LABELS, EMPTY, RADAR_STATES, buildRadarQuery, disclaimersOf, excludedSummary,
-  explorerTokenUrl, explorerTxUrl, formatSignedPct, isNoSourceState, parseRadarFilters, relevanceLabel,
-  signalPatternLabels, signalsByTimeframe, smartTokenHref, smartWalletHref, stateLabel, symbolChartHref,
+  CHAINS, CHAIN_LABELS, CONVICTION_COMPONENT_LABELS, EMPTY, RADAR_STATES, SM_API, buildRadarQuery, disclaimersOf,
+  evaluationSummary, excludedSummary, explorerTokenUrl, explorerTxUrl, formatSignedPct, isNoSourceState, parseRadarFilters,
+  relevanceLabel, signalPatternLabels, signalsByTimeframe, smartTokenHref, smartWalletHref, stateLabel, symbolChartHref,
 } from './smartMoneyFormat.js';
 
 const WINDOW_OPTIONS = [{ value: '1h', label: '1 jam' }, { value: '4h', label: '4 jam' }, { value: '24h', label: '24 jam' }, { value: '7d', label: '7 hari' }];
@@ -155,6 +157,53 @@ function radarCard(item, meta, index) {
   return card;
 }
 
+const EVALUATION_NOTE = 'Hasil in-sample terhadap data yang tersedia; harga masuk/keluar memakai harga tersirat dari swap (kasar). Hit rate per horizon BUKAN peluang terkalibrasi, dan kinerja masa lalu tidak menjamin hasil masa depan.';
+
+/** Isi panel evaluasi historis dari respons GET /evaluation. */
+export function evaluationContent(data) {
+  const ev = evaluationSummary(data);
+  if (!ev.available) {
+    return emptyState({
+      iconName: 'backtest',
+      title: 'Belum ada evaluasi historis',
+      text: 'Skor keyakinan radar belum diuji pada data historis di server ini. Setelah data tersinkron cukup lama (± 45 hari), admin dapat menjalankan `npm run smart-money:evaluate`; laporannya tampil di sini. Sampai saat itu perlakukan skor keyakinan sebagai ringkasan bukti — bukan peluang profit.',
+    });
+  }
+  const range = ev.start !== null && ev.end !== null ? `${formatUtc(ev.start)} → ${formatUtc(ev.end)}` : EMPTY;
+  return h('div', { class: 'stack sm-eval', 'data-testid': 'sm-evaluation' },
+    h('p', { class: 'cluster sm-eval__meta' },
+      simBadge(ev.simulated),
+      h('span', null, `Dihitung ${ev.computedAt ? formatUtc(ev.computedAt) : EMPTY}`),
+      h('span', { class: 'muted' }, `rentang ${range} · ${ev.steps ?? EMPTY} titik setiap ${ev.stepLabel} · jendela radar ${ev.windowLabel}`),
+      h('span', { class: 'muted' }, `syarat sinyal ≥ ${ev.minIndependentBuyers ?? EMPTY} pembeli independen · ${ev.signals} sinyal dari ${ev.candidates} kandidat`)),
+    dataTable({
+      compact: true,
+      animateRows: false,
+      caption: 'Hasil evaluasi historis per horizon (semua ember keyakinan)',
+      columns: [
+        { key: 'horizon', label: 'Horizon', sortable: false },
+        { key: 'signals', label: 'Sinyal', numeric: true, sortable: false },
+        { key: 'coverage', label: 'Cakupan harga', numeric: true, sortable: false },
+        { key: 'mean', label: 'Rata-rata return', numeric: true, sortable: false },
+        { key: 'median', label: 'Median', numeric: true, sortable: false },
+        { key: 'hitRate', label: 'Hit rate', numeric: true, sortable: false, render: (r) => h('span', { title: `CI 95%: ${r.hitRateCi}` }, r.hitRate) },
+        { key: 'baseline', label: 'Baseline', numeric: true, sortable: false },
+        { key: 'excess', label: 'Selisih vs baseline', numeric: true, sortable: false },
+        { key: 'warnings', label: 'Catatan', sortable: false, render: (r) => h('span', { class: 'sm-reason' }, r.warnings.join('; ') || EMPTY) },
+      ],
+      rows: ev.rows,
+      empty: h('p', { class: 'empty__text' }, 'Laporan tidak memuat horizon.'),
+    }),
+    ev.warnings.length > 0 && h('div', null, h('h4', { class: 'sm-h' }, 'Peringatan laporan'), textList(ev.warnings, { className: 'sm-list sm-list--risk' })),
+    h('p', { class: 'sm-disclaimer-inline' }, EVALUATION_NOTE));
+}
+
+/** Panel evaluasi historis (dimuat terpisah: kegagalannya tidak memengaruhi radar). */
+function evaluationSection() {
+  const view = loadable({ what: 'evaluasi historis', fetcher: () => api(`${SM_API}/evaluation`), render: evaluationContent });
+  return { el: panel({ title: 'Evaluasi historis radar' }, view.el), load: view.load };
+}
+
 function readFilters(form) {
   const fd = new FormData(form);
   return {
@@ -210,6 +259,8 @@ export async function smartMoneyView() {
   });
   form.addEventListener('change', () => { view.load(); });
   await view.load();
+  const evaluation = evaluationSection();
+  await evaluation.load();
 
   const d = disclaimersOf(null);
   const el = page({
@@ -220,7 +271,8 @@ export async function smartMoneyView() {
   },
   metaHost,
   h('p', { class: 'sm-insider-note', 'data-testid': 'sm-insider-note' }, icon('lock', 'sm-insider-note__icon'), d.insiderName),
-  panel({ title: 'Token yang diakumulasi', actions: count, flush: true, footer: `${d.conviction} ${d.readOnly}` }, form, h('div', { class: 'sm-panel-body' }, view.el)));
+  panel({ title: 'Token yang diakumulasi', actions: count, flush: true, footer: `${d.conviction} ${d.readOnly}` }, form, h('div', { class: 'sm-panel-body' }, view.el)),
+  evaluation.el);
   el.classList.add('page--smart-money');
   return el;
 }

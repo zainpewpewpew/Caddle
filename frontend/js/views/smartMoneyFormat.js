@@ -191,6 +191,29 @@ export function formatSignedPct(value) {
   return `${sign}${pctFmt.format(Math.abs(value))}%`;
 }
 
+/**
+ * Drawdown maksimum (metrics.maxDrawdownPct, poin persen BESARAN penurunan ≥ 0) → '−12,5%'. Drawdown selalu
+ * penurunan: tanda dari server (positif atau negatif) diabaikan dan tidak pernah tampil sebagai '+'. null → '—'.
+ */
+export function formatDrawdownPct(value) {
+  if (!isNum(value)) return EMPTY;
+  const abs = Math.abs(value);
+  return abs === 0 ? '0%' : `−${pctFmt.format(abs)}%`;
+}
+
+/** Return sebagai PECAHAN (0,0123 = +1,23 %) → '+1,2%' (laporan evaluasi historis). null → '—'. */
+export function formatReturnFraction(value) {
+  return isNum(value) ? formatSignedPct(value * 100) : EMPTY;
+}
+
+/** Durasi ms → '4 jam' / '1 hari' / '30 mnt' (label horizon & langkah evaluasi). */
+export function formatDurationShort(ms) {
+  if (!isNum(ms) || ms <= 0) return EMPTY;
+  if (ms % 86_400_000 === 0) return `${ms / 86_400_000} hari`;
+  if (ms % HOUR_MS === 0) return `${ms / HOUR_MS} jam`;
+  return `${Math.round(ms / 60_000)} mnt`;
+}
+
 /** Rasio 0..1 → '75%'; null → '—'. */
 export function formatRatioPct(ratio) {
   if (!isNum(ratio)) return EMPTY;
@@ -392,6 +415,17 @@ const ALERT_LABELS = Object.freeze({
 });
 export const alertKindLabel = (kind) => ALERT_LABELS[kind] ?? (kind ? String(kind).replaceAll('_', ' ') : EMPTY);
 
+/**
+ * Penanda "dipantau" per pengguna pada notifikasi (walletWatched / watchlisted dihitung server untuk PENGGUNA INI).
+ * @param {{ walletWatched?: boolean, watchlisted?: boolean }} alert
+ * @returns {{ label: string, title: string }|null}
+ */
+export function alertWatchInfo(alert) {
+  if (alert?.walletWatched === true) return { label: 'Wallet dipantau', title: 'Wallet ini ada di watchlist Anda.' };
+  if (alert?.watchlisted === true) return { label: 'Token dipantau', title: 'Token ini ada di watchlist Anda.' };
+  return null;
+}
+
 export const SCORE_COMPONENT_LABELS = Object.freeze({
   profitability: 'Profitabilitas (ber-shrinkage)',
   consistency: 'Konsistensi mingguan',
@@ -411,11 +445,15 @@ export const CONVICTION_COMPONENT_LABELS = Object.freeze({
   concentrationPenalty: 'Penalti dominasi satu klaster',
 });
 
+// Nama resmi = LINK_TYPES di backend/smartmoney/clusters.js (DIRECT_TRANSFER, COMMON_FUNDER, SHARED_DEPOSIT,
+// CO_TRADING); alias lama tetap dikenali.
 const CLUSTER_REASONS = Object.freeze({
   DIRECT_TRANSFER: 'Transfer langsung antar-wallet',
   TRANSFER: 'Transfer langsung antar-wallet',
+  COMMON_FUNDER: 'Pendana pertama sama',
   SAME_FUNDER: 'Pendana pertama sama',
   FUNDER: 'Pendana pertama sama',
+  SHARED_DEPOSIT: 'Alamat deposit exchange sama',
   SAME_DEPOSIT: 'Alamat deposit exchange sama',
   DEPOSIT: 'Alamat deposit exchange sama',
   CO_TRADING: 'Ko-trading (beli token sama ≤ 60 dtk)',
@@ -425,6 +463,23 @@ const CLUSTER_REASONS = Object.freeze({
 export function clusterReasonLabel(type) {
   const key = String(type ?? '').toUpperCase().replaceAll('-', '_');
   return CLUSTER_REASONS[key] ?? (type ? String(type).replaceAll('_', ' ') : EMPTY);
+}
+
+/**
+ * Keterangan bukti tautan klaster (selain tx): pendana bersama, alamat deposit bersama, atau jumlah token ko-trading.
+ * @param {string} type jenis tautan (LINK_TYPES clusters.js atau alias)
+ * @param {object|null} evidence
+ * @returns {string|null}
+ */
+export function clusterEvidenceText(type, evidence) {
+  const key = String(type ?? '').toUpperCase().replaceAll('-', '_');
+  const e = evidence && typeof evidence === 'object' ? evidence : {};
+  if (['COMMON_FUNDER', 'SAME_FUNDER', 'FUNDER'].includes(key) && typeof e.funder === 'string' && e.funder) return `pendana ${shortAddress(e.funder)}`;
+  if (['SHARED_DEPOSIT', 'SAME_DEPOSIT', 'DEPOSIT'].includes(key) && typeof e.depositAddress === 'string' && e.depositAddress) {
+    return `alamat deposit ${shortAddress(e.depositAddress)}`;
+  }
+  if (['CO_TRADING', 'COTRADE'].includes(key) && Array.isArray(e.tokens) && e.tokens.length) return `${e.tokens.length} token dibeli bersamaan`;
+  return null;
 }
 
 /** "terkait N wallet" (N = anggota klaster selain wallet ini) atau 'mandiri'. */
@@ -496,7 +551,8 @@ export function watchSummaryText(summary) {
 /**
  * Teks strip status dari blok `meta` respons. `now` disuplai pemanggil.
  * @returns {{ simulated: boolean, stale: boolean, noProvider: boolean, dataAsOf: number|null, lastSyncAt: number|null,
- *   chains: string[], wallets: number|null, activities: number|null, providersConfigured: number|null }}
+ *   chains: string[], wallets: number|null, activities: number|null, providersConfigured: number|null,
+ *   attributions: string[], truncated: boolean }} attributions = atribusi wajib provider aktif (ekstensi meta)
  */
 export function metaStatus(meta) {
   const m = meta ?? {};
@@ -512,6 +568,8 @@ export function metaStatus(meta) {
     wallets: isNum(cov.wallets) ? cov.wallets : null,
     activities: isNum(cov.activities) ? cov.activities : null,
     providersConfigured: isNum(m.providersConfigured) ? m.providersConfigured : null,
+    attributions: Array.isArray(m.attributions) ? [...new Set(m.attributions.filter((a) => typeof a === 'string' && a.trim()))].slice(0, 10) : [],
+    truncated: m.truncated === true,
   };
 }
 
@@ -585,14 +643,20 @@ export const entityPath = (kind, chain, address) => `${SM_API}/${kind}/${encodeU
 
 // ---------------------------------------------------------------- preferensi notifikasi
 
-/** Batas validasi klien (cermin validateAlertPrefs di server; server tetap memvalidasi ulang). */
+/**
+ * Batas validasi klien — cermin validateAlertPrefs (backend/smartmoney/alerts.js); server tetap memvalidasi ulang.
+ * cooldownHours = cooldownMs server 60 000..604 800 000 ms (1 menit..7 hari) dalam jam.
+ */
 export const ALERT_PREF_LIMITS = Object.freeze({
-  minUsd: [0, 1e9],
-  largeSellUsd: [0, 1e9],
+  minUsd: [0, 1e12],
+  largeSellUsd: [0, 1e12],
   minWalletScore: [0, 100],
-  minIndependentBuyers: [1, 50],
-  cooldownHours: [0.25, 168],
+  minIndependentBuyers: [1, 100],
+  cooldownHours: [1 / 60, 168],
 });
+
+const RULE_SUFFIX = Object.freeze({ cooldownHours: ' jam (minimal 1 menit, maksimal 7 hari)' });
+const limitText = (v) => v.toLocaleString('id-ID', { maximumFractionDigits: 3 });
 
 const toNumber = (raw) => {
   if (raw === null || raw === undefined) return Number.NaN;
@@ -631,7 +695,7 @@ export function validateAlertPrefsClient(form) {
   const num = (field, { integer = false } = {}) => {
     const value = toNumber(f[field]);
     const [lo, hi] = ALERT_PREF_LIMITS[field];
-    const rule = `${integer ? 'Bilangan bulat' : 'Angka'} ${lo}–${hi.toLocaleString('id-ID')}`;
+    const rule = `${integer ? 'Bilangan bulat' : 'Angka'} ${limitText(lo)}–${limitText(hi)}${RULE_SUFFIX[field] ?? ''}`;
     if (Number.isNaN(value)) errors[field] = `Wajib diisi (${rule.toLowerCase()})`;
     else if (!Number.isFinite(value) || value < lo || value > hi || (integer && !Number.isInteger(value))) errors[field] = rule;
     return value;
@@ -662,7 +726,8 @@ const PREF_FIELDS = ['kinds', 'minUsd', 'largeSellUsd', 'minWalletScore', 'minIn
 
 /**
  * `details` error 400 server → error per field form + daftar umum. Detail berupa string (dicocokkan dengan nama
- * field yang disebut) atau objek { field|path, message }.
+ * field yang disebut) atau objek { field|path, message } — path gaya JSON Pointer `/prefs/minUsd` (server
+ * smart money) maupun `prefs.minUsd`.
  * @returns {{ fields: Record<string, string>, general: string[] }}
  */
 export function mapServerPrefErrors(details) {
@@ -670,7 +735,7 @@ export function mapServerPrefErrors(details) {
   const list = Array.isArray(details) ? details : details ? [details] : [];
   for (const d of list) {
     const message = typeof d === 'string' ? d : typeof d?.message === 'string' ? d.message : JSON.stringify(d);
-    let field = typeof d === 'object' && d ? String(d.field ?? d.path ?? '').replace(/^prefs\./, '') : '';
+    let field = typeof d === 'object' && d ? String(d.field ?? d.path ?? '').replace(/^\/?prefs[./]/, '') : '';
     if (!PREF_FIELDS.includes(field)) field = PREF_FIELDS.find((name) => message.includes(name)) ?? '';
     const formField = field === 'cooldownMs' ? 'cooldownHours' : field;
     if (formField && !out.fields[formField]) out.fields[formField] = message;
@@ -683,9 +748,13 @@ export function mapServerPrefErrors(details) {
 
 /**
  * Info chip "SM ×N" untuk baris LONG Scanner dari GET /screener-links (`items[futuresSymbol]`).
- * @returns {{ text: string, title: string, href: string|null }|null} null bila simbol tidak ada di peta
+ * `simulated` = meta.simulated respons; item.isSimulated juga dibaca. Data simulasi WAJIB diberi penanda SIMULASI.
+ * @param {Record<string, object>|null} links
+ * @param {string} symbol
+ * @param {{ simulated?: boolean }} [options]
+ * @returns {{ text: string, title: string, href: string|null, simulated: boolean }|null} null bila simbol tidak ada di peta
  */
-export function screenerChipInfo(links, symbol) {
+export function screenerChipInfo(links, symbol, { simulated = false } = {}) {
   if (!links || typeof links !== 'object' || typeof symbol !== 'string' || !Object.hasOwn(links, symbol)) return null;
   const info = links[symbol];
   if (!info || typeof info !== 'object') return null;
@@ -694,6 +763,55 @@ export function screenerChipInfo(links, symbol) {
   const st = stateLabel(info.state).label;
   const key = parseTokenKey(info.tokenKey) ?? (isChain(info.chain) && typeof info.address === 'string' ? { chain: info.chain, address: info.address } : null);
   const chainName = CHAIN_LABELS[key?.chain ?? info.chain] ?? info.chain ?? '';
-  const title = `Smart money on-chain${chainName ? ` (${chainName})` : ''}: ${n} pembeli independen · keyakinan ${conviction ?? EMPTY}/100 (bukan probabilitas) · ${st}. Aktivitas spot on-chain ≠ posisi futures.`;
-  return { text: `SM ×${n}`, title, href: key ? smartTokenHref(key.chain, key.address) : null };
+  const sim = simulated === true || info.isSimulated === true;
+  const title = `${sim ? 'DATA SIMULASI — bukan data live. ' : ''}Smart money on-chain${chainName ? ` (${chainName})` : ''}: ${n} pembeli independen · keyakinan ${conviction ?? EMPTY}/100 (bukan probabilitas) · ${st}. Aktivitas spot on-chain ≠ posisi futures.`;
+  return { text: `SM ×${n}`, title, href: key ? smartTokenHref(key.chain, key.address) : null, simulated: sim };
+}
+
+// ---------------------------------------------------------------- evaluasi historis
+
+const ciText = (v) => (Array.isArray(v) && v.length === 2 && v.every(isNum) ? `${formatRatioPct(v[0])}–${formatRatioPct(v[1])}` : EMPTY);
+const stringsOf = (list, max) => (Array.isArray(list) ? list.filter((w) => typeof w === 'string' && w).slice(0, max) : []);
+
+/**
+ * Ringkasan laporan evaluasi historis (GET /api/smart-money/evaluation → laporan terakhir `npm run smart-money:evaluate`)
+ * untuk panel UI. Hanya membaca angka laporan (return dalam PECAHAN); tidak ada yang dihitung ulang atau dikarang.
+ * @param {{ available?: boolean, computedAt?: number, isSimulated?: boolean, report?: object }|null} data
+ * @returns {{ available: false }|{ available: true, simulated: boolean, computedAt: number|null, start: number|null,
+ *   end: number|null, steps: number|null, stepLabel: string, windowLabel: string, minIndependentBuyers: number|null,
+ *   signals: number, candidates: number, rows: Array<{ horizon: string, signals: number, coverage: string, mean: string,
+ *   median: string, hitRate: string, hitRateCi: string, baseline: string, excess: string, warnings: string[] }>,
+ *   warnings: string[] }}
+ */
+export function evaluationSummary(data) {
+  const report = data?.report;
+  if (data?.available !== true || !report || typeof report !== 'object' || !Array.isArray(report.overall)) return { available: false };
+  const p = report.params ?? {};
+  const s = report.summary ?? {};
+  return {
+    available: true,
+    simulated: data.isSimulated === true || report.data?.simulated === true,
+    computedAt: isNum(data.computedAt) ? data.computedAt : null,
+    start: isNum(p.start) ? p.start : null,
+    end: isNum(p.end) ? p.end : null,
+    steps: isNum(s.steps) ? s.steps : null,
+    stepLabel: formatDurationShort(p.stepMs),
+    windowLabel: formatDurationShort(p.windowMs),
+    minIndependentBuyers: isNum(p.minIndependentBuyers) ? p.minIndependentBuyers : null,
+    signals: isNum(s.signals) ? s.signals : 0,
+    candidates: isNum(s.candidates) ? s.candidates : 0,
+    rows: report.overall.map((m) => ({
+      horizon: formatDurationShort(m?.horizonMs),
+      signals: isNum(m?.signals) ? m.signals : 0,
+      coverage: formatRatioPct(m?.coverage),
+      mean: formatReturnFraction(m?.mean),
+      median: formatReturnFraction(m?.median),
+      hitRate: formatRatioPct(m?.hitRate),
+      hitRateCi: ciText(m?.hitRateCi),
+      baseline: formatReturnFraction(m?.baselineMean),
+      excess: formatReturnFraction(m?.excessMean),
+      warnings: stringsOf(m?.warnings, 6),
+    })),
+    warnings: stringsOf(report.warnings, 12),
+  };
 }

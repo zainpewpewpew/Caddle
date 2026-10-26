@@ -10,9 +10,10 @@ import {
   noSourceState, simBadge, textList, tokenLink, txLink, typeBadge, usdText, walletLink, watchButton,
 } from './smartMoneyCommon.js';
 import {
-  CHAINS, CHAIN_LABELS, EMPTY, SCORE_COMPONENT_LABELS, TRADING_STYLES, buildWalletsQuery, clampScore, clusterReasonLabel,
-  clusterText, completenessLabel, disclaimersOf, entityPath, evidenceLines, explorerAddressUrl, explorerTxUrl, flagInfo,
-  formatQty, formatRatioPct, isNoSourceState, labelText, parseEntityQuery, shortAddress, styleLabel,
+  CHAINS, CHAIN_LABELS, EMPTY, SCORE_COMPONENT_LABELS, TRADING_STYLES, buildWalletsQuery, clampScore, clusterEvidenceText,
+  clusterReasonLabel, clusterText, completenessLabel, disclaimersOf, entityPath, evidenceLines, explorerAddressUrl,
+  explorerTxUrl, flagInfo, formatDrawdownPct, formatQty, formatRatioPct, isNoSourceState, labelText, parseEntityQuery,
+  shortAddress, styleLabel,
 } from './smartMoneyFormat.js';
 
 const ALL = { value: '', label: 'Semua' };
@@ -128,7 +129,7 @@ function scoreCard(s) {
         h('dt', null, 'Median return / trade'), h('dd', { class: 'num' }, pct(m.medianReturnPct)),
         h('dt', null, 'Rata-rata return (shrinkage)'), h('dd', { class: 'num' }, pct(m.shrunkMeanReturnPct)),
         h('dt', null, 'Rata-rata tanpa trade terbaik'), h('dd', { class: 'num' }, pct(m.meanReturnExTopPct)),
-        h('dt', null, 'Drawdown maks.'), h('dd', { class: 'num' }, pct(m.maxDrawdownPct)),
+        h('dt', null, 'Drawdown maks.'), h('dd', { class: 'num', title: 'Penurunan terbesar ekuitas realisasi dari puncaknya' }, formatDrawdownPct(m.maxDrawdownPct)),
         h('dt', null, 'Porsi PnL token teratas'), h('dd', { class: 'num' }, formatRatioPct(m.topTokenPnlShare)),
         h('dt', null, 'Minggu positif'), h('dd', { class: 'num' }, formatRatioPct(m.weeklyPositiveShare)),
         h('dt', null, 'Win rate (info saja)'), h('dd', { class: 'num', title: 'Tidak menjadi komponen skor' }, formatRatioPct(m.winRate))),
@@ -137,7 +138,8 @@ function scoreCard(s) {
       s.computedAt ? h('p', { class: 'muted' }, `Dihitung ${formatUtc(s.computedAt)}`) : null));
 }
 
-// Field *Pct dari metrik diasumsikan poin persen (konsisten dengan holdingChangePct).
+// Field *Pct dari metrik = poin persen (konsisten dengan holdingChangePct). maxDrawdownPct = besaran penurunan (≥ 0)
+// → formatDrawdownPct (selalu bertanda −, tidak pernah '+').
 const pct = (v) => (typeof v === 'number' && Number.isFinite(v) ? `${v > 0 ? '+' : ''}${v.toFixed(1).replace('.', ',')}%` : EMPTY);
 
 function limitationsBox(data) {
@@ -176,6 +178,7 @@ function clusterPanel(chain, address, cluster) {
     h('h3', { class: 'sm-h' }, 'Alasan tautan'),
     h('ul', { class: 'sm-list' }, (cluster.reasons ?? []).slice(0, 50).map((r) => h('li', null,
       h('strong', null, clusterReasonLabel(r.type)), ': ', walletLink(chain, r.a), ' ↔ ', walletLink(chain, r.b),
+      clusterEvidenceText(r.type, r.evidence) ? h('span', { class: 'muted' }, ` · ${clusterEvidenceText(r.type, r.evidence)}`) : null,
       r.evidence?.txHash ? [' · ', txLink(explorerTxUrl(chain, r.evidence.txHash), r.evidence.txHash)] : null,
       r.evidence?.at ? h('span', { class: 'muted' }, ` · ${formatUtc(r.evidence.at)}`) : null))));
 }

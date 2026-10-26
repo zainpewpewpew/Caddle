@@ -166,11 +166,16 @@ export function statusStrip(meta, now) {
       `${s.chains.length ? s.chains.map((c) => CHAIN_LABELS[c] ?? c).join(', ') : 'tanpa chain'} · ${s.wallets ?? EMPTY} wallet · ${s.activities ?? EMPTY} aktivitas`),
     h('span', { class: 'sm-strip__item' },
       h('span', { class: 'sm-strip__k' }, 'Provider'), s.providersConfigured === null ? EMPTY : `${s.providersConfigured} terkonfigurasi`),
+    // Atribusi wajib sumber data (syarat penggunaan API gratis, mis. "Powered by Etherscan").
+    s.attributions.length > 0 && h('span', { class: 'sm-strip__item sm-strip__attr', 'data-testid': 'sm-attributions' },
+      h('span', { class: 'sm-strip__k' }, 'Sumber data'), s.attributions.join(' · ')),
   ];
   return h('div', { class: 'sm-strip', 'data-stale': String(s.stale), 'data-testid': 'sm-status' },
     s.stale && h('span', { class: 'sm-strip__stale', role: 'status' }, badge('BASI', 'warn'),
       s.lastSyncAt ? ' Data belum diperbarui sesuai jadwal — angka mungkin tertinggal.' : ' Belum pernah sinkron.'),
-    items);
+    items,
+    s.truncated && h('span', { class: 'sm-strip__item sm-strip__note', role: 'status' },
+      'Jendela ini memuat aktivitas melebihi batas perhitungan — hanya aktivitas terbaru yang dihitung.'));
 }
 
 /** Bagian atas setiap halaman Smart Money: pita simulasi (bila ada) + strip status. */
@@ -184,7 +189,7 @@ export function noSourceState() {
   return emptyState({
     iconName: 'radar',
     title: 'Belum ada sumber data on-chain',
-    text: 'Belum ada provider data yang dikonfigurasi, sehingga tidak ada data yang ditampilkan — tidak ada data contoh atau rekaan. Admin perlu memilih provider dan mengisi API key (bila diperlukan) di konfigurasi server.',
+    text: 'Belum ada provider data yang dikonfigurasi, sehingga tidak ada data yang ditampilkan — tidak ada data contoh atau rekaan. Admin perlu memilih provider (SMART_MONEY_PROVIDERS) dan mengisi API key gratis bila diperlukan; langkahnya ada di panduan docs/16-panduan-smart-money.md.',
     action: h('a', { class: 'btn btn--sm', href: '#/health' }, 'Buka System Health'),
   });
 }

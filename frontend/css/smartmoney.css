@@ -91,6 +91,17 @@
   color: var(--lr-warn);
 }
 
+/* Atribusi sumber data & catatan pemotongan: baris sendiri, teks redup (wajib tampil, tidak mencolok). */
+.sm-strip__attr,
+.sm-strip__note {
+  flex-basis: 100%;
+  color: var(--lr-text-3);
+}
+
+.sm-strip__note {
+  color: var(--lr-warn);
+}
+
 .sm-insider-note {
   display: flex;
   align-items: center;
@@ -691,6 +702,29 @@
 .sm-chip:focus-visible {
   outline: none;
   box-shadow: var(--lr-focus-ring);
+}
+
+/* Penanda data simulasi di samping chip LONG Scanner — teks (bukan warna saja). */
+.sm-chip-sim {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px dashed var(--lr-warn);
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-warn-soft);
+  color: var(--lr-warn);
+  font-size: var(--lr-text-2xs);
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: var(--lr-tracking-caps);
+  white-space: nowrap;
+}
+
+/* ---------- Evaluasi historis ---------- */
+.sm-eval__meta {
+  gap: var(--lr-space-1) var(--lr-space-3);
+  margin: 0;
+  font-size: var(--lr-text-xs);
 }
 
 /* ---------- Responsif ---------- */

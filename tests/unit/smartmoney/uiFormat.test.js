@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_ALERT_PREFS, validateAlertPrefs } from '../../../backend/smartmoney/alerts.js';
+import { LINK_TYPES } from '../../../backend/smartmoney/clusters.js';
 import * as contracts from '../../../backend/smartmoney/contracts.js';
+import { evaluateHistorically } from '../../../backend/smartmoney/evaluate.js';
 import {
-  ALERT_KINDS, CHAINS, DISCLAIMERS, EMPTY, EXPLORERS, RADAR_STATES, RADAR_WINDOWS, TRADING_STYLES, USD_UNKNOWN,
-  alertKindLabel, buildAlertsQuery, buildRadarQuery, buildWalletsQuery, clampScore, clusterReasonLabel, clusterText,
-  completenessLabel, componentPercent, disclaimersOf, entityPath, evidenceLines, excludedSummary, explorerAddressUrl,
-  explorerTokenUrl, explorerTxUrl, flagInfo, formatRatioPct, formatSignedPct, formatUsdOrDash, isNoSourceState,
-  labelText, mapServerPrefErrors, matchBadge, metaStatus, normalizeAddress, parseEntityQuery, parseRadarFilters,
-  parseTokenKey, prefsToForm, relevanceLabel, safeExternalUrl, screenerChipInfo, shortAddress, signOf,
+  ALERT_KINDS, ALERT_PREF_LIMITS, CHAINS, DISCLAIMERS, EMPTY, EXPLORERS, RADAR_STATES, RADAR_WINDOWS, TRADING_STYLES,
+  USD_UNKNOWN, alertKindLabel, alertWatchInfo, buildAlertsQuery, buildRadarQuery, buildWalletsQuery, clampScore,
+  clusterEvidenceText, clusterReasonLabel, clusterText, completenessLabel, componentPercent, disclaimersOf, entityPath,
+  evaluationSummary, evidenceLines, excludedSummary, explorerAddressUrl, explorerTokenUrl, explorerTxUrl, flagInfo,
+  formatDrawdownPct, formatDurationShort, formatRatioPct, formatReturnFraction, formatSignedPct, formatUsdOrDash,
+  isNoSourceState, labelText, mapServerPrefErrors, matchBadge, metaStatus, normalizeAddress, parseEntityQuery,
+  parseRadarFilters, parseTokenKey, prefsToForm, relevanceLabel, safeExternalUrl, screenerChipInfo, shortAddress, signOf,
   signalPatternLabels, signalsByTimeframe, smartTokenHref, smartWalletHref, stateLabel, styleLabel, symbolChartHref,
   typeKind, typeLabel, validateAlertPrefsClient, watchSummaryText,
 } from '../../../frontend/js/views/smartMoneyFormat.js';
@@ -168,6 +172,29 @@ describe('Smart Money UI — format', () => {
     expect(watchSummaryText(null)).toBe('');
   });
 
+  it('UNIT-SM-UI-021 drawdown selalu penurunan (tidak pernah +), return pecahan, durasi, bukti klaster resmi', () => {
+    expect(formatDrawdownPct(12.5)).toBe('−12,5%');
+    expect(formatDrawdownPct(-12)).toBe('−12%'); // tanda dari server diabaikan
+    expect(formatDrawdownPct(0)).toBe('0%');
+    expect(formatDrawdownPct(null)).toBe(EMPTY);
+    expect(formatReturnFraction(0.0123)).toBe('+1,2%');
+    expect(formatReturnFraction(-0.5)).toBe('-50%');
+    expect(formatReturnFraction(null)).toBe(EMPTY);
+    expect(formatDurationShort(4 * 3_600_000)).toBe('4 jam');
+    expect(formatDurationShort(3 * 86_400_000)).toBe('3 hari');
+    expect(formatDurationShort(90_000)).toBe('2 mnt');
+    expect(formatDurationShort(0)).toBe(EMPTY);
+    // Setiap jenis tautan resmi clusters.js punya label Bahasa Indonesia (bukan nama mentah).
+    for (const type of LINK_TYPES) expect(clusterReasonLabel(type)).not.toBe(type.replaceAll('_', ' '));
+    expect(clusterReasonLabel('COMMON_FUNDER')).toBe('Pendana pertama sama');
+    expect(clusterReasonLabel('SHARED_DEPOSIT')).toBe('Alamat deposit exchange sama');
+    expect(clusterEvidenceText('COMMON_FUNDER', { funder: EVM })).toBe('pendana 0x6982…1933');
+    expect(clusterEvidenceText('SHARED_DEPOSIT', { depositAddress: EVM })).toBe('alamat deposit 0x6982…1933');
+    expect(clusterEvidenceText('CO_TRADING', { tokens: [EVM, EVM_MIXED] })).toBe('2 token dibeli bersamaan');
+    expect(clusterEvidenceText('DIRECT_TRANSFER', { txHash: '0x1' })).toBeNull();
+    expect(clusterEvidenceText('COMMON_FUNDER', null)).toBeNull();
+  });
+
   it('UNIT-SM-UI-020 tautan eksternal hanya https', () => {
     expect(safeExternalUrl('https://etherscan.io/tx/0x1')).toBe('https://etherscan.io/tx/0x1');
     expect(safeExternalUrl('javascript:alert(1)')).toBeNull();
@@ -183,6 +210,18 @@ describe('Smart Money UI — meta, route, query', () => {
     expect(s).toMatchObject({ simulated: true, stale: false, noProvider: false, chains: ['base'], wallets: 4, providersConfigured: 2 });
     expect(metaStatus(undefined)).toMatchObject({ simulated: false, stale: true, noProvider: false, dataAsOf: null, chains: [] });
     expect(metaStatus({ providersConfigured: 0, isStale: true }).noProvider).toBe(true);
+  });
+
+  it('UNIT-SM-UI-036 metaStatus membawa atribusi sumber data & penanda pemotongan; penanda "dipantau" per pengguna', () => {
+    const s = metaStatus({ attributions: ['Powered by Etherscan', 'Powered by Etherscan', '', 5, 'Routescan'], truncated: true });
+    expect(s.attributions).toEqual(['Powered by Etherscan', 'Routescan']);
+    expect(s.truncated).toBe(true);
+    expect(metaStatus({}).attributions).toEqual([]);
+    expect(metaStatus({ attributions: 'x' }).truncated).toBe(false);
+    expect(alertWatchInfo({ walletWatched: true, watchlisted: true })).toMatchObject({ label: 'Wallet dipantau' });
+    expect(alertWatchInfo({ walletWatched: false, watchlisted: true })).toMatchObject({ label: 'Token dipantau' });
+    expect(alertWatchInfo({ walletWatched: false, watchlisted: false })).toBeNull();
+    expect(alertWatchInfo(null)).toBeNull();
   });
 
   it('UNIT-SM-UI-031 keadaan "belum ada sumber data" hanya bila 0 provider DAN tanpa data', () => {
@@ -252,7 +291,9 @@ describe('Smart Money UI — preferensi notifikasi', () => {
     expect(prefs).toBeNull();
     expect(Object.keys(errors).sort()).toEqual(['cooldownHours', 'kinds', 'largeSellUsd', 'minIndependentBuyers', 'minUsd', 'minWalletScore']);
     expect(errors.minUsd).toMatch(/^Wajib diisi/);
-    expect(errors.minIndependentBuyers).toMatch(/Bilangan bulat 1–50/);
+    expect(errors.minIndependentBuyers).toMatch(/Bilangan bulat 1–100/);
+    expect(errors.minWalletScore).toBe('Angka 0–100');
+    expect(errors.cooldownHours).toMatch(/minimal 1 menit/);
     expect(errors.kinds).toContain('HACK');
     expect(validateAlertPrefsClient({ ...valid, minUsd: 'Infinity' }).errors.minUsd).toBeDefined();
     expect(validateAlertPrefsClient(null).prefs).toBeNull();
@@ -270,6 +311,38 @@ describe('Smart Money UI — preferensi notifikasi', () => {
     expect(mapped.general).toEqual(['format tidak dikenal']);
     expect(mapServerPrefErrors(undefined)).toEqual({ fields: {}, general: [] });
   });
+
+  it('UNIT-SM-UI-044 batas klien = validateAlertPrefs server: nilai di tepi diterima/ditolak di kedua sisi', () => {
+    const form = { ...valid, kinds: [...ALERT_KINDS] };
+    const cases = [
+      ['minUsd', '1000000000000', true], ['minUsd', '1000000000001', false], ['largeSellUsd', '0', true],
+      ['largeSellUsd', '1e12', true], ['minWalletScore', '100', true], ['minWalletScore', '100.5', false],
+      ['minIndependentBuyers', '100', true], ['minIndependentBuyers', '101', false], ['minIndependentBuyers', '1', true],
+      ['cooldownHours', String(1 / 60), true], ['cooldownHours', '0.01', false], ['cooldownHours', '168', true], ['cooldownHours', '168.01', false],
+    ];
+    for (const [field, raw, ok] of cases) {
+      const { prefs, errors } = validateAlertPrefsClient({ ...form, [field]: raw });
+      expect(Boolean(prefs), `${field}=${raw}: ${JSON.stringify(errors)}`).toBe(ok);
+      if (prefs) expect(validateAlertPrefs(prefs), `${field}=${raw}`).toEqual([]);
+    }
+    expect(validateAlertPrefsClient({ ...form, cooldownHours: String(1 / 60) }).prefs.cooldownMs).toBe(60_000);
+    expect(ALERT_PREF_LIMITS.cooldownHours[1] * 3_600_000).toBe(7 * 24 * 3_600_000);
+    // Default kontrak lolos validasi klien dan server.
+    const defaults = validateAlertPrefsClient(prefsToForm(DEFAULT_ALERT_PREFS));
+    expect(defaults.prefs).toEqual({ ...DEFAULT_ALERT_PREFS, kinds: [...ALERT_KINDS] });
+    expect(validateAlertPrefs(defaults.prefs)).toEqual([]);
+  });
+
+  it('UNIT-SM-UI-045 detail 400 server smart money ({ field, path: /prefs/x }) & kunci asing → umum', () => {
+    const mapped = mapServerPrefErrors([
+      { field: 'minUsd', path: '/prefs/minUsd', message: 'minUsd harus angka 0..1000000000000' },
+      { path: '/prefs/cooldownMs', message: 'cooldownMs harus bilangan bulat 60000..604800000 ms' },
+      { path: '/prefs/rahasia', message: 'Preferensi tidak dikenal: rahasia' },
+      { path: '/prefs', message: 'must be object' },
+    ]);
+    expect(mapped.fields).toEqual({ minUsd: 'minUsd harus angka 0..1000000000000', cooldownHours: 'cooldownMs harus bilangan bulat 60000..604800000 ms' });
+    expect(mapped.general).toEqual(['Preferensi tidak dikenal: rahasia', 'must be object']);
+  });
 });
 
 describe('Smart Money UI — chip LONG Scanner', () => {
@@ -286,11 +359,58 @@ describe('Smart Money UI — chip LONG Scanner', () => {
     expect(chip.href).toBe(`#/smart-token?c=ethereum&a=${EVM}`);
   });
 
+  it('UNIT-SM-UI-052 data simulasi (meta.simulated atau item.isSimulated) → chip bertanda SIMULASI', () => {
+    expect(screenerChipInfo(links, 'PEPEUSDT').simulated).toBe(false);
+    const viaMeta = screenerChipInfo(links, 'PEPEUSDT', { simulated: true });
+    expect(viaMeta.simulated).toBe(true);
+    expect(viaMeta.title.startsWith('DATA SIMULASI — bukan data live. ')).toBe(true);
+    expect(viaMeta.text).toBe('SM ×4');
+    expect(screenerChipInfo({ PEPEUSDT: { ...links.PEPEUSDT, isSimulated: true } }, 'PEPEUSDT').simulated).toBe(true);
+  });
+
   it('UNIT-SM-UI-051 tanpa data/simbol lain/peta rusak → tidak ada chip', () => {
     expect(screenerChipInfo(links, 'BTCUSDT')).toBeNull();
     expect(screenerChipInfo(null, 'PEPEUSDT')).toBeNull();
     expect(screenerChipInfo({ PEPEUSDT: null }, 'PEPEUSDT')).toBeNull();
     expect(screenerChipInfo(links, 'toString')).toBeNull();
     expect(screenerChipInfo({ X: { tokenKey: 'bad' } }, 'X')).toMatchObject({ text: 'SM ×0', href: null });
+  });
+});
+
+describe('Smart Money UI — evaluasi historis', () => {
+  it('UNIT-SM-UI-053 evaluationSummary: belum ada laporan / laporan rusak → available false', () => {
+    expect(evaluationSummary(null)).toEqual({ available: false });
+    expect(evaluationSummary({ available: false })).toEqual({ available: false });
+    expect(evaluationSummary({ available: true, report: { overall: 'x' } })).toEqual({ available: false });
+  });
+
+  it('UNIT-SM-UI-054 evaluationSummary membaca laporan evaluateHistorically apa adanya (return pecahan → persen)', () => {
+    const T = Date.UTC(2026, 0, 1);
+    // Laporan nyata tanpa sinyal: bentuk field identik dengan backend.
+    const empty = evaluateHistorically({ activities: [], priceAt: () => null, start: T, end: T + 86_400_000 });
+    const e = evaluationSummary({ available: true, computedAt: T, isSimulated: false, report: empty });
+    expect(e).toMatchObject({
+      available: true, simulated: false, start: T, end: T + 86_400_000, steps: 4, stepLabel: '6 jam', windowLabel: '1 hari',
+      minIndependentBuyers: 3, signals: 0,
+    });
+    expect(e.rows.map((r) => r.horizon)).toEqual(['4 jam', '1 hari', '3 hari']);
+    expect(e.rows[0]).toMatchObject({ signals: 0, coverage: EMPTY, mean: EMPTY, hitRate: EMPTY, hitRateCi: EMPTY });
+    expect(e.warnings.length).toBeGreaterThan(0);
+
+    const report = {
+      ...empty,
+      data: { ...empty.data, simulated: true },
+      summary: { ...empty.summary, signals: 12, candidates: 15 },
+      overall: [{
+        horizonMs: 14_400_000, signals: 12, coverage: 0.75, mean: 0.0234, median: -0.01, hitRate: 0.5833, hitRateCi: [0.32, 0.81],
+        baselineMean: 0.004, excessMean: 0.0194, warnings: ['sampel kecil: n = 9 < 30'],
+      }],
+    };
+    const s = evaluationSummary({ available: true, computedAt: T, report });
+    expect(s.simulated).toBe(true);
+    expect(s.rows).toEqual([{
+      horizon: '4 jam', signals: 12, coverage: '75%', mean: '+2,3%', median: '-1%', hitRate: '58%', hitRateCi: '32%–81%',
+      baseline: '+0,4%', excess: '+1,9%', warnings: ['sampel kecil: n = 9 < 30'],
+    }]);
   });
 });

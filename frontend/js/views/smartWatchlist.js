@@ -8,7 +8,7 @@ import {
   chainBadge, disclaimerBox, loadable, metaHeader, simBadge, txLink, walletLink,
 } from './smartMoneyCommon.js';
 import {
-  ALERT_KINDS, ALERT_PREF_LIMITS, SM_API, alertKindLabel, buildAlertsQuery, disclaimersOf, explorerTxUrl,
+  ALERT_KINDS, ALERT_PREF_LIMITS, SM_API, alertKindLabel, alertWatchInfo, buildAlertsQuery, disclaimersOf, explorerTxUrl,
   mapServerPrefErrors, parseTokenKey, prefsToForm, safeExternalUrl, shortAddress, smartTokenHref, smartWalletHref,
   validateAlertPrefsClient, watchSummaryText,
 } from './smartMoneyFormat.js';
@@ -65,6 +65,16 @@ function watchlistSection() {
 
 // ------------------------------------------------------------------ alerts
 
+/** Badge "dipantau" per pengguna (wallet/token notifikasi ada di watchlist pengguna ini). */
+function watchedBadge(alert) {
+  const info = alertWatchInfo(alert);
+  if (!info) return null;
+  const el = badge(info.label, 'violet');
+  el.classList.add('sm-alert__watched');
+  el.title = info.title;
+  return el;
+}
+
 function alertItem(alert, onRead) {
   const key = parseTokenKey(alert.tokenKey);
   const tone = alert.severity === 'HIGH' ? 'bear' : alert.severity === 'MEDIUM' ? 'warn' : undefined;
@@ -79,6 +89,7 @@ function alertItem(alert, onRead) {
       !alert.read && h('span', { class: 'sm-alert__dot', 'aria-hidden': 'true' }),
       badge(alertKindLabel(alert.kind), tone),
       alert.chain && chainBadge(alert.chain),
+      watchedBadge(alert),
       simBadge(alert.isSimulated),
       h('span', { class: 'muted', title: formatUtc(alert.createdAt) }, formatRelative(alert.createdAt)),
       !alert.read ? h('span', { class: 'sr-only' }, 'belum dibaca') : null),

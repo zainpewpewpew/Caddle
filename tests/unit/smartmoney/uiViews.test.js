@@ -159,6 +159,66 @@ describe('Smart Money UI — Radar', () => {
     expect(texts(el)).toContain('Tidak ada token yang cocok dengan filter');
   });
 
+  it('UNIT-SM-UI-066 panel evaluasi historis: belum ada laporan → keadaan kosong jujur; ada laporan → tabel per horizon', async () => {
+    dom = installFakeDom({
+      responses: jsonRoute({
+        '/api/smart-money/radar': { meta: meta(), items: [radarItem()] },
+        '/api/smart-money/evaluation': { meta: meta(), available: false },
+      }),
+    });
+    let el = await smartMoneyView();
+    expect(dom.requests.map((r) => r.url)).toEqual(['/api/smart-money/radar?window=24h&limit=100', '/api/smart-money/evaluation']);
+    expect(texts(el)).toContain('Belum ada evaluasi historis');
+    expect(texts(el)).toContain('npm run smart-money:evaluate');
+    expect(el.querySelector('[data-testid="sm-evaluation"]')).toBeNull();
+    dom.uninstall();
+
+    const report = {
+      kind: 'smart-money-evaluation',
+      params: { start: NOW - 30 * 86_400_000, end: NOW - 3 * 86_400_000, stepMs: 21_600_000, windowMs: 86_400_000, minIndependentBuyers: 3, horizonsMs: [14_400_000, 86_400_000] },
+      data: { simulated: true },
+      summary: { steps: 108, signals: 7, candidates: 9 },
+      overall: [
+        { horizonMs: 14_400_000, signals: 7, coverage: 1, mean: 0.031, median: 0.02, hitRate: 0.714, hitRateCi: [0.36, 0.92], baselineMean: 0.01, excessMean: 0.021, warnings: ['sampel kecil: n = 7 < 30'] },
+        { horizonMs: 86_400_000, signals: 7, coverage: 0.57, mean: -0.05, median: -0.04, hitRate: 0.25, hitRateCi: [0.05, 0.7], baselineMean: null, excessMean: null, warnings: [] },
+      ],
+      warnings: ['Tidak cukup sampel untuk kesimpulan.'],
+    };
+    dom = installFakeDom({
+      responses: jsonRoute({
+        '/api/smart-money/radar': { meta: meta(), items: [radarItem()] },
+        '/api/smart-money/evaluation': { meta: meta({ simulated: true }), available: true, computedAt: NOW, params: report.params, report, isSimulated: true },
+      }),
+    });
+    el = await smartMoneyView();
+    const panelEl = el.querySelector('[data-testid="sm-evaluation"]');
+    const t = texts(panelEl);
+    expect(t).toContain('SIMULASI');
+    expect(t).toContain('108 titik setiap 6 jam');
+    expect(t).toContain('7 sinyal dari 9 kandidat');
+    expect(t).toContain('4 jam');
+    expect(t).toContain('+3,1%');
+    expect(t).toContain('-5%');
+    expect(t).toContain('sampel kecil: n = 7 < 30');
+    expect(t).toContain('Tidak cukup sampel untuk kesimpulan.');
+    expect(t).toContain('BUKAN peluang terkalibrasi');
+  });
+
+  it('UNIT-SM-UI-067 strip status menampilkan atribusi sumber data dan catatan pemotongan', async () => {
+    dom = installFakeDom({
+      responses: jsonRoute({
+        '/api/smart-money/radar': { meta: meta({ attributions: ['Data riwayat transaksi: Etherscan API (Powered by Etherscan)'], truncated: true }), items: [radarItem()] },
+        '/api/smart-money/evaluation': { meta: meta(), available: false },
+      }),
+    });
+    const el = await smartMoneyView();
+    expect(texts(el.querySelector('[data-testid="sm-attributions"]'))).toContain('Powered by Etherscan');
+    expect(texts(el.querySelector('[data-testid="sm-status"]'))).toContain('hanya aktivitas terbaru yang dihitung');
+    dom.uninstall();
+    dom = installFakeDom({ responses: jsonRoute({ '/api/smart-money/radar': { meta: meta(), items: [] }, '/api/smart-money/evaluation': { available: false } }) });
+    expect((await smartMoneyView()).querySelector('[data-testid="sm-attributions"]')).toBeNull();
+  });
+
   it('UNIT-SM-UI-065 tombol ikuti token: POST lalu DELETE watchlist dengan CSRF', async () => {
     setCsrfToken('csrf-x');
     dom = installFakeDom({
@@ -245,6 +305,18 @@ describe('Smart Money UI — Wallet', () => {
     expect(el.querySelector(`a[target="_blank"][href="https://etherscan.io/address/${W1}"]`)).not.toBeNull();
   });
 
+  it('UNIT-SM-UI-073 Profil wallet: drawdown tampil sebagai penurunan (−), bukti tautan pendana bersama', async () => {
+    const data = profile();
+    data.score.metrics.maxDrawdownPct = 23.4; // besaran ≥ 0 dari walletScore.js
+    data.cluster.reasons = [{ type: 'COMMON_FUNDER', a: W1, b: W2, evidence: { funder: TOKEN2, txHash: TX, at: NOW } }];
+    dom = installFakeDom({ hash: `#/smart-wallet?c=ethereum&a=${W1}`, responses: jsonRoute({ [`/api/smart-money/wallets/ethereum/${W1}`]: data }) });
+    const t = texts(await smartWalletView());
+    expect(t).toContain('Drawdown maks.−23,4%');
+    expect(t).not.toContain('+23,4%');
+    expect(t).toContain('Pendana pertama sama');
+    expect(t).toContain('pendana 0x1111…1111');
+  });
+
   it('UNIT-SM-UI-072 Profil wallet: 404 → "tidak dilacak"; parameter tidak valid → tanpa request', async () => {
     dom = installFakeDom({ hash: `#/smart-wallet?c=ethereum&a=${W2}`, responses: () => ({ status: 404, body: { error: 'NOT_FOUND' } }) });
     expect(texts(await smartWalletView())).toContain('Wallet tidak dilacak');
@@ -308,6 +380,25 @@ describe('Smart Money UI — Watchlist & Alerts', () => {
     expect(dom.requests.filter((r) => r.method === 'POST').at(-1).body).toEqual({ ids: [7] });
   });
 
+  it('UNIT-SM-UI-093 notifikasi wallet/token yang dipantau pengguna diberi badge "dipantau"', async () => {
+    const base = { kind: 'NEW_BUY', severity: 'HIGH', chain: 'ethereum', tokenKey: `ethereum:${TOKEN}`, wallet: W1, evidence: {}, createdAt: NOW, read: false, isSimulated: false };
+    dom = installFakeDom({
+      responses: routes({
+        '/api/smart-money/alerts': { meta: meta(), unread: 3, items: [
+          { ...base, id: 1, title: 'A', walletWatched: true, watchlisted: true },
+          { ...base, id: 2, title: 'B', walletWatched: false, watchlisted: true },
+          { ...base, id: 3, title: 'C', walletWatched: false, watchlisted: false },
+        ] },
+      }),
+    });
+    const el = await smartWatchlistView();
+    const items = el.querySelectorAll('.sm-alert');
+    expect(items).toHaveLength(3);
+    expect(items[0].querySelector('.sm-alert__watched').textContent).toBe('Wallet dipantau');
+    expect(items[1].querySelector('.sm-alert__watched').textContent).toBe('Token dipantau');
+    expect(items[2].querySelector('.sm-alert__watched')).toBeNull();
+  });
+
   it('UNIT-SM-UI-091 validasi klien mencegah PUT; nilai valid → PUT {prefs} dengan cooldownMs', async () => {
     dom = installFakeDom({ responses: routes({ 'PUT /api/smart-money/alert-prefs': (_u, init) => ({ status: 200, body: JSON.parse(init.body) }) }) });
     const el = await smartWatchlistView();
@@ -356,5 +447,19 @@ describe('Smart Money UI — chip LONG Scanner', () => {
     expect(chip.getAttribute('title')).toContain('keyakinan 64/100');
     // Simbol tanpa data → render asli (tanpa chip).
     expect(symbolCol.render({ symbol: 'BTCUSDT' }).querySelector('.sm-chip')).toBeNull();
+    expect(cell.querySelector('[data-testid="sm-chip-simulated"]')).toBeNull();
+  });
+
+  it('UNIT-SM-UI-101 data smart money simulasi → penanda SIMULASI terlihat di samping chip', () => {
+    dom = installFakeDom();
+    const links = { '1000PEPEUSDT': { tokenKey: `ethereum:${TOKEN}`, independentBuyers: 3, conviction: 64, state: 'ACCUMULATING' } };
+    const viaMeta = withSmartMoneyChips(SCREENER_COLUMNS, links, { simulated: true }).find((c) => c.key === 'symbol').render({ symbol: '1000PEPEUSDT' });
+    const marker = viaMeta.querySelector('[data-testid="sm-chip-simulated"]');
+    expect(marker.textContent).toBe('SIMULASI');
+    expect(viaMeta.querySelector('.sm-chip').getAttribute('data-simulated')).toBe('true');
+    expect(viaMeta.querySelector('.sm-chip').getAttribute('title')).toContain('DATA SIMULASI');
+    const viaItem = withSmartMoneyChips(SCREENER_COLUMNS, { '1000PEPEUSDT': { ...links['1000PEPEUSDT'], isSimulated: true } })
+      .find((c) => c.key === 'symbol').render({ symbol: '1000PEPEUSDT' });
+    expect(viaItem.querySelector('[data-testid="sm-chip-simulated"]')).not.toBeNull();
   });
 });

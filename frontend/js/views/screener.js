@@ -237,20 +237,25 @@ function scanRadar(dir) {
 /**
  * Chip smart money ("SM ×N", N = pembeli independen) pada sel Symbol LONG Scanner untuk simbol futures yang punya
  * token on-chain MATCHED (GET /api/smart-money/screener-links). Tanpa data → kolom tidak diubah sama sekali.
+ * Data simulasi (meta.simulated atau item.isSimulated) → penanda "SIMULASI" yang terlihat di samping chip.
  * @param {Array<object>} columns
  * @param {Record<string, object>|null} links
+ * @param {{ simulated?: boolean }} [options] simulated = meta.simulated respons /screener-links
  */
-export function withSmartMoneyChips(columns, links) {
+export function withSmartMoneyChips(columns, links, { simulated = false } = {}) {
   if (!links || Object.keys(links).length === 0) return columns;
   return columns.map((c) => (c.key !== 'symbol' ? c : {
     ...c,
     render: (r) => {
-      const info = screenerChipInfo(links, r.symbol);
+      const info = screenerChipInfo(links, r.symbol, { simulated });
       if (!info) return c.render(r);
       const chip = info.href
-        ? h('a', { class: 'sm-chip', href: info.href, title: info.title, 'aria-label': info.title }, info.text)
-        : h('span', { class: 'sm-chip', title: info.title, 'aria-label': info.title, tabindex: 0 }, info.text);
-      return h('span', { class: 'sm-chip-cell' }, c.render(r), chip);
+        ? h('a', { class: 'sm-chip', href: info.href, title: info.title, 'aria-label': info.title, 'data-simulated': info.simulated ? 'true' : undefined }, info.text)
+        : h('span', { class: 'sm-chip', title: info.title, 'aria-label': info.title, tabindex: 0, 'data-simulated': info.simulated ? 'true' : undefined }, info.text);
+      const sim = info.simulated
+        ? h('span', { class: 'sm-chip-sim', title: 'Data smart money simulasi — bukan data live', 'data-testid': 'sm-chip-simulated' }, 'SIMULASI')
+        : null;
+      return h('span', { class: 'sm-chip-cell' }, c.render(r), chip, sim);
     },
   }));
 }
@@ -290,9 +295,11 @@ async function scannerPage(ctx, direction) {
   const workerStatus = api('/api/system/worker').catch(() => null);
   // Ringkasan smart money untuk chip "SM ×N" — hanya LONG, sekali per render halaman; gagal = tanpa chip (diam).
   // Dibatasi SMART_LINKS_TIMEOUT_MS agar endpoint yang lambat tidak pernah menahan tabel kandidat.
+  // Hasil: { items, simulated } — meta.simulated dibawa agar chip dari data simulasi selalu bertanda SIMULASI.
   const smartLinks = dir === 'LONG'
     ? Promise.race([
-      api('/api/smart-money/screener-links', { background: true }).then((d) => (d && typeof d.items === 'object' ? d.items : null)),
+      api('/api/smart-money/screener-links', { background: true })
+        .then((d) => (d && d.items && typeof d.items === 'object' ? { items: d.items, simulated: d.meta?.simulated === true } : null)),
       new Promise((resolve) => { setTimeout(() => resolve(null), SMART_LINKS_TIMEOUT_MS); }),
     ]).catch(() => null)
     : Promise.resolve(null);
@@ -350,7 +357,7 @@ async function scannerPage(ctx, direction) {
     const previousColumns = columns;
     columns = fields.tier || fields.score || fields.winProbability ? scannerColumns(dir, fields)
       : dir === 'LONG' ? SCREENER_COLUMNS : scannerColumns(dir);
-    if (dir === 'LONG') columns = withSmartMoneyChips(columns, links);
+    if (dir === 'LONG') columns = withSmartMoneyChips(columns, links?.items ?? null, { simulated: links?.simulated === true });
     const filtered = [...new FormData(filters).values()].some(Boolean);
     const limitReached = data.count >= SCREENER_LIMIT;
     count.textContent = limitReached ? `≥ ${SCREENER_LIMIT} hasil` : `${rows.length} hasil`;
