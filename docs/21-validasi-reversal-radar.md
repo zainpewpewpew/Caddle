@@ -1,10 +1,10 @@
 # 21 — Validasi "Reversal Radar": laporan replay historis
 
-Status: **hasil sintetis terisi, sebelum dan sesudah penyetelan; data nyata run 1 terisi** (2026-10-26). Mesin
+Status: **hasil sintetis terisi, sebelum dan sesudah penyetelan; data nyata run 1 dan run 2 terisi** (2026-10-26). Mesin
 `backend/reversal` **sesudah penyetelan** = commit `1e3bf9b` (parameter `DEFAULT_REVERSAL_PARAMS` bawaan saat ini, juga
 yang dipakai run 1 data nyata); **sebelum penyetelan** = commit `6bdb4d1` (parameter awal agent A). Bagian data nyata (§6)
 berisi hasil run 1 yang dijalankan pengguna di Mac (§6.1–§6.4), perubahan harness untuk run 2 dan target yang ditetapkan
-sebelum run 2 (§6.5), serta kerangka §6.6 untuk run 2. Setiap placeholder `<!-- diisi dari reports/... -->` wajib diganti
+sebelum run 2 (§6.5), hasil run 2 beserta bacaannya (§6.6–§6.7), dan tambahan harness + target untuk run 3 (§6.8). Setiap placeholder `<!-- diisi dari reports/... -->` wajib diganti
 dengan nilai dari file laporan yang disebutkan beserta nama filenya.
 
 File laporan yang dikutip (semua `reports/` gitignored; buat ulang dengan perintah di §2/§3 bila perlu):
@@ -17,6 +17,7 @@ File laporan yang dikutip (semua `reports/` gitignored; buat ulang dengan perint
 | sebelum, penyetelan | `6bdb4d1` | 1–20 | `reports/tuning/reversal-replay-20261026T185640Z.md` (idem) |
 | varian penyetelan | `1e3bf9b` + `--params` | 1–20, 5m+15m | `scratchpad/tune/{old,g1,t10,new,b8,b8a5,b8a8}/reversal-replay-*.md` (lokal integrator, lihat §3) |
 | **data nyata, run 1** | `1e3bf9b` (main setelah PR #21) | — (Binance, 16 simbol, 2025-06-01 → 2025-10-01) | `reports/reversal-replay-20261026T201517Z.md` (+ `.json`), dijalankan pengguna di Mac, dilampirkan di thread proyek |
+| **data nyata, run 2** | `1e3bf9b` (main setelah PR #22; laporan diperluas) | — (data sama dengan run 1) | `reports/reversal-replay-20261026T205952Z.md` (+ `.json`), dijalankan pengguna di Mac, dilampirkan di thread proyek |
 
 Kontrak yang divalidasi: [docs/19 — Reversal Radar](19-kontrak-reversal-radar.md) §3 (detektor), §4 (state machine),
 §9 (replay), **§10 (definisi keberhasilan — ditetapkan sebelum evaluasi)**. Harness: `backend/reversal/replay.js`,
@@ -576,9 +577,9 @@ Tambahan dari pembacaan `.json`:
    belum terukur — run 2 tidak menambah ini; menjadi kandidat run 3 bila butir 1–4 sudah ditangani.
 8. **Keunggulan waktu vs mesin lama** tidak dapat disimpulkan dari run 1 (lihat (e)); metrik per peristiwa ada di run 2.
 
-### 6.5 Run 2 — perubahan harness yang disiapkan di PR ini & target yang ditetapkan sebelum run
+### 6.5 Run 2 — perubahan harness (PR #22) & target yang ditetapkan sebelum run
 
-Harness replay (`backend/reversal/replay.js`, `replayReport.js`, `scripts/reversal-replay.js`) diperluas di PR ini supaya run 2
+Harness replay (`backend/reversal/replay.js`, `replayReport.js`, `scripts/reversal-replay.js`) diperluas di PR #22 supaya run 2
 menjawab pertanyaan yang tidak terjawab run 1 — tanpa mengubah mesin, API, maupun UI. Kunci JSON baru ada di `groups[]` /
 `byTimeframe[]`; judul bagian Markdown baru dicetak tebal.
 
@@ -617,50 +618,194 @@ npm run reversal:replay -- --top 20 --timeframes 5m,15m,1h --from 2025-06-01 --t
 
 Yang dikirim kembali: `reports/reversal-replay-<ts>.md` dan `.json` utuh (seperti run 1).
 
-### 6.6 Run 2 — hasil
-<!-- diisi dari reports/reversal-replay-<ts>.md run 2: bagian "Parameter" (termasuk simbol dilewati), "Pemeriksaan target §10" (T-NYATA-1..3), "Basis pembanding tanpa keterampilan", "Hasil per tahap awal", "Hasil menurut status terlambat saat deteksi", "Distribusi skor saat deteksi per tahap awal", kolom "Breakout gagal sebelum target", "Lead per peristiwa", "Uji anti-look-ahead", "Peringatan kejujuran" -->
+### 6.6 Run 2 — hasil (dijalankan pengguna 2026-10-26 20:59 UTC)
 
-| TF | Sens. | SUCCESS (k/n, CI) | Basis acak RW | Basis acak empiris (k/n, CI) | Selisih | T-NYATA-1 |
+- File: `reports/reversal-replay-20261026T205952Z.md` + `.json` (dilampirkan di thread proyek, di luar git). Perintah sama
+  dengan run 1; mesin = `main` setelah PR #22 (parameter `1e3bf9b`, tanpa `--params`). Data identik dengan run 1 (48 seri,
+  737 528 evaluasi, 24 092 kandidat; semua angka run 1 terulang persis) — yang berbeda hanya laporan (§6.5). Replay 278,8 s.
+- Simbol: `--top 20` → discovery mengembalikan 20; 16 di-replay; **4 dilewati** — JCTUSDT, BTWUSDT, CAPUSDT, APRUSDT, ketiga
+  TF "tidak ada candle pada rentang" (kontrak tanpa data pada Jun–Okt 2025). Ini jawaban butir h run 1.
+- Peringatan kejujuran (dari laporan): pembanding lama mode cepat (indeks alert v2). Anti-look-ahead: 3 seri diperiksa, 0 gagal.
+
+**(a) Target data nyata (docs/19 §10, ditetapkan sebelum run 2) — sensitivitas MEDIUM**
+
+| TF | T-NYATA-1: CI bawah SUCCESS > basis acak empiris | T-NYATA-2: median lead per peristiwa > 0 | T-NYATA-3: EARLY ≥ 10 % kandidat pertama |
+|---|---|---|---|
+| 5m | **TIDAK** — SUCCESS 57,7 % (CI 56,1–59,2) vs basis 56,8 % (+0,8 poin) | **TIDAK** — median 0 candle (Q1–Q3 −10…+8), n = 3 816; lead > 0 hanya 49,0 % | **TIDAK** — 0,3 % |
+| 15m | **TIDAK** — 59,6 % (56,9–62,2) vs 59,8 % (−0,2 poin) | **TIDAK** — median −2 (−13…+8), n = 1 291; lead > 0 43,2 % | **TIDAK** — 0,2 % |
+| 1h | **TIDAK** — 62,2 % (56,6–67,5) vs 58,6 % (+3,6 poin; CI memuat basis) | **TIDAK** — median −2 (−15…+9), n = 290; lead > 0 42,4 % | **TIDAK** — 0,0 % |
+
+**(b) Basis pembanding tanpa keterampilan** — disalin dari laporan.
+
+| TF | Sens. | Berlabel | Jarak stop s (ATR) median (Q1–Q3) | Basis acak RW | Basis acak empiris | SUCCESS | Selisih |
+|---|---|---|---|---|---|---|---|
+| 5m | LOW | 530 | 3,60 (2,30–5,83) | 62,2 % | 875/1 590 = 55,0 % (52,6–57,5) | 314/530 = 59,2 % (55,0–63,3) | +4,2 poin |
+| 5m | MEDIUM | 3 919 | 3,92 (2,40–5,98) | 63,4 % | 6 682/11 757 = 56,8 % (55,9–57,7) | 2 260/3 919 = 57,7 % (56,1–59,2) | +0,8 poin |
+| 5m | HIGH | 16 344 | 3,44 (2,17–5,43) | 61,7 % | 27 302/49 032 = 55,7 % (55,2–56,1) | 8 987/16 344 = 55,0 % (54,2–55,7) | −0,7 poin |
+| 15m | LOW | 187 | 4,39 (2,59–6,75) | 65,0 % | 329/561 = 58,6 % (54,5–62,6) | 93/187 = 49,7 % (42,6–56,8) | −8,9 poin |
+| 15m | MEDIUM | 1 328 | 4,32 (2,68–6,53) | 65,7 % | 2 381/3 984 = 59,8 % (58,2–61,3) | 791/1 328 = 59,6 % (56,9–62,2) | −0,2 poin |
+| 15m | HIGH | 6 202 | 3,24 (2,08–5,26) | 60,9 % | 10 237/18 606 = 55,0 % (54,3–55,7) | 3 401/6 202 = 54,8 % (53,6–56,1) | −0,2 poin |
+| 1h | LOW | 49 | 3,48 (2,28–5,55) | 62,1 % | 82/147 = 55,8 % (47,7–63,6) | 34/49 = 69,4 % (55,5–80,5) | +13,6 poin |
+| 1h | MEDIUM | 299 | 3,92 (2,26–6,09) | 63,3 % | 526/897 = 58,6 % (55,4–61,8) | 186/299 = 62,2 % (56,6–67,5) | +3,6 poin |
+| 1h | HIGH | 1 505 | 3,19 (2,00–5,32) | 60,5 % | 2 549/4 515 = 56,5 % (55,0–57,9) | 801/1 505 = 53,2 % (50,7–55,7) | −3,2 poin |
+
+**(c) Hasil per tahap awal** — disalin dari laporan (basis acak di kolom terakhir = basis *grup*, bukan subset; lihat §6.7 butir 2).
+
+| TF | Sens. | Tahap awal | Kandidat | SUCCESS | FAIL | TIMEOUT | Basis empiris grup |
+|---|---|---|---|---|---|---|---|
+| 5m | MEDIUM | EARLY_FORMATION | 10 | 6/10 = 60,0 % (31,3–83,2) | 30,0 % | 10,0 % | 56,8 % |
+| 5m | MEDIUM | DEVELOPING_REVERSAL | 3 267 | 2 016/3 265 = 61,7 % (60,1–63,4) | 24,0 % | 14,2 % | 56,8 % |
+| 5m | MEDIUM | CONFIRMED_BREAKOUT | 644 | 238/644 = 37,0 % (33,3–40,8) | 62,1 % | 0,9 % | 56,8 % |
+| 5m | HIGH | EARLY_FORMATION | 2 395 | 1 092/2 392 = 45,7 % (43,7–47,7) | 50,0 % | 4,4 % | 55,7 % |
+| 5m | HIGH | DEVELOPING_REVERSAL | 12 905 | 7 504/12 893 = 58,2 % (57,3–59,1) | 28,5 % | 13,3 % | 55,7 % |
+| 5m | HIGH | CONFIRMED_BREAKOUT | 1 059 | 391/1 059 = 36,9 % (34,1–39,9) | 62,3 % | 0,8 % | 55,7 % |
+| 15m | MEDIUM | EARLY_FORMATION | 3 | 2/3 | 1/3 | 0/3 | 59,8 % |
+| 15m | MEDIUM | DEVELOPING_REVERSAL | 1 181 | 722/1 178 = 61,3 % (58,5–64,0) | 22,2 % | 16,5 % | 59,8 % |
+| 15m | MEDIUM | CONFIRMED_BREAKOUT | 147 | 67/147 = 45,6 % (37,7–53,6) | 54,4 % | 0,0 % | 59,8 % |
+| 15m | HIGH | EARLY_FORMATION | 1 108 | 469/1 107 = 42,4 % (39,5–45,3) | 51,9 % | 5,8 % | 55,0 % |
+| 15m | HIGH | DEVELOPING_REVERSAL | 4 777 | 2 797/4 771 = 58,6 % (57,2–60,0) | 28,0 % | 13,4 % | 55,0 % |
+| 15m | HIGH | CONFIRMED_BREAKOUT | 324 | 135/324 = 41,7 % (36,4–47,1) | 58,3 % | 0,0 % | 55,0 % |
+| 1h | MEDIUM | DEVELOPING_REVERSAL | 245 | 165/242 = 68,2 % (62,1–73,7) | 19,4 % | 12,4 % | 58,6 % |
+| 1h | MEDIUM | CONFIRMED_BREAKOUT | 57 | 21/57 = 36,8 % (25,5–49,8) | 63,2 % | 0,0 % | 58,6 % |
+| 1h | HIGH | EARLY_FORMATION | 252 | 120/251 = 47,8 % (41,7–54,0) | 48,6 % | 3,6 % | 56,5 % |
+| 1h | HIGH | DEVELOPING_REVERSAL | 1 159 | 642/1 141 = 56,3 % (53,4–59,1) | 29,4 % | 14,3 % | 56,5 % |
+| 1h | HIGH | CONFIRMED_BREAKOUT | 113 | 39/113 = 34,5 % (26,4–43,7) | 65,5 % | 0,0 % | 56,5 % |
+
+LOW (tanpa EARLY): DEVELOPING 65,2 % (5m, n = 425) · 52,3 % (15m, n = 155) · 76,3 % (1h, n = 38); CONFIRMED 35,2 % · 37,5 % ·
+45,5 % (n = 105 / 32 / 11).
+
+**(d) Hasil menurut status terlambat saat deteksi (MEDIUM)** — disalin dari laporan; HIGH menunjukkan pola yang sama.
+
+| TF | Status saat deteksi | Kandidat | SUCCESS | FAIL | TIMEOUT |
+|---|---|---|---|---|---|
+| 5m | terlambat (LATE_ENTRY/EXTENDED) | 2 219 | 1 342/2 217 = 60,5 % (58,5–62,5) | 22,5 % | 17,0 % |
+| 5m | tepat waktu | 1 702 | 918/1 702 = 53,9 % (51,6–56,3) | 40,5 % | 5,6 % |
+| 15m | terlambat | 788 | 485/787 = 61,6 % (58,2–65,0) | 18,0 % | 20,3 % |
+| 15m | tepat waktu | 543 | 306/541 = 56,6 % (52,4–60,7) | 37,2 % | 6,3 % |
+| 1h | terlambat | 186 | 113/184 = 61,4 % (54,2–68,1) | 23,4 % | 15,2 % |
+| 1h | tepat waktu | 116 | 73/115 = 63,5 % (54,4–71,7) | 34,8 % | 1,7 % |
+
+**(e) Distribusi skor saat deteksi per tahap awal (HIGH = semua kandidat)** — disalin dari laporan.
+
+| TF | Tahap awal | Kandidat | Skor median (Q1–Q3) | Skor min–maks | Bukti median (Q1–Q3) | Histogram 0–9 / 10–19 / 20–29 / 30–39 / 40–49 / 50–59 / 60–69 / 70–79 / 80–89 / 90–100 |
 |---|---|---|---|---|---|---|
-| <!-- diisi --> | | | | | | |
+| 5m | EARLY_FORMATION | 2 395 | 19 (16–26) | 10–52 | 3,0 (3,0–4,0) | 0/1244/849/262/39/1/0/0/0/0 |
+| 5m | DEVELOPING_REVERSAL | 12 905 | 37 (30–45) | 15–88 | 6,0 (5,0–7,0) | 0/231/2924/4570/3353/1402/358/60/7/0 |
+| 5m | CONFIRMED_BREAKOUT | 1 059 | 47 (40–54) | 23–83 | 8,0 (7,0–9,0) | 0/0/36/207/385/326/86/17/2/0 |
+| 15m | EARLY_FORMATION | 1 108 | 18 (12–24) | 10–48 | 3,0 (2,0–4,0) | 0/654/346/97/11/0/0/0/0/0 |
+| 15m | DEVELOPING_REVERSAL | 4 777 | 36 (29–44) | 15–82 | 5,0 (4,0–7,0) | 0/127/1244/1536/1205/509/131/23/2/0 |
+| 15m | CONFIRMED_BREAKOUT | 324 | 43 (36–52) | 19–79 | 8,0 (7,0–9,0) | 0/2/26/90/104/70/26/6/0/0 |
+| 1h | EARLY_FORMATION | 252 | 19 (13–25) | 10–44 | 3,0 (2,0–4,0) | 0/135/83/30/4/0/0/0/0/0 |
+| 1h | DEVELOPING_REVERSAL | 1 159 | 35 (28–42) | 15–79 | 5,0 (4,0–6,0) | 0/39/314/405/262/101/31/7/0/0 |
+| 1h | CONFIRMED_BREAKOUT | 113 | 45 (38–51) | 23–78 | 8,0 (7,0–9,0) | 0/0/3/33/39/27/10/1/0/0 |
 
-| TF | Tahap awal (MEDIUM) | Kandidat | SUCCESS | FAIL | TIMEOUT | Skor median (Q1–Q3) pada HIGH |
-|---|---|---|---|---|---|---|
-| <!-- diisi --> | | | | | | |
+**(f) Breakout gagal sebelum target** (HIGH): 714/2 441 = 29,3 % (5m) · 469/1 500 = 31,3 % (15m) · 117/349 = 33,5 % (1h) —
+artinya **67–71 % penutupan BREAKOUT_FAILED terjadi setelah target +2 ATR sudah tercapai**.
 
+**(g) Lead per peristiwa (MEDIUM)**: 96–97 % kandidat Reversal Radar punya sinyal lama (QUIET/EARLY_BULLISH) dalam ±48 candle;
+median lead 0 (5m) / −2 (15m) / −2 (1h) candle; lead > 0 pada 49,0 % / 43,2 % / 42,4 % kandidat berpadanan.
+
+### 6.7 Bacaan run 2
+
+1. **Tidak ada keunggulan terukur atas kebetulan pada sensitivitas default.** SUCCESS MEDIUM = basis acak empiris ± 1 poin di
+   5m/15m dan +3,6 poin di 1h dengan CI yang memuat basis. Basis acak RW (61–66 %) bahkan di atas SUCCESS di semua grup.
+   Sebabnya geometri penghalang §10: stop median 3,2–4,4 ATR vs target 2 ATR, sehingga rasio SUCCESS 55–62 % adalah *base
+   rate* penghalang asimetris, bukan informasi. Ekspektasi kasar (SUCCESS +2 ATR, FAIL −s, TIMEOUT 0) pada 5m MEDIUM ≈
+   0,577 × 2 − 0,303 × 3,92 ≈ −0,03 ATR sebelum biaya — nol. **Kesimpulan ini berlaku untuk definisi §10**; definisi lain
+   (mis. target/stop simetris, atau keluar saat kandidat dibatalkan) belum diuji dan tidak boleh diasumsikan lebih baik.
+2. **Tahap awal membedakan hasil jauh lebih kuat daripada skor.** Kandidat yang pertama tampil sudah CONFIRMED_BREAKOUT
+   (membeli breakout yang sudah terjadi) adalah yang terburuk: SUCCESS 35–46 %, FAIL 54–65 % di semua TF & sensitivitas,
+   jauh di bawah basis grup. Kandidat DEVELOPING-first adalah satu-satunya subset di atas basis grup dengan CI bawah di
+   atas basis: 5m MEDIUM 61,7 % (CI 60,1–63,4) vs 56,8 % (+4,9 poin), 1h MEDIUM 68,2 % (62,1–73,7) vs 58,6 % (+9,6);
+   15m MEDIUM 61,3 % (58,5–64,0) vs 59,8 % (+1,5, tidak signifikan). EARLY-first (hanya terlihat di HIGH) 42–48 % SUCCESS
+   dengan FAIL ≈ 50 %. **Peringatan**: basis di tabel (c) adalah basis grup; jarak stop per tahap hampir pasti berbeda
+   (EARLY dekat dasar → stop lebih rapat → basisnya sendiri lebih rendah; CONFIRMED jauh dari dasar → stop lebar → basis
+   lebih tinggi), jadi selisih per tahap belum sah sampai basis per subset dihitung (run 3, §6.8). Yang sudah sah tanpa
+   basis: CONFIRMED-first memiliki FAIL ≈ 60 % *dengan stop lebar* — buruk dari sisi mana pun.
+3. **Tanda "terlambat" tidak mengidentifikasi hasil yang lebih buruk** di bawah definisi §10: kandidat terlambat SUCCESS
+   60–63 % (FAIL 17–23 %) vs tepat waktu 50–57 % (FAIL 37–45 %). Penjelasan yang paling mungkin kembali ke geometri: harga
+   yang sudah menjauh dari dasar berarti stop (invalidasi) lebih jauh → base rate lebih tinggi dan risiko per kandidat lebih
+   besar. Karena itu **default `hideExtended` tetap mati**; keputusan final menunggu basis per subset (run 3).
+4. **Skor masih membawa informasi di dalam tahap DEVELOPING**: DEVELOPING pada MEDIUM (skor ≥ 45) 61,7 / 61,3 / 68,2 % vs
+   DEVELOPING pada HIGH (semua skor) 58,2 / 58,6 / 56,3 %. Distribusi (e): DEVELOPING median 37 (Q1–Q3 30–45) — MEDIUM
+   meloloskan ≈ 30 % DEVELOPING dan ≈ 55 % CONFIRMED; EARLY maksimum 44–52, median 18–19, sehingga ambang EARLY yang
+   "setara" MEDIUM berada di kisaran 20–25. Ambang per tahap **belum ditetapkan**: hasil EARLY-first belum menunjukkan
+   bahwa menampilkannya di default adalah perbaikan (butir 2), dan hasil per bin skor baru ada di run 3.
+5. **Reversal Radar tidak lebih awal dari mesin lama.** Hampir semua kandidat (96–97 %) punya sinyal QUIET/EARLY_BULLISH
+   lama dalam ±48 candle, dengan lead median 0 … −2 candle dan hanya 42–49 % yang lebih dulu. Pada data nyata mesin ini
+   memberi label yang lebih kaya (tahap, bukti, level) atas peristiwa yang sama, bukan deteksi yang lebih dini.
+6. **"CONFIRMED sesaat" sebagian besar artefak**: 67–71 % pembatalan BREAKOUT_FAILED terjadi setelah target tercapai
+   (retracement pasca-target), bukan setup yang gagal. Kekhawatiran §2.7 butir 2 pada data nyata jauh lebih kecil daripada
+   yang tersirat dari angka 46–53 %.
+7. **Bukti**: frekuensi identik dengan run 1 (data sama); daya pembeda per bukti (SUCCESS vs FAIL) tetap belum terukur dan
+   tidak menjadi prioritas sebelum butir 1–3 terjawab.
+
+### 6.8 Run 3 — pertanyaan yang belum sah dijawab & tambahan harness
+
+Ditambahkan di PR tindak lanjut #22 supaya run 3 menjawab butir 2–4 §6.7 dengan basis yang adil:
+- **Basis per subset**: `stopDistanceAtr`, `baselineRandomWalk`, `baselineShuffled`, `successMinusBaseline`, dan
+  `expectancyAtr` (rata-rata +2 pada SUCCESS, −s pada FAIL, 0 pada TIMEOUT; tanpa biaya) di `outcomesByFirstStage.<tahap>`
+  dan `outcomesByExtended.<status>` serta di level grup → kolom baru di "Hasil per tahap awal" dan "Hasil menurut status
+  terlambat saat deteksi".
+- **Hasil per bin skor saat deteksi per tahap** (grup HIGH): SUCCESS, basis empiris, selisih, ekspektasi per bin 10 poin →
+  bagian "Hasil per bin skor saat deteksi (sensitivitas HIGH)" — dasar memilih ambang per tahap, bila ada bin yang
+  melampaui basisnya.
+- **T-NYATA-1 per tahap** (`T_NYATA_1_STAGE`): CI bawah SUCCESS subset > basis empiris subset, per TF × tahap pada MEDIUM.
+
+Target run 3 (ditetapkan sekarang): keputusan "ambang per tahap" hanya diambil bila sebuah tahap/bin melampaui basis
+subsetnya sendiri dengan CI bawah > basis **dan** ekspektasi ATR > 0; "sembunyikan CONFIRMED-first secara default" diambil
+bila CONFIRMED-first tetap di bawah basis subsetnya. Perintah run 3 sama persis dengan run 2.
+
+### 6.9 Run 3 — hasil
+<!-- diisi dari reports/reversal-replay-<ts>.md run 3: "Basis pembanding tanpa keterampilan", kolom basis/ekspektasi di "Hasil per tahap awal" dan "Hasil menurut status terlambat saat deteksi", "Hasil per bin skor saat deteksi (sensitivitas HIGH)", baris T-NYATA-1 per tahap di "Pemeriksaan target §10", "Uji anti-look-ahead", "Peringatan kejujuran" -->
+
+| TF | Tahap awal (MEDIUM) | Kandidat | SUCCESS (CI) | Basis empiris subset | Selisih | Ekspektasi (ATR) | T-NYATA-1 per tahap |
+|---|---|---|---|---|---|---|---|
+| <!-- diisi --> | | | | | | | |
 
 ## 7. Keputusan
 
-Keputusan setelah set sintetis (§2–§3) tetap berlaku untuk parameter mesin; bagian ini menambahkan keputusan setelah run 1
-data nyata (§6) dan menetapkan apa yang **belum** boleh diputuskan.
+Keputusan setelah set sintetis (§2–§3) tetap berlaku untuk parameter mesin. Di bawah ini keputusan setelah **dua run data
+nyata** (§6), dalam urutan dari yang paling pasti.
 
-- **Parameter mesin `DEFAULT_REVERSAL_PARAMS` tidak diubah di run 1** (`minEarlyGroups` 2, `minBottomAge` 5, pemicu puncak
-  range dengan `minTriggerAboveBottomAtr` 1,5 & `minBaseBarsForTrigger` 8, sufiks bersih — commit `1e3bf9b`). Data nyata
-  (§6.4 butir 1) menunjukkan bukti LL_STOPPED / HIGHER_LOW / EMA7_TURN_UP / EMA_CONVERGENCE / CHOCH_BULLISH lolos pada 36–74 %
-  evaluasi; bobot atau ambangnya adalah kandidat penyetelan, tetapi **tidak diubah sebelum** ada hasil per tahap dan basis
-  acak (run 2), karena laporan run 1 tidak memisahkan bukti mana yang lolos pada SUCCESS vs FAIL.
-- **Kalibrasi probabilitas TIDAK dilakukan.** SUCCESS MEDIUM 57,7 % / 59,6 % / 62,2 % (§6.2 a) diukur tanpa basis acak;
-  dengan jarak stop yang tampaknya sering ≥ 2,5 ATR, random walk saja memberi ≥ 55 % (§6.3). Skor tetap skor aturan;
-  tidak ada angka peluang yang boleh tampil di UI.
-- **Sensitivitas default MEDIUM dipertahankan sementara, dengan cacat yang diketahui**: pada MEDIUM daftar Early Formation
-  praktis kosong (0,3 % / 0,2 % / 0 % kandidat pertama, §6.4 butir 3) dan 57–62 % kandidat yang tampil sudah terlambat
-  (butir 4). Perbaikannya adalah ambang sensitivitas **per tahap** (EARLY tidak mungkin mencapai skor 45) — nilainya diambil
-  dari distribusi skor per tahap & hasil per tahap run 2, bukan ditebak sekarang. Sampai itu ada, pengguna yang ingin melihat
-  Early Formation memilih sensitivitas **Tinggi** di UI (teks bantuan panel sudah mengatakannya).
-- **UI dan API tidak diubah di PR ini**; toggle "Sembunyikan yang sudah extended" tetap tersedia dan dicatat sebagai bahan
-  keputusan default setelah run 2 (hasil kandidat terlambat vs tidak, §6.5 butir e).
-- **Target §10 yang masih TIDAK terpenuhi (sintetis)** tetap dinyatakan dan tidak dilonggarkan: `continuedDowntrend` ≤ 15 %
-  seri pada HIGH (32,5 % / 37,5 %) dan median lead kandidat pertama vs sinyal lama pertama > 0 pada MEDIUM (−31 / −5
-  candle). Pada data nyata lead versi §10 tidak bermakna (§6.2 e) dan digantikan target T-NYATA-2 (§6.5).
-- `REVERSAL_VERSION` **tetap 1** (tidak ada perubahan mesin).
-- **Urutan pekerjaan berikutnya** (setiap langkah diukur sebelum langkah berikutnya):
-  1. Run 2 di Mac dengan perintah yang sama (§6.5) → isi §6.6 dari laporan baru (basis acak, hasil per tahap, distribusi
-     skor per tahap, kandidat terlambat, lead per peristiwa, simbol dilewati).
-  2. Dari §6.6: tetapkan ambang sensitivitas per tahap (LOW/MEDIUM/HIGH × EARLY/DEVELOPING/CONFIRMED) dan default
-     `hideExtended`; keduanya perubahan filter tampilan (`SENSITIVITY_FILTERS`, UI), bukan parameter mesin — divalidasi
-     ulang dengan replay sintetis seed 1–20 lalu 21–60 (§1.3) sebelum data nyata.
-  3. Baru kemudian penyetelan bobot/ambang bukti yang tidak diskriminatif (butir 1), dengan replay sintetis (set
-     penyetelan) + data nyata, dan `REVERSAL_VERSION` dinaikkan bila hasil tersimpan harus dibedakan.
-  4. Tetap terbuka dari §3/§5: fixture `brokenData` ≥ 120 candle rusak sebelum akhir seri; fixture dasar mangkuk / lantai
-     naik / volume mengering bila ambang ROUNDED_BOTTOM, RISING_FLOOR, VOLUME_DRY_UP hendak disetel; pembanding lama mode
-     `full` untuk indeks alert v3.
+- **Vonis data nyata (Jun–Okt 2025, 16 simbol, definisi §10)**: Reversal Radar pada sensitivitas default **tidak menunjukkan
+  keunggulan terukur atas entri acak pada penghalang yang sama** (T-NYATA-1 tidak terpenuhi di 5m/15m/1h; selisih +0,8 /
+  −0,2 / +3,6 poin dengan CI yang memuat basis), **tidak lebih awal dari mesin lama** (T-NYATA-2: lead per peristiwa median
+  0 … −2 candle, 96–97 % kandidat punya sinyal lama dalam ±48 candle), dan **daftar Early Formation praktis kosong** di
+  default (T-NYATA-3: 0–0,3 %). Tidak ada angka dari dokumen ini yang boleh disajikan sebagai peluang atau keunggulan.
+- **Yang bertahan dari data** (hipotesis untuk run 3, bukan kesimpulan): kandidat **DEVELOPING-first** di atas basis grup
+  (5m MEDIUM +4,9 poin, 1h +9,6, CI bawah > basis; 15m +1,5 tidak signifikan) — sah hanya bila basis per subset (§6.8)
+  mengonfirmasi; kandidat **CONFIRMED-first** buruk tanpa perlu basis (FAIL 54–65 % dengan stop lebar).
+- **Parameter mesin `DEFAULT_REVERSAL_PARAMS` tidak diubah; `REVERSAL_VERSION` tetap 1.** Bukti yang lolos pada 36–74 %
+  evaluasi (LL_STOPPED, HIGHER_LOW, EMA7_TURN_UP, EMA_CONVERGENCE, CHOCH_BULLISH) tetap kandidat penyetelan, tetapi daya
+  pembedanya belum terukur dan perubahan apa pun harus melewati replay sintetis seed 1–20 → 21–60 lalu data nyata.
+- **Sensitivitas default MEDIUM dipertahankan; `SENSITIVITY_FILTERS` dan ambang per tahap tidak diubah.** Menurunkan ambang
+  EARLY agar daftar Early Formation terisi *belum* didukung data: EARLY-first (HIGH) SUCCESS 42–48 % dengan FAIL ≈ 50 %,
+  dan basis subsetnya belum ada (§6.7 butir 2). Pengguna yang ingin melihat Early Formation memilih Tinggi, dengan catatan
+  di UI bahwa kandidat itu belum terbukti lebih baik dari kebetulan.
+- **Default toggle "Sembunyikan yang sudah extended" tetap mati**: kandidat terlambat tidak lebih buruk di bawah §10 (§6.7
+  butir 3); keputusan final menunggu basis per subset.
+- **Kalibrasi probabilitas tidak dilakukan.** Skor tetap skor aturan. Dengan hasil §6.6 kalibrasi tidak punya dasar.
+- **UI: catatan status validasi ditambahkan** di kepala panel Reversal Radar (`data-testid="reversal-validation"`, teks
+  statis di `frontend/js/views/reversalRadar.js`) yang menyatakan hasil §6.6 secara ringkas dan merujuk dokumen ini; teks
+  bantuan filter yang menganjurkan Tinggi "untuk melihat kandidat lebih awal" diberi tambahan bahwa kandidat EARLY belum
+  terbukti lebih baik dari kebetulan. Ini perubahan transparansi, bukan fitur baru; dapat dicabut bila pengguna tidak
+  menginginkannya.
+- **Target §10 sintetis yang masih TIDAK terpenuhi** tetap tercatat dan tidak dilonggarkan: `continuedDowntrend` ≤ 15 % seri
+  pada HIGH (32,5 % / 37,5 %) dan lead kandidat pertama > 0 pada MEDIUM (−31 / −5 candle).
+- **Definisi keberhasilan §10 tidak diganti setelah melihat hasil.** Definisi tambahan (mis. target/stop simetris 2 ATR,
+  atau keluar saat kandidat dibatalkan/kedaluwarsa) boleh **ditetapkan sebelum run berikutnya sebagai hipotesis terpisah**
+  dan dilaporkan berdampingan — tidak menggantikan §10 dan tidak dipilih berdasarkan hasilnya.
+- **Urutan pekerjaan berikutnya**:
+  1. Run 3 di Mac (perintah sama) → isi §6.9 dari laporan baru: basis per subset, hasil per bin skor per tahap, T-NYATA-1
+     per tahap, ekspektasi ATR.
+  2. Dari §6.9, satu keputusan per butir dengan angka: (i) apakah kandidat CONFIRMED-first disembunyikan/diberi label
+     "breakout sudah terjadi" secara default; (ii) ambang per tahap/bin hanya bila subset/bin melampaui basisnya sendiri
+     (CI bawah > basis) **dan** ekspektasi ATR > 0; (iii) default `hideExtended`. Setiap perubahan filter divalidasi ulang
+     dengan replay sintetis sebelum data nyata.
+  3. Bila run 3 tidak menemukan subset yang melampaui basisnya: Reversal Radar diposisikan ulang sebagai **pelabel
+     struktur** (di mana harga berada dalam proses dasar: tahap, bukti, level, invalidasi) tanpa klaim prediktif —
+     keputusan produk pengguna, bukan keputusan teknis; dan penyetelan bobot bukti (butir 3 di atas) baru masuk akal setelah
+     itu.
+  4. Tetap terbuka dari §3/§5: fixture `brokenData` ≥ 120 candle rusak; fixture dasar mangkuk / lantai naik / volume
+     mengering; pembanding lama mode `full`.

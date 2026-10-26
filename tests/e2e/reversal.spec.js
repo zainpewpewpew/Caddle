@@ -93,6 +93,9 @@ test('E2E-RR-001 tiga panel tahap urut tetap dengan jumlah per timeframe; filter
   // Judul: nama heading tetap "LONG Scanner" (nav & topbar), "Reversal Radar" tampil sebagai bagian judul.
   await expect(page.getByRole('heading', { level: 1, name: 'LONG Scanner' })).toBeVisible();
   await expect(page.getByTestId('reversal-title')).toHaveText('Reversal Radar');
+  // Catatan status validasi data nyata (docs/21 §6.6) selalu tampil di bawah subjudul — transparansi hasil replay.
+  await expect(page.getByTestId('reversal-validation')).toContainText('Status validasi');
+  await expect(page.getByTestId('reversal-validation')).toContainText('belum ada bukti keunggulan');
   await expect(page.locator('.page__subtitle')).toContainText('bukan probabilitas');
 
   // Urutan tetap: dua tahap awal di atas, Confirmed Breakout paling bawah.

@@ -207,7 +207,11 @@ describe('main (ujung ke ujung offline dengan mesin palsu)', () => {
     expect(json.meta.notes).toContain('2 simbol/seri dilewati (lihat "Simbol dilewati").');
     expect(json.totals.series).toBe(1);
     expect(json.groups.every((g) => g.scenario === 'dataNyata')).toBe(true);
-    expect(json.targets.map((t) => t.id)).toEqual(['SUCCESS_RATE', 'DOWNTREND_FP', 'UPTREND_ZERO', 'LEAD_POSITIVE', 'T_NYATA_1', 'T_NYATA_2', 'T_NYATA_3']);
+    expect(json.targets.map((t) => t.id)).toEqual(['SUCCESS_RATE', 'DOWNTREND_FP', 'UPTREND_ZERO', 'LEAD_POSITIVE', 'T_NYATA_1', 'T_NYATA_1_STAGE', 'T_NYATA_1_STAGE', 'T_NYATA_1_STAGE', 'T_NYATA_2', 'T_NYATA_3']);
+    expect(json.targets.filter((t) => t.id === 'T_NYATA_1_STAGE').map((t) => t.stage)).toEqual(['EARLY_FORMATION', 'DEVELOPING_REVERSAL', 'CONFIRMED_BREAKOUT']);
+    expect(json.meta.notes.some((note) => /Basis acak per subset/.test(note))).toBe(true);
+    expect(json.groups[0].outcomesByScoreBin.EARLY_FORMATION).toHaveLength(10);
+    expect(json.groups[0].outcomesByFirstStage.EARLY_FORMATION).toHaveProperty('expectancyAtr');
     expect(json.meta.baseline).toEqual({ samples: 3, atrPeriod: 14 });
     const md = await readFile(join(out, 'reversal-replay-20261026T000000Z.md'), 'utf8');
     expect(md).toContain('- Simbol diminta: --top 5 → discovery mengembalikan 3 (filter kontrak/likuiditas discovery)');
