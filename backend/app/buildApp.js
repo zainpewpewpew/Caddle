@@ -11,6 +11,7 @@ import { healthRoutes } from '../api/healthRoutes.js';
 import { marketRoutes } from '../api/marketRoutes.js';
 import { settingsRoutes } from '../api/settingsRoutes.js';
 import { signalRoutes } from '../api/signalRoutes.js';
+import { smartMoneyRoutes } from '../api/smartMoneyRoutes.js';
 import { systemRoutes } from '../api/systemRoutes.js';
 import { workerRoutes } from '../api/workerRoutes.js';
 import { registerAuth } from '../auth/authPlugin.js';
@@ -20,6 +21,7 @@ import { createSessionService } from '../auth/sessionService.js';
 import { migrate } from '../database/migrate.js';
 import { createRepositories } from '../database/repositories/index.js';
 import { registerSecurityHeaders } from '../security/headers.js';
+import { createLiveProviderRegistry } from '../smartmoney/providers/live.js';
 import { isApiRoute, registerRequestGuards } from '../security/requestGuards.js';
 import { WORKER_SCRIPT_PATH, WorkerSupervisorError, createWorkerSupervisor } from '../system/workerSupervisor.js';
 
@@ -50,13 +52,17 @@ const CHART_VENDOR_DIR = resolveChartVendorDir();
  * @param {{ config: ReturnType<import('./config.js').loadConfig>, db: import('better-sqlite3').Database,
  *           clock?: () => number, hasherOptions?: object, logger?: any,
  *           workerSupervisor?: ReturnType<typeof createWorkerSupervisor>, workerScriptPath?: string,
- *           workerRestartCooldownMs?: number }} options
+ *           workerRestartCooldownMs?: number, smartMoneyRegistry?: object }} options
  *   workerSupervisor / workerScriptPath / workerRestartCooldownMs: KHUSUS tes & E2E (supervisor dengan fork tiruan,
  *   skrip worker tiruan, jeda start ulang lebih pendek). Tidak pernah dibaca dari env maupun request; server produksi
  *   selalu menjalankan worker/index.js dengan jeda RESTART_COOLDOWN_MS.
+ *   smartMoneyRegistry: KHUSUS tes & E2E (registri berisi provider fixture data simulasi, hanya NODE_ENV=test).
+ *   Default: registri live dari SMART_MONEY_PROVIDERS. Server hanya membaca metadata provider (status, atribusi);
+ *   pengambilan data dilakukan sinkronisasi di worker / `npm run smart-money:sync`.
  */
 export async function buildApp({
   config, db, clock = Date.now, hasherOptions, logger, workerSupervisor, workerScriptPath, workerRestartCooldownMs,
+  smartMoneyRegistry,
 }) {
   const app = Fastify({
     logger: logger ?? {
@@ -102,7 +108,11 @@ export async function buildApp({
     ...(workerRestartCooldownMs !== undefined ? { restartCooldownMs: workerRestartCooldownMs } : {}),
   });
 
-  app.decorate('services', { hasher, sessionService, authService, repos, workerSupervisor: supervisor });
+  const smRegistry = smartMoneyRegistry ?? createLiveProviderRegistry(config, { env: process.env, clock });
+
+  app.decorate('services', {
+    hasher, sessionService, authService, repos, workerSupervisor: supervisor, smartMoneyRegistry: smRegistry,
+  });
 
   await registerSecurityHeaders(app, config);
   registerRequestGuards(app, config);
@@ -161,6 +171,9 @@ export async function buildApp({
   await app.register(workerRoutes, { supervisor, enabled: config.workerControl, audit: repos.audit, clock });
   await app.register(signalRoutes, { signals: repos.signals, candles: repos.candles });
   await app.register(marketRoutes, { candles: repos.candles });
+  await app.register(smartMoneyRoutes, {
+    repo: repos.smartMoney, signals: repos.signals, registry: smRegistry, config: config.smartMoney, clock, audit: repos.audit,
+  });
 
   // Frontend statis. index.html hanya disajikan lewat route '/' yang memeriksa sesi.
   await app.register(fastifyStatic, {

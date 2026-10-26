@@ -3,6 +3,8 @@
 // Membuka SQLite + migrasi, merakit dependensi nyata lewat worker/assemble.js (REST/WS Binance, jam
 // server, repositori, pipeline analisis LONG SA/PVA + SHORT SD/PVD), menjalankan scanner, dan menangani
 // graceful shutdown (SIGTERM/SIGINT/SIGHUP — SIGHUP dikirim saat jendela terminal ditutup).
+// Bila SMART_MONEY_PROVIDERS terisi dan adapternya aktif, worker juga menjalankan loop sinkronisasi Insider / Smart
+// Money Radar (worker/smartMoney.js) yang berhenti bersama shutdown. Tanpa provider: tidak ada loop, tidak ada data.
 // Riset saja: worker tidak pernah mengirim order (LONG maupun SHORT).
 // Log terstruktur JSON per baris ke stdout.
 
@@ -13,7 +15,10 @@ import { ConfigError, loadConfig } from '../backend/app/config.js';
 import { openDatabase } from '../backend/database/connection.js';
 import { migrate } from '../backend/database/migrate.js';
 import { parseCalibrationFile } from '../backend/backtest/calibration.js';
+import { createNativePriceResolver, enrichNativeUsd } from '../backend/smartmoney/nativePrices.js';
+import { createLiveProviderRegistry } from '../backend/smartmoney/providers/live.js';
 import { assembleWorker } from './assemble.js';
+import { scopedLogger, startSmartMoneyLoop } from './smartMoney.js';
 
 /** Tabel kalibrasi hasil `npm run backtest -- --write-calibration config/calibration.json` (opsional). */
 // Relatif ke root repo (bukan cwd proses), kecuali CALIBRATION_PATH diatur.
@@ -106,7 +111,7 @@ async function main() {
   // Perakitan jam server, repositori, REST, pipeline, dan scanner ada di worker/assemble.js (tanpa efek
   // samping) agar tes integrasi menguji perakitan yang sama.
   const calibration = loadCalibration(CALIBRATION_PATH, logger);
-  const { pipeline, scanner } = assembleWorker({
+  const { pipeline, scanner, rest } = assembleWorker({
     db,
     logger,
     analysisParams: calibration ? { calibration } : {},
@@ -122,6 +127,21 @@ async function main() {
     },
   });
   await pipeline.ensureDefinitions();
+
+  // Sinkronisasi smart money hanya bila ada provider dikonfigurasi. Adapter yang belum tersedia (kunci kosong / belum
+  // dirakit) dicatat sebagai peringatan oleh startSmartMoneyLoop dan loop tidak dijadwalkan.
+  let smartMoney = null;
+  if (config.smartMoney.providers.length > 0) {
+    smartMoney = startSmartMoneyLoop({
+      db,
+      config,
+      logger: scopedLogger(logger, { module: 'smart-money' }),
+      clock: Date.now,
+      createRegistry: (cfg) => createLiveProviderRegistry(cfg, { env: process.env }),
+      // Nilai USD kaki koin native per jam dari klines Binance publik (REST yang sama dengan scanner: bobot API bersama).
+      syncDeps: { nativePrices: createNativePriceResolver({ getKlines: (query) => rest.getKlines(query) }), enrichNativeUsd },
+    });
+  }
 
   const statusTimer = setInterval(() => logger.info(scanner.status(), 'status scanner'), STATUS_LOG_INTERVAL_MS);
 
@@ -141,6 +161,13 @@ async function main() {
       await scanner.stop();
     } catch (err) {
       logger.error({ err }, 'gagal menghentikan scanner');
+      code = 1;
+    }
+    try {
+      // Membatalkan putaran sinkronisasi yang sedang berjalan dan menunggunya sebelum database ditutup.
+      await smartMoney?.stop();
+    } catch (err) {
+      logger.error({ err }, 'gagal menghentikan sinkronisasi smart money');
       code = 1;
     }
     try {

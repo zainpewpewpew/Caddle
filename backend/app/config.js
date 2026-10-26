@@ -1,6 +1,7 @@
 // Konfigurasi aplikasi berbasis environment variable.
 // Semua nilai divalidasi saat startup; konfigurasi tidak valid menghentikan proses (fail fast).
 import { isIP } from 'node:net';
+import { parseSmartMoneyConfig } from '../smartmoney/config.js';
 
 const DEFAULTS = Object.freeze({
   NODE_ENV: 'development',
@@ -164,5 +165,6 @@ export function loadConfig(env = process.env) {
     defaultUser: parseDefaultUser(read('DEFAULT_USER'), nodeEnv),
     workerControl: parseFlag('WORKER_CONTROL', read('WORKER_CONTROL'), nodeEnv === 'development'),
     workerAutostart: parseFlag('WORKER_AUTOSTART', read('WORKER_AUTOSTART'), false),
+    smartMoney: parseSmartMoneyConfig({ ...env, NODE_ENV: nodeEnv }),
   });
 }

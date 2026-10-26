@@ -11,6 +11,10 @@ import { overviewView } from './views/overview.js';
 import { screenerView, shortScannerView } from './views/screener.js';
 import { settingsView } from './views/settings.js';
 import { signalsView } from './views/signals.js';
+import { smartMoneyView } from './views/smartMoneyRadar.js';
+import { smartTokenView } from './views/smartToken.js';
+import { smartWalletView, smartWalletsView } from './views/smartWallets.js';
+import { smartWatchlistView } from './views/smartWatchlist.js';
 import { symbolView } from './views/symbol.js';
 
 const NAV_KEY = 'lr.nav';
@@ -24,6 +28,13 @@ const ROUTES = [
   { path: '/short-scanner', label: 'SHORT Scanner', icon: 'screener-short', view: shortScannerView },
   { path: '/symbol', label: 'Symbol Intelligence', icon: 'symbol', view: symbolView },
   { path: '/signals', label: 'Signal History', icon: 'signals', view: signalsView },
+  { section: 'Smart Money' },
+  { path: '/smart-money', label: 'Smart Money Radar', icon: 'radar', view: smartMoneyView },
+  { path: '/smart-wallets', label: 'Wallet Discovery', icon: 'wallet', view: smartWalletsView },
+  { path: '/smart-watchlist', label: 'Watchlist & Alerts', icon: 'bell', view: smartWatchlistView },
+  // Route tersembunyi (tanpa tautan nav): dibuka dari tautan di halaman lain; `navPath` menyorot item nav induknya.
+  { path: '/smart-wallet', label: 'Profil Wallet', hidden: true, navPath: '/smart-wallets', view: smartWalletView },
+  { path: '/smart-token', label: 'Detail Token', hidden: true, navPath: '/smart-money', view: smartTokenView },
   { section: 'Riset' },
   { path: '/lab', label: 'Pattern Discovery Lab', icon: 'lab', view: labView },
   { path: '/backtest', label: 'Backtest Lab', icon: 'backtest', view: backtestView },
@@ -50,12 +61,13 @@ let navSeq = 0;
 
 function renderNav() {
   let section = '';
-  nav.replaceChildren(...ROUTES.map((r) => {
+  nav.replaceChildren(...ROUTES.flatMap((r) => {
     if (r.section) {
       section = r.section;
       return h('div', { class: 'nav__section' }, r.section);
     }
     r.crumb = section;
+    if (r.hidden) return [];
     return h('a', { class: 'nav__link', href: `#${r.path}`, 'data-path': r.path, title: r.label },
       icon(r.icon), h('span', { class: 'nav__label' }, r.label));
   }));
@@ -236,7 +248,7 @@ async function show(route) {
   if (cleanup) cleanup();
   cleanup = null;
   for (const link of nav.querySelectorAll('.nav__link')) {
-    if (link.dataset.path === route.path) link.setAttribute('aria-current', 'page');
+    if (link.dataset.path === (route.navPath ?? route.path)) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   }
   heading.textContent = route.label;

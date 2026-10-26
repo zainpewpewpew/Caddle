@@ -171,7 +171,7 @@ describe('restart aplikasi', () => {
 
     const db2 = openDatabase(dbPath);
     const app2 = await buildApp({ config, db: db2, clock, hasherOptions: TEST_HASHER_OPTIONS });
-    expect(db2.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n).toBe(6);
+    expect(db2.prepare('SELECT COUNT(*) n FROM schema_migrations').get().n).toBe(7);
     expect((await app2.inject({ url: '/api/auth/session', headers: { cookie: auth.cookie } })).statusCode).toBe(200);
     await app2.close();
     db2.close();

@@ -1,0 +1,1231 @@
+/* AlphaLens — Insider / Smart Money Radar (radar, wallet, token, watchlist) + chip "SM ×N" di LONG Scanner.
+ *
+ * Mengikuti gaya "Neural Aurora": panel kaca, aksen cyan → violet, nada pasar hanya untuk arah nyata.
+ * Warna jenis aktivitas sengaja dibedakan: hanya swap beli/jual bernada bull/bear; transfer/exchange/bridge/airdrop/LP
+ * memakai nada netral/violet/kuning agar tidak pernah terbaca sebagai pembelian. Warna tidak pernah satu-satunya
+ * penanda (selalu ada teks). Token baru belum tentu ada di tokens.css → selalu dengan fallback var().
+ */
+
+.page--smart-money .sm-panel-body {
+  padding: var(--lr-space-4);
+}
+
+.sm-h {
+  margin: 0 0 var(--lr-space-2);
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: var(--lr-tracking-caps);
+  text-transform: uppercase;
+}
+
+.sm-k {
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-2xs);
+  letter-spacing: var(--lr-tracking-caps);
+  text-transform: uppercase;
+}
+
+/* ---------- Pita DATA SIMULASI: mencolok, tidak pernah tampil seperti data live ---------- */
+.sm-sim-ribbon {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2) var(--lr-space-3);
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border: 1px dashed var(--lr-warn);
+  border-radius: var(--lr-radius-sm);
+  background:
+    repeating-linear-gradient(135deg, var(--lr-warn-soft) 0 12px, transparent 12px 24px),
+    var(--lr-glass-strong, var(--lr-surface));
+  color: var(--lr-text);
+}
+
+.sm-sim-ribbon strong {
+  padding: 2px var(--lr-space-2);
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-warn);
+  color: var(--lr-text-inverse);
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: var(--lr-tracking-caps);
+}
+
+/* ---------- Strip status (meta) ---------- */
+.sm-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2) var(--lr-space-5);
+  padding: var(--lr-space-2) var(--lr-space-4);
+  border: 1px solid var(--lr-glass-border, var(--lr-border));
+  border-radius: var(--lr-radius-sm);
+  background: var(--lr-glass, var(--lr-surface));
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+}
+
+.sm-strip[data-stale="true"] {
+  border-color: var(--lr-warn-line);
+}
+
+.sm-strip__item {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--lr-space-2);
+  min-width: 0;
+}
+
+.sm-strip__k {
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-2xs);
+  letter-spacing: var(--lr-tracking-caps);
+  text-transform: uppercase;
+}
+
+.sm-strip__stale {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-1);
+  flex-basis: 100%;
+  color: var(--lr-warn);
+}
+
+/* Atribusi sumber data & catatan pemotongan: baris sendiri, teks redup (wajib tampil, tidak mencolok). */
+.sm-strip__attr,
+.sm-strip__note {
+  flex-basis: 100%;
+  color: var(--lr-text-3);
+}
+
+.sm-strip__note {
+  color: var(--lr-warn);
+}
+
+.sm-insider-note {
+  display: flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-xs);
+}
+
+.sm-insider-note__icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.sm-disclaimer {
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border-left: 2px solid var(--lr-border-strong);
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-xs);
+}
+
+.sm-disclaimer p + p {
+  margin-top: var(--lr-space-1);
+}
+
+.sm-disclaimer-inline {
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-xs);
+}
+
+/* ---------- Toolbar ---------- */
+.sm-toolbar .sm-toolbar__switch {
+  width: auto;
+  justify-content: flex-end;
+  min-height: 34px;
+}
+
+.sm-toolbar .field:has(.segmented) {
+  width: auto;
+}
+
+.sm-computed {
+  font-size: var(--lr-text-xs);
+}
+
+/* ---------- Kartu radar ---------- */
+.sm-radar {
+  display: grid;
+  gap: var(--lr-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sm-card {
+  --lr-card-tone: var(--lr-neural-cyan, var(--lr-accent));
+  position: relative;
+  display: grid;
+  gap: var(--lr-space-3);
+  padding: var(--lr-space-4);
+  border: 1px solid var(--lr-glass-border, var(--lr-border));
+  border-left: 2px solid var(--lr-card-tone);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-glass-soft, var(--lr-surface-2));
+  transition: border-color var(--lr-dur) var(--lr-ease), box-shadow var(--lr-dur) var(--lr-ease);
+}
+
+.sm-card[data-state="ACCUMULATING"] { --lr-card-tone: var(--lr-bull); }
+.sm-card[data-state="DISTRIBUTING"] { --lr-card-tone: var(--lr-warn); }
+.sm-card[data-state="EXITING"] { --lr-card-tone: var(--lr-bear); }
+
+.sm-card:hover,
+.sm-card[data-open="true"] {
+  border-color: var(--lr-glass-border-strong, var(--lr-border-strong));
+  box-shadow: -6px 0 18px -12px var(--lr-card-tone);
+}
+
+.sm-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lr-space-2) var(--lr-space-4);
+}
+
+.sm-card__id {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2);
+  min-width: 0;
+}
+
+.sm-card__sym {
+  color: var(--lr-text);
+  font-size: var(--lr-text-lg);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-card__time {
+  font-size: var(--lr-text-xs);
+}
+
+.sm-card__body {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr) minmax(0, 1.5fr);
+  gap: var(--lr-space-4);
+  align-items: start;
+}
+
+.sm-card__evidence {
+  padding-top: var(--lr-space-3);
+  border-top: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+}
+
+.sm-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: var(--lr-space-2) var(--lr-space-4);
+  margin: 0;
+}
+
+.sm-facts dt {
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-2xs);
+  letter-spacing: 0.03em;
+}
+
+.sm-facts dd {
+  margin: 0;
+  color: var(--lr-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Meter keyakinan / skor ---------- */
+.sm-meter {
+  display: grid;
+  gap: 6px;
+}
+
+.sm-meter__head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--lr-space-2);
+  font-size: var(--lr-text-xs);
+}
+
+.sm-meter__label {
+  color: var(--lr-text-2);
+}
+
+.sm-meter__value {
+  color: var(--lr-text);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-meter__track,
+.sm-component__track {
+  position: relative;
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--lr-surface-3);
+}
+
+.sm-meter__fill,
+.sm-component__fill {
+  display: block;
+  height: 100%;
+  width: calc(var(--lr-score, 0) * 1%);
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--lr-neural-violet, var(--lr-accent)), var(--lr-neural-cyan, var(--lr-accent)));
+  box-shadow: 0 0 8px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
+}
+
+.sm-components {
+  display: grid;
+  gap: var(--lr-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sm-component {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(60px, 1fr) 48px;
+  align-items: center;
+  gap: var(--lr-space-3);
+  font-size: var(--lr-text-xs);
+}
+
+.sm-component__label {
+  color: var(--lr-text-2);
+}
+
+.sm-component__value {
+  text-align: right;
+  color: var(--lr-text);
+}
+
+.sm-component[data-penalty] .sm-component__fill {
+  background: linear-gradient(90deg, rgb(241 107 117 / 0.55), var(--lr-bear));
+  box-shadow: 0 0 8px var(--lr-bear-line);
+}
+
+.sm-bigscore {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--lr-space-2);
+}
+
+.sm-bigscore__value {
+  font-size: var(--lr-text-2xl);
+  font-weight: var(--lr-weight-semibold);
+  background: var(--lr-gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.sm-bigscore__unit {
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-xs);
+}
+
+/* ---------- Badge jenis aktivitas ---------- */
+.sm-type {
+  --lr-type-color: var(--lr-text-2);
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--lr-type-color) 40%, transparent);
+  border-radius: var(--lr-radius-xs);
+  background: color-mix(in srgb, var(--lr-type-color) 12%, transparent);
+  color: var(--lr-type-color);
+  font-size: var(--lr-text-2xs);
+  font-weight: var(--lr-weight-semibold);
+  white-space: nowrap;
+}
+
+.sm-type[data-kind="buy"] { --lr-type-color: var(--lr-bull); }
+.sm-type[data-kind="sell"] { --lr-type-color: var(--lr-bear); }
+.sm-type[data-kind="move"] { --lr-type-color: var(--lr-text-2); border-style: dashed; }
+.sm-type[data-kind="cex"] { --lr-type-color: var(--lr-warn); border-style: dashed; }
+.sm-type[data-kind="bridge"] { --lr-type-color: var(--lr-accent); border-style: dashed; }
+.sm-type[data-kind="airdrop"] { --lr-type-color: rgb(170 160 255); border-style: dashed; }
+.sm-type[data-kind="lp"] { --lr-type-color: #7fd4d4; border-style: dashed; }
+.sm-type[data-kind="unknown"] { --lr-type-color: var(--lr-text-3); border-style: dotted; }
+
+/* ---------- Alamat, tautan, label ---------- */
+.sm-addr {
+  color: var(--lr-text);
+}
+
+.sm-ext {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sm-ext__icon {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.sm-token-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--lr-space-2);
+}
+
+.sm-token-link__sym {
+  color: var(--lr-text);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-token-link__addr {
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-xs);
+}
+
+.sm-usd--unknown {
+  color: var(--lr-text-3);
+  cursor: help;
+}
+
+.sm-flags .badge[tabindex] {
+  cursor: help;
+}
+
+.sm-flags .badge[tabindex]:focus-visible {
+  outline: none;
+  box-shadow: var(--lr-focus-ring);
+}
+
+.sm-cell-stack {
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.sm-reason {
+  display: inline-block;
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* ---------- Bukti ---------- */
+.sm-txs {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--lr-text-xs);
+}
+
+.sm-txs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.sm-excluded {
+  padding: var(--lr-space-2) var(--lr-space-3);
+  border: 1px dashed var(--lr-glass-border-strong, var(--lr-border));
+  border-radius: var(--lr-radius-sm);
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+}
+
+.sm-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 1.1em;
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-sm);
+}
+
+.sm-list--risk li::marker {
+  color: var(--lr-warn);
+}
+
+.sm-evidence-lines {
+  margin: var(--lr-space-1) 0 0;
+  padding-left: 1.1em;
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-2xs);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Binance & sinyal ---------- */
+.sm-binance {
+  display: grid;
+  gap: var(--lr-space-2);
+}
+
+.sm-signals {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sm-signal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2);
+  font-size: var(--lr-text-xs);
+}
+
+.sm-signal__tf {
+  min-width: 3ch;
+  color: var(--lr-text);
+}
+
+.sm-signal__patterns {
+  color: var(--lr-text-2);
+}
+
+/* ---------- Identitas (profil wallet / detail token) ---------- */
+.sm-identity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: start;
+  gap: var(--lr-space-4) var(--lr-space-6);
+  padding: var(--lr-space-5);
+  border: 1px solid var(--lr-glass-border, var(--lr-border));
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-glass, var(--lr-surface));
+}
+
+.sm-identity__main {
+  display: grid;
+  gap: var(--lr-space-2);
+  min-width: 0;
+}
+
+.sm-identity__addr {
+  color: var(--lr-text);
+  font-size: var(--lr-text-md);
+  overflow-wrap: anywhere;
+}
+
+.sm-identity__sym {
+  font-size: var(--lr-text-xl);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-identity__facts {
+  font-size: var(--lr-text-xs);
+}
+
+/* ---------- Keterbatasan data ---------- */
+.sm-limits {
+  display: grid;
+  align-content: start;
+  gap: var(--lr-space-3);
+  padding: var(--lr-space-4);
+  border: 1px solid var(--lr-warn-line);
+  border-radius: var(--lr-radius-md);
+  background:
+    linear-gradient(180deg, var(--lr-warn-soft), transparent 60%),
+    var(--lr-glass, var(--lr-surface));
+  color: var(--lr-text-2);
+}
+
+.sm-limits__title {
+  display: flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  color: var(--lr-warn);
+  font-size: var(--lr-text-md);
+}
+
+.sm-limits__icon {
+  width: 16px;
+  height: 16px;
+}
+
+.sm-flaglist {
+  display: grid;
+  gap: var(--lr-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sm-flaglist__item {
+  display: grid;
+  gap: 4px;
+  padding-bottom: var(--lr-space-3);
+  border-bottom: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+}
+
+.sm-flaglist__item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* ---------- Watchlist & alerts ---------- */
+.sm-watch[data-on="true"] {
+  border-color: var(--lr-bull-line);
+  color: var(--lr-bull);
+}
+
+.sm-watch-list,
+.sm-alerts {
+  display: grid;
+  gap: var(--lr-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sm-watch-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--lr-space-3);
+  padding: var(--lr-space-3);
+  border: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+  border-radius: var(--lr-radius-sm);
+  background: var(--lr-glass-soft, var(--lr-surface-2));
+}
+
+.sm-watch-item__main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sm-watch-item__time {
+  font-size: var(--lr-text-2xs);
+}
+
+.sm-alert {
+  display: grid;
+  gap: 4px;
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border-bottom: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+}
+
+.sm-alert[data-read="true"] {
+  opacity: 0.78;
+}
+
+.sm-alert__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--lr-neural-cyan, var(--lr-accent));
+  box-shadow: 0 0 8px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
+}
+
+.sm-alert__title {
+  color: var(--lr-text);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-alert__msg {
+  color: var(--lr-text-2);
+}
+
+.sm-alert__links {
+  font-size: var(--lr-text-xs);
+}
+
+.sm-fieldset {
+  display: grid;
+  gap: var(--lr-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.sm-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lr-space-2) var(--lr-space-4);
+}
+
+.sm-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  cursor: pointer;
+}
+
+.sm-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--lr-accent);
+}
+
+.sm-check input:focus-visible {
+  outline: none;
+  box-shadow: var(--lr-focus-ring);
+}
+
+/* ---------- Chip "SM ×N" di LONG Scanner ---------- */
+.sm-chip-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+}
+
+.sm-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
+  border-radius: var(--lr-radius-pill);
+  background: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  color: rgb(170 160 255);
+  font-size: var(--lr-text-2xs);
+  font-weight: var(--lr-weight-semibold);
+  white-space: nowrap;
+}
+
+.sm-chip:hover {
+  text-decoration: none;
+  box-shadow: var(--lr-glow-violet);
+}
+
+.sm-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--lr-focus-ring);
+}
+
+/* Penanda data simulasi di samping chip LONG Scanner — teks (bukan warna saja). */
+.sm-chip-sim {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px dashed var(--lr-warn);
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-warn-soft);
+  color: var(--lr-warn);
+  font-size: var(--lr-text-2xs);
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: var(--lr-tracking-caps);
+  white-space: nowrap;
+}
+
+/* ---------- Evaluasi historis ---------- */
+.sm-eval__meta {
+  gap: var(--lr-space-1) var(--lr-space-3);
+  margin: 0;
+  font-size: var(--lr-text-xs);
+}
+
+/* ---------- Peta Benang (wallet → token) ----------
+ * SVG selebar wadah (viewBox = lebar px, dibangun ulang saat lebar berubah) → teks tidak mengecil, tanpa gulir
+ * horizontal. Nada benang memakai semantik yang sama dengan badge jenis aktivitas: beli = bull, beli & jual = accent,
+ * jual via swap = bear, dipindah ke exchange = warn (belum tentu dijual). Putus-putus = nilai USD tidak diketahui.
+ * Warna tidak pernah satu-satunya penanda: panah keluar, titik "beli & jual", tooltip, aria-label, dan panel bukti. */
+.sm-viewbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2) var(--lr-space-3);
+}
+
+.sm-thr {
+  --sm-thr-buy: var(--lr-bull);
+  --sm-thr-mixed: var(--lr-accent);
+  --sm-thr-sell: var(--lr-bear);
+  --sm-thr-cex: var(--lr-warn);
+  --sm-thr-unknown: var(--lr-text-3);
+  --sm-thr-wallet: var(--lr-neural-violet, var(--lr-accent));
+  --sm-thr-violet-text: var(--lr-neural-violet-text, rgb(170 160 255));
+  display: grid;
+  gap: var(--lr-space-3);
+  min-width: 0;
+}
+
+.sm-thr__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-2);
+}
+
+.sm-thr__count {
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-thr-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lr-space-1) var(--lr-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-2xs);
+}
+
+.sm-thr-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sm-thr-swatch {
+  flex: none;
+  overflow: visible;
+}
+
+.sm-thr-swatch__line {
+  fill: none;
+  stroke: var(--sm-thr-buy);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.sm-thr-swatch__line[data-tone="mixed"] { stroke: var(--sm-thr-mixed); }
+.sm-thr-swatch__line[data-tone="sell"] { stroke: var(--sm-thr-sell); }
+.sm-thr-swatch__line[data-tone="cex"] { stroke: var(--sm-thr-cex); }
+.sm-thr-swatch__line[data-tone="unknown"] { stroke: var(--sm-thr-unknown); }
+.sm-thr-swatch__line[data-dashed] { stroke-width: 1.5; stroke-dasharray: 4 3; }
+.sm-thr-swatch__arrow[data-tone="sell"] { fill: var(--sm-thr-sell); }
+.sm-thr-swatch__arrow[data-tone="cex"] { fill: var(--sm-thr-cex); }
+
+.sm-thr-swatch__mix,
+.sm-thr-strand__mix {
+  fill: var(--lr-bg);
+  stroke: var(--sm-thr-sell);
+  stroke-width: 1.5;
+}
+
+.sm-thr-legend__tag {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  color: var(--sm-thr-violet-text);
+  font-size: var(--lr-text-2xs);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-thr__cols {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--lr-space-3);
+  margin-bottom: calc(var(--lr-space-2) * -1);
+  padding: 0 var(--lr-space-2);
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-2xs);
+  letter-spacing: var(--lr-tracking-caps);
+  text-transform: uppercase;
+}
+
+.sm-thr__frame {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+  border-radius: var(--lr-radius-md);
+  background:
+    radial-gradient(70% 60% at 20% 0%, var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14)), transparent 70%),
+    radial-gradient(60% 60% at 85% 100%, var(--lr-neural-cyan-soft, rgb(56 225 255 / 0.12)), transparent 70%),
+    var(--lr-glass-strong, var(--lr-bg-sunken));
+}
+
+.sm-thr__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--lr-font-sans);
+  user-select: none;
+}
+
+.sm-thr__hint {
+  font-size: var(--lr-text-2xs);
+}
+
+.sm-thr__watermark {
+  fill: var(--lr-warn);
+  opacity: 0.07;
+  font-size: 56px;
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: 0.12em;
+  pointer-events: none;
+}
+
+.sm-thr__svg[data-compact="true"] .sm-thr__watermark {
+  font-size: 32px;
+}
+
+.sm-thr-band {
+  fill: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  stroke: var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.7;
+}
+
+/* Benang */
+.sm-thr-strand {
+  --sm-thr-tone: var(--sm-thr-buy);
+  cursor: pointer;
+  transition: opacity var(--lr-dur) var(--lr-ease);
+}
+
+.sm-thr-strand[data-tone="mixed"] { --sm-thr-tone: var(--sm-thr-mixed); }
+.sm-thr-strand[data-tone="sell"] { --sm-thr-tone: var(--sm-thr-sell); }
+.sm-thr-strand[data-tone="cex"] { --sm-thr-tone: var(--sm-thr-cex); }
+
+.sm-thr-strand__hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  stroke-linecap: round;
+  pointer-events: stroke;
+}
+
+.sm-thr-strand__line {
+  fill: none;
+  stroke: var(--sm-thr-tone);
+  stroke-linecap: round;
+  opacity: 0.6;
+  transition: opacity var(--lr-dur) var(--lr-ease);
+  pointer-events: none;
+}
+
+.sm-thr-strand[data-usd="unknown"] .sm-thr-strand__line {
+  stroke-dasharray: 4 4;
+  stroke-linecap: butt;
+}
+
+.sm-thr-strand__flow {
+  fill: none;
+  stroke: color-mix(in srgb, var(--sm-thr-tone) 45%, var(--lr-text));
+  stroke-linecap: round;
+  stroke-dasharray: 0.5 15.5;
+  opacity: 0.85;
+  pointer-events: none;
+  animation: sm-thr-flow 1.6s linear infinite;
+}
+
+@keyframes sm-thr-flow {
+  to { stroke-dashoffset: -16; }
+}
+
+.sm-thr-strand__mix {
+  pointer-events: none;
+}
+
+.sm-thr-mk--sell path { fill: var(--sm-thr-sell); }
+.sm-thr-mk--cex path { fill: var(--sm-thr-cex); }
+
+.sm-thr-strand:hover .sm-thr-strand__line,
+.sm-thr-strand.is-on .sm-thr-strand__line,
+.sm-thr-strand.is-selected .sm-thr-strand__line {
+  opacity: 1;
+}
+
+.sm-thr-strand.is-selected .sm-thr-strand__hit {
+  stroke: var(--lr-neural-glow-mid, rgb(56 225 255 / 0.16));
+}
+
+.sm-thr-strand:focus-visible .sm-thr-strand__hit {
+  stroke: var(--lr-accent-line);
+}
+
+/* Node */
+.sm-thr-node {
+  cursor: pointer;
+  transition: opacity var(--lr-dur) var(--lr-ease);
+}
+
+.sm-thr-node:hover {
+  text-decoration: none;
+}
+
+.sm-thr-node__hit {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 1.5;
+}
+
+.sm-thr-node:hover .sm-thr-node__hit,
+.sm-thr-node.is-on .sm-thr-node__hit {
+  fill: var(--lr-glass-highlight, rgb(255 255 255 / 0.05));
+}
+
+.sm-thr-node:focus-visible .sm-thr-node__hit {
+  fill: var(--lr-accent-soft);
+  stroke: var(--lr-accent);
+}
+
+.sm-thr-node__dot {
+  fill: var(--sm-thr-node, var(--sm-thr-wallet));
+  stroke: var(--lr-bg);
+  stroke-width: 1.5;
+}
+
+.sm-thr-node__halo {
+  fill: var(--sm-thr-node, var(--sm-thr-wallet));
+  opacity: 0.16;
+}
+
+.sm-thr-node.is-on .sm-thr-node__halo,
+.sm-thr-node:focus-visible .sm-thr-node__halo {
+  opacity: 0.38;
+}
+
+.sm-thr-wallet[data-scored="false"] { --sm-thr-node: var(--lr-text-3); }
+.sm-thr-token { --sm-thr-node: var(--lr-text-3); }
+.sm-thr-token[data-state="ACCUMULATING"] { --sm-thr-node: var(--lr-bull); }
+.sm-thr-token[data-state="MIXED"] { --sm-thr-node: var(--lr-accent); }
+.sm-thr-token[data-state="DISTRIBUTING"] { --sm-thr-node: var(--lr-warn); }
+.sm-thr-token[data-state="EXITING"] { --sm-thr-node: var(--lr-bear); }
+
+.sm-thr-wallet__addr {
+  fill: var(--lr-text-2);
+  font-family: var(--lr-font-mono);
+  font-size: 11px;
+}
+
+.sm-thr-wallet__score {
+  fill: var(--lr-text);
+  font-size: 10.5px;
+  font-weight: var(--lr-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-thr-chip rect {
+  fill: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  stroke: var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
+}
+
+.sm-thr-chip text {
+  fill: var(--sm-thr-violet-text);
+  font-size: 10px;
+  font-weight: var(--lr-weight-semibold);
+}
+
+/* Label tanpa sumber: nada peringatan + garis putus-putus (sama seperti chip label di tabel bukti). */
+.sm-thr-chip[data-sourced="false"] rect {
+  fill: var(--lr-warn-soft);
+  stroke: var(--lr-warn-line);
+  stroke-dasharray: 3 2;
+}
+
+.sm-thr-chip[data-sourced="false"] text {
+  fill: var(--lr-warn);
+}
+
+.sm-thr-tag rect {
+  fill: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  stroke: var(--sm-thr-wallet);
+}
+
+.sm-thr-tag text {
+  fill: var(--sm-thr-violet-text);
+  font-size: 9.5px;
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-thr-token__l1 {
+  fill: var(--lr-text-3);
+  font-size: 10px;
+}
+
+.sm-thr-token__sym {
+  fill: var(--lr-text);
+  font-size: 12.5px;
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-thr-token__sim {
+  fill: var(--lr-warn);
+  font-size: 9px;
+  font-weight: var(--lr-weight-semibold);
+  letter-spacing: var(--lr-tracking-caps);
+}
+
+.sm-thr-token__l2,
+.sm-thr-token__l3 {
+  fill: var(--lr-text-3);
+  font-size: 10px;
+}
+
+.sm-thr-token__state {
+  fill: var(--sm-thr-node);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-thr-token__conv {
+  fill: var(--lr-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.sm-thr-token__match[data-status="MATCHED"] { fill: var(--lr-bull); }
+.sm-thr-token__match[data-status="SYMBOL_ONLY"],
+.sm-thr-token__match[data-status="AMBIGUOUS"] { fill: var(--lr-warn); }
+
+.sm-thr__svg[data-compact="true"] .sm-thr-wallet__addr { font-size: 10px; }
+.sm-thr__svg[data-compact="true"] .sm-thr-token__sym { font-size: 11.5px; }
+.sm-thr__svg[data-compact="true"] .sm-thr-token__l2,
+.sm-thr__svg[data-compact="true"] .sm-thr-token__l3 { font-size: 9.5px; }
+
+/* Sorot: wallet/token/benang yang diarahkan atau difokus beserta pasangannya; sisanya diredupkan. */
+.sm-thr__svg[data-focus] .sm-thr-strand:not(.is-on) {
+  opacity: 0.08;
+}
+
+.sm-thr__svg[data-focus] .sm-thr-strand:not(.is-on) .sm-thr-strand__flow {
+  animation-play-state: paused;
+}
+
+.sm-thr__svg[data-focus] .sm-thr-node:not(.is-on) {
+  opacity: 0.32;
+}
+
+/* Panel bukti */
+.sm-thr-evidence {
+  display: grid;
+  gap: var(--lr-space-2);
+  min-width: 0;
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-glass-soft, var(--lr-surface-2));
+  overflow-wrap: anywhere;
+}
+
+.sm-thr-evidence .sm-h {
+  margin: 0;
+}
+
+.sm-thr-evidence .badge {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.sm-thr-evidence__hint {
+  font-size: var(--lr-text-xs);
+}
+
+.sm-thr-ev__kind {
+  color: var(--sm-thr-buy);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.sm-thr-ev__kind[data-tone="mixed"] { color: var(--sm-thr-mixed); }
+.sm-thr-ev__kind[data-tone="sell"] { color: var(--sm-thr-sell); }
+.sm-thr-ev__kind[data-tone="cex"] { color: var(--sm-thr-cex); }
+
+.sm-thr-ev__facts {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+}
+
+.sm-thr-clusters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lr-space-1);
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+}
+
+/* Gerak: aliran di benang beli dimatikan bila OS meminta reduced motion atau "Animasi latar" dimatikan. */
+:root[data-motion="off"] .sm-thr-strand__flow,
+:root[data-motion="reduced"] .sm-thr-strand__flow {
+  display: none;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sm-thr-strand__flow {
+    display: none;
+    animation: none;
+  }
+}
+
+/* ---------- Responsif ---------- */
+@media (max-width: 1100px) {
+  .sm-card__body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .sm-card__body .sm-binance {
+    grid-column: 1 / -1;
+  }
+
+  .sm-identity {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 820px) {
+  .sm-card {
+    padding: var(--lr-space-3);
+  }
+
+  .sm-card__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sm-strip {
+    gap: var(--lr-space-2);
+    padding: var(--lr-space-2) var(--lr-space-3);
+  }
+
+  .sm-strip__item {
+    flex-basis: 100%;
+  }
+
+  .sm-toolbar .field,
+  .sm-toolbar .sm-toolbar__switch {
+    width: 100%;
+  }
+
+  .sm-component {
+    grid-template-columns: minmax(0, 1fr) 80px 44px;
+  }
+
+  .sm-watch-item {
+    flex-wrap: wrap;
+  }
+
+  .sm-identity {
+    padding: var(--lr-space-4);
+  }
+
+  .sm-thr-evidence {
+    padding: var(--lr-space-3);
+  }
+}
+
+@media (forced-colors: active) {
+  .sm-sim-ribbon {
+    border: 2px solid CanvasText;
+  }
+
+  .sm-meter__fill,
+  .sm-component__fill {
+    background: Highlight;
+  }
+
+  .sm-thr-node:focus-visible .sm-thr-node__hit,
+  .sm-thr-strand:focus-visible .sm-thr-strand__hit {
+    stroke: Highlight;
+  }
+}
