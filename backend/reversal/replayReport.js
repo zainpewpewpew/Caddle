@@ -35,9 +35,18 @@ export const TARGET_RULES = Object.freeze([
 /** Target tambahan untuk data nyata (grup dataNyata) — hanya diperiksa bila run memuat grup itu; hipotesis, bukan klaim. */
 export const REAL_DATA_TARGET_RULES = Object.freeze([
   { id: 'T_NYATA_1', scenario: REAL_DATA_SCENARIO, sensitivity: 'MEDIUM', text: 'T-NYATA-1 dataNyata: SUCCESS pada MEDIUM melampaui basis acak empiris (CI bawah SUCCESS > basis)' },
+  // T-NYATA-1 per tahap awal: subset tahap dibandingkan dengan basis empiris subset itu sendiri (jarak stop subset), bukan basis grup.
+  ...STAGES.map((stage) => ({
+    id: 'T_NYATA_1_STAGE', stage, scenario: REAL_DATA_SCENARIO, sensitivity: 'MEDIUM',
+    text: `T-NYATA-1 per tahap: SUCCESS ${stage} pada MEDIUM melampaui basis empiris subset (CI bawah > basis)`,
+  })),
   { id: 'T_NYATA_2', scenario: REAL_DATA_SCENARIO, sensitivity: 'MEDIUM', text: 'T-NYATA-2 dataNyata: median lead per peristiwa (padanan ±horizon) > 0 pada MEDIUM' },
   { id: 'T_NYATA_3', scenario: REAL_DATA_SCENARIO, sensitivity: 'MEDIUM', text: 'T-NYATA-3 dataNyata: kandidat pertama EARLY_FORMATION ≥ 10 % pada MEDIUM' },
 ]);
+
+/** Catatan metodologi basis per subset — dimasukkan ke meta.notes setiap run (basis subset ≠ basis grup bila jarak stop berbeda). */
+export const SUBSET_BASELINE_NOTE = 'Basis acak per subset (tahap awal, status terlambat, bin skor) memakai jarak stop s kandidat subset itu sendiri — '
+  + 'bukan jarak stop grup — sehingga pembanding adil untuk subset dengan risiko awal berbeda; ekspektasi (ATR) = rata-rata SUCCESS +target, FAIL −s, TIMEOUT 0, tanpa biaya.';
 
 /** Bin skor 10 poin untuk histogram skor saat deteksi: 0–9, 10–19, …, 80–89, 90–100 (bin terakhir memuat 100). */
 export const SCORE_BINS = Object.freeze(Array.from({ length: 10 }, (_, i) => Object.freeze({
@@ -69,12 +78,18 @@ export function rate(k, n) {
   return { k, n, p: k / n, ci: wilsonInterval(k, n) };
 }
 
-/** Histogram skor per bin SCORE_BINS (hitungan per bin; skor di luar 0..100 dijepit ke bin tepi; non-angka diabaikan). */
+/** Indeks bin SCORE_BINS untuk satu skor (skor di luar 0..100 dijepit ke bin tepi); null bila bukan angka. */
+export function scoreBinIndex(score) {
+  if (!isNum(score)) return null;
+  return Math.min(SCORE_BINS.length - 1, Math.max(0, Math.floor(score / 10)));
+}
+
+/** Histogram skor per bin SCORE_BINS (hitungan per bin; non-angka diabaikan). */
 export function scoreHistogram(scores) {
   const counts = SCORE_BINS.map(() => 0);
   for (const s of scores ?? []) {
-    if (!isNum(s)) continue;
-    counts[Math.min(SCORE_BINS.length - 1, Math.max(0, Math.floor(s / 10)))] += 1;
+    const i = scoreBinIndex(s);
+    if (i !== null) counts[i] += 1;
   }
   return counts;
 }
@@ -83,6 +98,12 @@ export function scoreHistogram(scores) {
 function meanOf(values) {
   const xs = finiteList(values ?? []);
   return { n: xs.length, p: xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null };
+}
+
+/** Rata-rata nilai hingga dalam satuan ATR: { n, mean } (mean null bila n = 0) — untuk ekspektasi kasar. */
+function meanAtr(values) {
+  const xs = finiteList(values ?? []);
+  return { n: xs.length, mean: xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null };
 }
 
 /** Kandidat lolos filter sensitivitas bila skor & jumlah bukti saat deteksi pertama ≥ ambang. */
@@ -190,16 +211,42 @@ export function summarizeCandidates(seriesList, sensitivity) {
       timeout: rate(lab.filter((c) => c.outcome === 'TIMEOUT').length, lab.length),
     };
   };
-  const subset = (xs) => ({ candidates: xs.length, ...outcomeRates(xs) });
+  // targetAtr per kandidat (dari serinya) untuk ekspektasi kasar dalam ATR tanpa biaya: SUCCESS → +targetAtr, FAIL → −s, TIMEOUT → 0.
+  const targetOf = new Map();
+  list.forEach((s, i) => { for (const c of perSeries[i]) targetOf.set(c, isNum(s.targetAtr) ? s.targetAtr : null); });
+  const expectancyAtr = (lab) => meanAtr(lab.map((c) => {
+    if (c.outcome === 'SUCCESS') return targetOf.get(c) ?? null;
+    if (c.outcome === 'FAIL') return isNum(c.stopDistanceAtr) ? -c.stopDistanceAtr : null;
+    return 0;
+  }));
+  // Jarak stop & basis pembanding tanpa keterampilan untuk sekumpulan kandidat (berlabel). Basis empiris digabung dari
+  // `baselineShuffled` per kandidat (dihitung di replay.js dengan jarak stop kandidat itu sendiri), sehingga basis per
+  // SUBSET (tahap awal, status terlambat, bin skor) memakai jarak stop subset itu — adil walau berbeda dari grup.
+  const baselineStats = (xs) => {
+    const lab = xs.filter(isLabeled);
+    const shuffled = lab.reduce((acc, c) => {
+      const b = c.baselineShuffled;
+      if (b && isNum(b.k) && isNum(b.n)) { acc.k += b.k; acc.n += b.n; }
+      return acc;
+    }, { k: 0, n: 0 });
+    const baselineShuffled = rate(shuffled.k, shuffled.n);
+    const success = rate(lab.filter((c) => c.outcome === 'SUCCESS').length, lab.length);
+    return {
+      stopDistanceAtr: quantiles(lab.map((c) => c.stopDistanceAtr)),
+      baselineRandomWalk: meanOf(lab.map((c) => c.baselineRandomWalk)),
+      baselineShuffled,
+      successMinusBaseline: isNum(success.p) && isNum(baselineShuffled.p) ? success.p - baselineShuffled.p : null,
+      expectancyAtr: expectancyAtr(lab),
+    };
+  };
+  const subset = (xs) => ({ candidates: xs.length, ...outcomeRates(xs), ...baselineStats(xs) });
   const byStage = (pick) => Object.fromEntries(STAGES.map((st) => [st, pick(cands.filter((c) => c.firstStage === st))]));
   const outcomes = outcomeRates(cands);
-  // Basis pembanding tanpa keterampilan (dihitung per kandidat berlabel di replay.js; digabung per grup di sini).
-  const shuffled = labeled.reduce((acc, c) => {
-    const b = c.baselineShuffled;
-    if (b && isNum(b.k) && isNum(b.n)) { acc.k += b.k; acc.n += b.n; }
-    return acc;
-  }, { k: 0, n: 0 });
-  const baselineShuffled = rate(shuffled.k, shuffled.n);
+  // Hasil per bin skor saat deteksi (SCORE_BINS) untuk sekumpulan kandidat: dasar memilih ambang sensitivitas per tahap dari data.
+  const byScoreBin = (xs) => SCORE_BINS.map((bin, i) => {
+    const o = subset(xs.filter((c) => scoreBinIndex(c.firstScore) === i));
+    return { bin: bin.label, candidates: o.candidates, labeled: o.labeled, success: o.success, baselineShuffled: o.baselineShuffled, successMinusBaseline: o.successMinusBaseline, expectancyAtr: o.expectancyAtr };
+  });
   // Breakout gagal yang tidak pernah mencapai target: BREAKOUT_FAILED dengan mfeAtr < targetAtr seri (penyebut = yang berlabel).
   let failedBeforeTargetK = 0;
   let failedBeforeTargetN = 0;
@@ -237,11 +284,10 @@ export function summarizeCandidates(seriesList, sensitivity) {
     firstScoreByStage: byStage((xs) => quantiles(xs.map((c) => c.firstScore))),
     firstEvidenceByStage: byStage((xs) => quantiles(xs.map((c) => c.firstEvidenceCount))),
     firstScoreHistogramByStage: byStage((xs) => scoreHistogram(xs.map((c) => c.firstScore))),
-    // Jarak stop (ATR deteksi) & basis pembanding tanpa keterampilan atas kandidat berlabel; selisih = SUCCESS − basis empiris.
-    stopDistanceAtr: quantiles(labeled.map((c) => c.stopDistanceAtr)),
-    baselineRandomWalk: meanOf(labeled.map((c) => c.baselineRandomWalk)),
-    baselineShuffled,
-    successMinusBaseline: isNum(outcomes.success.p) && isNum(baselineShuffled.p) ? outcomes.success.p - baselineShuffled.p : null,
+    // Hasil + basis subset per bin skor saat deteksi, per tahap awal (array seurut SCORE_BINS).
+    outcomesByScoreBin: byStage(byScoreBin),
+    // Jarak stop (ATR deteksi), basis pembanding tanpa keterampilan, selisih SUCCESS − basis empiris, dan ekspektasi (ATR) atas kandidat berlabel grup.
+    ...baselineStats(cands),
     failedBeforeTarget: rate(failedBeforeTargetK, failedBeforeTargetN),
     mfeAtr: quantiles(labeled.map((c) => c.mfeAtr)),
     maeAtr: quantiles(labeled.map((c) => c.maeAtr)),
@@ -328,6 +374,14 @@ export function checkTargets(groups, timeframes) {
           value = g.outcomes.success.p;
           detail = { ci: g.outcomes.success.ci, baseline: base.p, baselineN: base.n };
           ok = n > 0 && base.n > 0 ? g.outcomes.success.ci[0] > base.p : null;
+        } else if (rule.id === 'T_NYATA_1_STAGE') {
+          // Seperti T-NYATA-1, tetapi pada subset tahap awal dengan basis empiris subset itu sendiri; subset/basis kosong → tanpa data.
+          const o = g.outcomesByFirstStage?.[rule.stage] ?? null;
+          const base = o?.baselineShuffled ?? rate(0, 0);
+          n = o?.success?.n ?? 0;
+          value = o?.success?.p ?? null;
+          detail = { stage: rule.stage, ci: o?.success?.ci ?? null, baseline: base.p, baselineN: base.n };
+          ok = n > 0 && base.n > 0 ? o.success.ci[0] > base.p : null;
         } else if (rule.id === 'T_NYATA_2') {
           n = g.leadVsOldNearest?.n ?? 0;
           value = g.leadVsOldNearest?.median ?? null;
@@ -339,7 +393,7 @@ export function checkTargets(groups, timeframes) {
           ok = n > 0 ? value >= 0.1 : null;
         }
       }
-      out.push({ id: rule.id, text: rule.text, timeframe: tf, status: targetStatus(ok), value, n, smallSample: n > 0 && n < REPLAY_REPORT_THRESHOLDS.minSample, detail });
+      out.push({ id: rule.id, stage: rule.stage ?? null, text: rule.text, timeframe: tf, status: targetStatus(ok), value, n, smallSample: n > 0 && n < REPLAY_REPORT_THRESHOLDS.minSample, detail });
     }
   }
   return out;
@@ -443,8 +497,10 @@ export function aggregateReplay({ series, meta = {}, scenarios = [], lookahead =
       baseline: series.find((s) => s.baseline)?.baseline ?? null, scoreBins: SCORE_BINS.map((b) => b.label),
       sensitivities: SENSITIVITIES, sensitivityFilters: SENSITIVITY_FILTERS, successDefinition: SUCCESS_DEFINITION,
       oldMode: series.find((s) => s.old)?.old?.enabled ? series.find((s) => s.old).old.mode : 'off',
-      falsePositiveScenarios: [...fpSet], notes: [],
+      falsePositiveScenarios: [...fpSet],
       ...meta,
+      // Catatan metodologi basis per subset selalu disertakan (setelah catatan dari CLI).
+      notes: [...(meta.notes ?? []), SUBSET_BASELINE_NOTE],
     },
     totals: {
       series: series.length,
@@ -508,7 +564,13 @@ function targetValue(t) {
   if (t.id === 'UPTREND_ZERO') return `${t.value} kandidat pada ${t.n} seri`;
   if (t.id === 'LEAD_POSITIVE' || t.id === 'T_NYATA_2') return `median ${fmtSigned(t.value)} candle, n = ${t.n}`;
   if (t.id === 'T_NYATA_1') return `SUCCESS ${fmtPct(t.value)} (CI ${fmtCi(t.detail?.ci)}) vs basis empiris ${fmtPct(t.detail?.baseline)}, n = ${t.n}`;
+  if (t.id === 'T_NYATA_1_STAGE') return `SUCCESS ${fmtPct(t.value)} (CI ${fmtCi(t.detail?.ci)}) vs basis empiris subset ${fmtPct(t.detail?.baseline)}, n = ${t.n}`;
   return `${fmtPct(t.value)}, n = ${t.n}`;
+}
+
+/** Ekspektasi kasar dalam ATR bertanda: "+0,45 ATR, n = m" atau "— (n = 0)". */
+function fmtExpectancy(e) {
+  return e && isNum(e.n) && e.n > 0 ? `${fmtSigned(e.mean, 2)} ATR, n = ${e.n}` : '— (n = 0)';
 }
 
 /** Rata-rata ringkas tanpa CI (basis random walk): "p %, n = m". */
@@ -605,29 +667,35 @@ export function renderReplayReport(result) {
     '(aproksimasi tanpa batas waktu, TIMEOUT diabaikan — pembanding kasar). **Basis acak empiris** = untuk tiap kandidat berlabel diambil',
     `K = ${meta.baseline?.samples ?? '—'} indeks acak (PRNG berbenih, deterministik) pada seri yang sama setelah warm-up dan sebelum n − horizon, lalu dilabeli dengan aturan`,
     `triple barrier yang SAMA: target = ${target} × ATR${meta.baseline?.atrPeriod ?? ''}(idx), stop = s × ATR${meta.baseline?.atrPeriod ?? ''}(idx); k/n digabung per grup. Selisih = SUCCESS − basis empiris`,
-    '(poin persen); sinyal melebihi kebetulan bila selisih positif DAN CI bawah SUCCESS di atas basis (target T-NYATA-1 pada data nyata).', '',
-    ...table(['TF', 'Skenario', 'Sens.', 'Berlabel', 'Jarak stop s (ATR) median (Q1–Q3)', 'Basis acak RW', 'Basis acak empiris', 'SUCCESS', 'Selisih SUCCESS − basis empiris'],
+    '(poin persen); sinyal melebihi kebetulan bila selisih positif DAN CI bawah SUCCESS di atas basis (target T-NYATA-1 pada data nyata).',
+    'Ekspektasi (ATR) = rata-rata atas kandidat berlabel dari SUCCESS → +target, FAIL → −s, TIMEOUT → 0 (kasar, tanpa biaya/slippage).',
+    'Pada tabel per tahap awal, per status terlambat, dan per bin skor, jarak stop & basis empiris dihitung dari kandidat subset itu sendiri (bukan grup).', '',
+    ...table(['TF', 'Skenario', 'Sens.', 'Berlabel', 'Jarak stop s (ATR) median (Q1–Q3)', 'Basis acak RW', 'Basis acak empiris', 'SUCCESS', 'Selisih SUCCESS − basis empiris', 'Ekspektasi (ATR)'],
       withCandidates.map((g) => [
         g.timeframe, g.label ?? g.scenario, g.sensitivity, String(g.outcomes.labeled), fmtQ(g.stopDistanceAtr, 2), fmtMean(g.baselineRandomWalk),
-        fmtRate(g.baselineShuffled), fmtRate(g.outcomes.success), fmtPoints(g.successMinusBaseline),
+        fmtRate(g.baselineShuffled), fmtRate(g.outcomes.success), fmtPoints(g.successMinusBaseline), fmtExpectancy(g.expectancyAtr),
       ])), '');
 
+  // Kolom basis subset (jarak stop, basis empiris, selisih, ekspektasi) untuk satu himpunan bagian kandidat.
+  const subsetCells = (o) => [fmtQ(o.stopDistanceAtr, 2), fmtRate(o.baselineShuffled), fmtPoints(o.successMinusBaseline), fmtExpectancy(o.expectancyAtr)];
+  const SUBSET_HEADERS = ['Jarak stop s (ATR) median (Q1–Q3)', 'Basis acak empiris (subset)', 'Selisih SUCCESS − basis', 'Ekspektasi (ATR)'];
   lines.push('## Hasil per tahap awal', '',
     'Hasil triple barrier dipisah menurut tahap saat kandidat pertama dibuka (EARLY_FORMATION / DEVELOPING_REVERSAL / CONFIRMED_BREAKOUT);',
-    'hanya grup & tahap yang berkandidat. Rasio atas kandidat berlabel.', '',
-    ...table(['TF', 'Skenario', 'Sens.', 'Tahap awal', 'Kandidat', 'Berlabel', 'SUCCESS', 'FAIL', 'TIMEOUT'],
+    'hanya grup & tahap yang berkandidat. Rasio atas kandidat berlabel. Jarak stop & basis empiris = dari kandidat tahap itu sendiri (jarak stop',
+    'tiap subset bisa berbeda, sehingga basis grup tidak adil untuk subset); selisih = SUCCESS − basis subset; ekspektasi dalam ATR (lihat "Basis pembanding").', '',
+    ...table(['TF', 'Skenario', 'Sens.', 'Tahap awal', 'Kandidat', 'Berlabel', 'SUCCESS', 'FAIL', 'TIMEOUT', ...SUBSET_HEADERS],
       withCandidates.flatMap((g) => STAGES.filter((st) => g.outcomesByFirstStage?.[st]?.candidates > 0).map((st) => {
         const o = g.outcomesByFirstStage[st];
-        return [g.timeframe, g.label ?? g.scenario, g.sensitivity, st, String(o.candidates), String(o.labeled), fmtRate(o.success), fmtRate(o.fail), fmtRate(o.timeout)];
+        return [g.timeframe, g.label ?? g.scenario, g.sensitivity, st, String(o.candidates), String(o.labeled), fmtRate(o.success), fmtRate(o.fail), fmtRate(o.timeout), ...subsetCells(o)];
       }))), '');
 
   lines.push('## Hasil menurut status terlambat saat deteksi', '',
     'Terlambat = saat deteksi pertama kandidat sudah membawa risiko LATE_ENTRY/EXTENDED (harga sudah jauh dari dasar); tepat waktu = tidak.',
-    'Hanya grup berkandidat; rasio atas kandidat berlabel.', '',
-    ...table(['TF', 'Skenario', 'Sens.', 'Status saat deteksi', 'Kandidat', 'Berlabel', 'SUCCESS', 'FAIL', 'TIMEOUT'],
+    'Hanya grup berkandidat; rasio atas kandidat berlabel. Jarak stop & basis empiris dari kandidat subset itu sendiri; selisih = SUCCESS − basis subset.', '',
+    ...table(['TF', 'Skenario', 'Sens.', 'Status saat deteksi', 'Kandidat', 'Berlabel', 'SUCCESS', 'FAIL', 'TIMEOUT', ...SUBSET_HEADERS],
       withCandidates.flatMap((g) => [['extended', 'terlambat (LATE_ENTRY/EXTENDED)'], ['notExtended', 'tepat waktu']].flatMap(([key, label]) => {
         const o = g.outcomesByExtended?.[key];
-        return o && o.candidates > 0 ? [[g.timeframe, g.label ?? g.scenario, g.sensitivity, label, String(o.candidates), String(o.labeled), fmtRate(o.success), fmtRate(o.fail), fmtRate(o.timeout)]] : [];
+        return o && o.candidates > 0 ? [[g.timeframe, g.label ?? g.scenario, g.sensitivity, label, String(o.candidates), String(o.labeled), fmtRate(o.success), fmtRate(o.fail), fmtRate(o.timeout), ...subsetCells(o)]] : [];
       }))), '');
 
   const high = result.groups.filter((g) => g.sensitivity === 'HIGH');
@@ -653,6 +721,15 @@ export function renderReplayReport(result) {
           fmtQ(g.firstEvidenceByStage[st], 1), (g.firstScoreHistogramByStage?.[st] ?? []).join('/') || '—',
         ];
       }))), '');
+
+  lines.push('## Hasil per bin skor saat deteksi (sensitivitas HIGH)', '',
+    'Hasil triple barrier per bin skor saat deteksi pertama (10 poin) × tahap awal, semua kandidat (HIGH); basis empiris & ekspektasi dari kandidat bin itu sendiri.',
+    'Dasar memilih ambang sensitivitas per tahap dari data: bin dengan selisih SUCCESS − basis > 0 (dan ekspektasi > 0) adalah ambang yang didukung data;',
+    'hanya bin berkandidat ≥ 1; perhatikan n per bin sebelum menyimpulkan.', '',
+    ...table(['TF', 'Skenario', 'Tahap awal', 'Bin skor', 'Kandidat', 'Berlabel', 'SUCCESS', 'Basis acak empiris (bin)', 'Selisih SUCCESS − basis', 'Ekspektasi (ATR)'],
+      high.filter((g) => g.candidates > 0).flatMap((g) => STAGES.flatMap((st) => (g.outcomesByScoreBin?.[st] ?? []).filter((b) => b.candidates > 0).map((b) => [
+        g.timeframe, g.label ?? g.scenario, st, b.bin, String(b.candidates), String(b.labeled), fmtRate(b.success), fmtRate(b.baselineShuffled), fmtPoints(b.successMinusBaseline), fmtExpectancy(b.expectancyAtr),
+      ])))), '');
 
   const phased = high.filter((g) => g.phases);
   if (phased.length) {
@@ -740,6 +817,10 @@ export function renderReplayReport(result) {
     '- **Basis acak RW**: rata-rata s / (target + s) — peluang random walk tanpa drift mencapai +target × ATR sebelum −s × ATR (tanpa batas waktu).',
     '- **Basis acak empiris**: K indeks acak berbenih per kandidat berlabel pada seri yang sama (setelah warm-up, sebelum n − horizon), dilabeli dengan aturan',
     '  triple barrier yang sama memakai ATR di indeks itu; SUCCESS k/n gabungan = rasio SUCCESS tanpa keterampilan pada pasar & penghalang yang sama.',
+    '- **Basis per subset**: pada tabel per tahap awal / status terlambat / bin skor, jarak stop s dan basis empiris dihitung dari kandidat subset itu',
+    '  sendiri (basis empiris tiap kandidat memakai s kandidat itu), sehingga subset dengan jarak stop berbeda tidak dibandingkan dengan basis grup.',
+    '- **Ekspektasi (ATR)**: rata-rata atas kandidat berlabel dari SUCCESS → +target × ATR, FAIL → −s × ATR, TIMEOUT → 0 — ekspektasi kasar tanpa biaya,',
+    '  bukan hasil transaksi; positif belum berarti layak diperdagangkan.',
     '- **Breakout gagal sebelum target**: kandidat BREAKOUT_FAILED berlabel dengan MFE < target × ATR (gagal tanpa pernah mencapai target).',
     '- **Terlambat saat deteksi**: kandidat yang saat deteksi pertama sudah membawa risiko LATE_ENTRY/EXTENDED.',
     '- **Sensitivitas**: filter tampilan skor/bukti minimum; mesin selalu mengevaluasi pada ambang HIGH.',

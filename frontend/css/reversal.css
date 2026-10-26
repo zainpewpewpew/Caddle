@@ -578,3 +578,12 @@
     border-left: 3px dashed Highlight;
   }
 }
+
+/* Catatan status validasi data nyata (docs/21 §6.6) di bawah judul — transparansi, bukan fitur. */
+.rr-validation {
+  margin: var(--lr-space-2) 0 0;
+  max-width: 78ch;
+  font-size: var(--lr-text-sm);
+  line-height: 1.45;
+  color: var(--lr-text-2);
+}
