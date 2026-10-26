@@ -16,6 +16,7 @@ Terminal intelijen kripto privat untuk **riset dan pendukung keputusan** — men
 | 5 — Pattern Discovery Lab | Upload, anotasi, definisi pola berversi | Belum dimulai |
 | Akurasi scanner v3 | Fitur struktur pasar/order flow/rezim/Wyckoff, skor konfluensi + tier A–D LONG & SHORT, gerbang tier, migrasi `006` | **Di `main`** — lihat [docs/13](docs/13-panduan-akurasi-v3.md); bobot = hipotesis yang wajib diverifikasi backtest data nyata |
 | 6 — Backtesting | Replay historis, metrik, out-of-sample | **Sebagian** — `npm run backtest` (walk-forward, triple barrier, Wilson CI, kalibrasi); dijalankan pemilik di Mac karena Binance diblokir dari cloud |
+| Riset ML (meta-labeling) | Lab regresi logistik & gradient boosting murni JS vs kalibrasi skor, walk-forward 5 fold + embargo, kontrol label acak, aturan adopsi | **Lab saja** — `npm run backtest -- ... --ml`; scanner live tidak berubah. Lihat [docs/16](docs/16-riset-machine-learning.md) |
 | 7 — Keamanan & QA | Pengujian lengkap, pemindaian, pentest | Berjalan terus sejak M1 |
 | 8 — Deployment privat | Docker, HTTPS, backup, monitoring | Belum dimulai |
 
@@ -129,6 +130,7 @@ Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
 | `npm run user:create -- --username <u> --role admin\|analyst` | Membuat pengguna |
 | `npm run user:password -- --username <u>` | Mengganti kata sandi pengguna (prompt tersembunyi) dan mencabut semua sesinya |
 | `npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01` | Backtest walk-forward sebelum (v2) vs sesudah (v3); laporan di `reports/` ([docs/13](docs/13-panduan-akurasi-v3.md)) |
+| `npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01 --ml` | Sama, plus lab meta-labeling ML (bagian "Lab meta-labeling" di laporan; [docs/16](docs/16-riset-machine-learning.md)) |
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |
@@ -154,6 +156,7 @@ backend/
   scoring/      skor, risk flag, penjelasan
   signals/      state machine sinyal (LONG & SHORT) & repositori
   analysis/     pipeline analisis (live & backtest)
+  ml/           lab meta-labeling: fitur entri, regresi logistik, gradient boosting, evaluasi walk-forward
   system/       status worker, supervisor worker (tombol scanner), konteks pasar
 worker/         proses scanner terpisah (dijalankan server lewat tombol, atau npm run worker)
 frontend/

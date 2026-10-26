@@ -158,3 +158,36 @@ describe('parseCalibrationFile (CLI → worker)', () => {
     expect(() => parseCalibrationFile(JSON.stringify({ version: 1, tables: { 'LONG:*': fitCalibration(samples.slice(0, 50)) } }))).toThrow(/valid/);
   });
 });
+
+describe('kalibrasi Platt', () => {
+  const samplesWith = (fn, n = 400) => Array.from({ length: n }, (_, i) => {
+    const score = (i * 37) % 100;
+    return { score, win: fn(score, i) ? 1 : 0 };
+  });
+
+  it('UNIT-BT-CAL-PLATT-001 tabel berbentuk sama dengan isotonik, layak dipakai worker, naik bila skor informatif', async () => {
+    const { fitPlattCalibration, fitCalibrationBy, isUsableCalibration, parseCalibrationFile, applyCalibration } = await import('../../../backend/backtest/calibration.js');
+    const samples = samplesWith((score, i) => (i % 10) < 2 + score / 20);
+    const t = fitPlattCalibration(samples);
+    expect(t.method).toBe('platt-logistic+bins');
+    expect(t.totalSamples).toBe(400);
+    expect(isUsableCalibration(t)).toBe(true);
+    expect(t.coefficients.slope).toBeGreaterThan(0);
+    for (let i = 1; i < t.bins.length; i += 1) expect(t.bins[i].probability).toBeGreaterThan(t.bins[i - 1].probability);
+    for (const b of t.bins) expect(b.lower).toBeLessThanOrEqual(b.upper);
+    const parsed = parseCalibrationFile(JSON.stringify({ version: 1, tables: { 'LONG:*': t } }));
+    expect(applyCalibration(parsed.tables['LONG:*'], 95).probability).toBeGreaterThan(applyCalibration(parsed.tables['LONG:*'], 5).probability);
+    expect(fitCalibrationBy('isotonic', samples).method).toBe('isotonic-pav+beta-prior');
+    expect(() => fitCalibrationBy('magic', samples)).toThrow(RangeError);
+  });
+
+  it('NEG-BT-CAL-PLATT-001 skor berlawanan tidak dipaksa naik; satu kelas → frekuensi Laplace; kosong → tanpa bin', async () => {
+    const { fitPlattCalibration } = await import('../../../backend/backtest/calibration.js');
+    const inverse = fitPlattCalibration(samplesWith((score, i) => (i % 10) < 7 - score / 20));
+    expect(inverse.coefficients.slope).toBeLessThan(0);
+    expect(inverse.bins[0].probability).toBeGreaterThan(inverse.bins.at(-1).probability);
+    const allLoss = fitPlattCalibration(samplesWith(() => false, 200));
+    expect(allLoss.bins.every((b) => Math.abs(b.probability - 1 / 202) < 1e-12)).toBe(true);
+    expect(fitPlattCalibration([]).bins).toEqual([]);
+  });
+});

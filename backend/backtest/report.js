@@ -227,6 +227,29 @@ function comparisonSection(result, baselineName, candidateName) {
   return lines;
 }
 
+/** Perbandingan v3 vs v3 + filter biaya (out-of-sample & in-sample). Kosong bila varian v3c tidak ada. */
+export function costFilterSection(result) {
+  const v3 = result.variants?.v3;
+  const v3c = result.variants?.v3c;
+  if (!v3 || !v3c) return [];
+  const lines = ['## Filter biaya (eksperimen)', '',
+    `Sinyal v3 yang sama, tetapi dilewati bila perkiraan biaya pulang-pergi saat entri melebihi ${isNum(result.meta?.maxCostR) ? `${fmtNumber(result.meta.maxCostR, 2)}R` : 'ambang'} `
+    + '(stop terlalu sempit dibanding fee + slippage). Filter hanya layak dipakai live bila expectancy out-of-sample naik dan sampel tetap memadai.', ''];
+  const rows = [];
+  for (const [sample, key] of [['test', 'testSummary'], ['train', 'trainSummary']]) {
+    const a = v3[key];
+    const b = v3c[key];
+    if (!a && !b) continue;
+    rows.push([SAMPLE_LABEL[sample], 'v3', ...summaryCells(a).slice(0, 5), '—']);
+    rows.push([SAMPLE_LABEL[sample], 'v3 + filter', ...summaryCells(b).slice(0, 5), [
+      `WR ${delta(a?.winRate, b?.winRate, (d) => `${fmtNumber(d * 100, 1)} pp`)}`,
+      `E ${delta(a?.expectancyR, b?.expectancyR, (d) => `${fmtNumber(d, 2)}R`)}`,
+    ].join('; ')]);
+  }
+  lines.push(...table(['Sampel', 'Varian', ...SUMMARY_HEADERS.slice(0, 5), 'Selisih (filter − v3)'], rows), '');
+  return lines;
+}
+
 function calibrationSection(name, variant) {
   const cal = variant?.calibration;
   if (!cal) return [];
@@ -235,6 +258,21 @@ function calibrationSection(name, variant) {
   const metrics = [`ECE: **${fmtPct(cal.ece)}**`, `Brier: **${fmtNumber(cal.brier, 4)}**`];
   if (isNum(cal.brierBaseline)) metrics.push(`Brier baseline (base rate): ${fmtNumber(cal.brierBaseline, 4)}`);
   lines.push(metrics.join(' · '), '');
+  if (cal.methods && typeof cal.methods === 'object') {
+    lines.push(`Perbandingan metode pada data uji yang sama (tabel config memakai **${cal.method ?? '—'}**):`, '');
+    lines.push(...table(['Metode', 'Log-loss', 'Brier', 'ECE'], [
+      ['Base rate train', fmtNumber(cal.logLossBaseline, 4), fmtNumber(cal.brierBaseline, 4), '—'],
+      ...Object.entries(cal.methods).map(([m, q]) => [m === 'platt' ? 'Platt' : m === 'isotonic' ? 'Isotonik' : m,
+        fmtNumber(q?.logLoss, 4), fmtNumber(q?.brier, 4), fmtPct(q?.ece)]),
+    ]), '');
+    const chosen = cal.methods[cal.method];
+    const better = Object.entries(cal.methods).find(([m, q]) => m !== cal.method && isNum(q?.logLoss) && isNum(chosen?.logLoss)
+      && q.logLoss < chosen.logLoss - 0.005);
+    if (better) {
+      lines.push(`> Pada data uji ini metode **${better[0]}** lebih baik (log-loss lebih kecil). Bila konsisten di beberapa `
+        + `periode, tulis kalibrasi dengan \`--calibration-method ${better[0]}\`.`, '');
+    }
+  }
   const bins = Array.isArray(cal.bins) ? cal.bins : [];
   const rows = bins.map((b) => {
     const range = isNum(b.lower) && isNum(b.upper) ? `${fmtNumber(b.lower, 0)}–${fmtNumber(b.upper, 0)}` : (isNum(b.meanScore) ? `≈${fmtNumber(b.meanScore, 0)}` : '—');
@@ -243,6 +281,90 @@ function calibrationSection(name, variant) {
   });
   lines.push('Diagram reliabilitas (prediksi vs realisasi per bin skor):', '');
   lines.push(...table(['Bin skor', 'n', 'Prediksi', 'Realisasi', 'CI 95%', 'Selisih', 'Catatan'], rows), '');
+  return lines;
+}
+
+const MODEL_LABEL = Object.freeze({
+  base: 'Base rate (selalu menebak rata-rata train)',
+  isotonic: 'Kalibrasi isotonik skor konfluensi (yang dipakai sekarang)',
+  logistic: 'Regresi logistik L2 (ML)',
+  gbdt: 'Gradient boosting pohon dangkal (ML)',
+  logisticShuffled: 'Kontrol: logistik, label train diacak',
+  gbdtShuffled: 'Kontrol: gradient boosting, label train diacak',
+});
+
+/**
+ * Bagian lab meta-labeling ML (result.ml dari backend/ml/evaluate.js). Kosong bila backtest tanpa --ml.
+ * @param {object|null|undefined} ml
+ * @returns {string[]}
+ */
+export function mlSection(ml, meta = {}) {
+  if (!ml || typeof ml !== 'object') return [];
+  const lines = ['## Lab meta-labeling (machine learning)', '',
+    '> Model sekunder memprediksi peluang sinyal scanner berakhir untung neto (R > 0 setelah fee & slippage) dari fitur '
+    + 'saat entri. Dievaluasi walk-forward '
+    + `${ml.options?.folds ?? '—'} fold dengan embargo + purging; praproses & model dilatih hanya dari train. `
+    + 'Hasil ini TIDAK dipakai scanner live; lihat docs/16-riset-machine-learning.md.', ''];
+  if (meta?.source === 'synthetic') {
+    lines.push('> ⚠️ **Data sintetis.** Generator menanam pola (akumulasi → markup dengan taker buy tinggi) yang sengaja dapat '
+      + 'dipelajari; skor ML di sini hanya membuktikan mekanisme bekerja, BUKAN akurasi di pasar nyata.', '');
+  }
+  const v = ml.verdict;
+  if (v) {
+    lines.push(v.adopted
+      ? `**Keputusan: model \`${v.model}\` LOLOS aturan adopsi** (masih perlu konfirmasi pada periode data baru sebelum dipakai live).`
+      : '**Keputusan: ML TIDAK diadopsi — tetap pakai kalibrasi skor konfluensi.**', '');
+    if (v.leakageSuspected) lines.push('- ⚠️ Kontrol label acak menunjukkan skill — hasil tidak sah, periksa kebocoran data.');
+    lines.push(...(v.reasons ?? []).map((r) => `- ${r}`), '');
+  }
+  lines.push(`Sampel trade selesai: ${ml.samples ?? 0}.`, '');
+  const models = { ...(ml.models ?? {}), ...(ml.controls ?? {}) };
+  if (Object.keys(models).length) {
+    lines.push('### Kualitas peluang out-of-sample', '',
+      'Log-loss & Brier makin kecil makin baik. Skill = 1 − log-loss / log-loss base rate (≤ 0 = tidak berguna). AUC 0,5 = acak.', '');
+    lines.push(...table(['Model', 'n uji', 'Log-loss', 'Brier', 'AUC', 'Skill'], Object.entries(models).map(([name, m]) => [
+      MODEL_LABEL[name] ?? name, isNum(m.n) ? String(m.n) : '—', fmtNumber(m.logLoss, 4), fmtNumber(m.brier, 4), fmtNumber(m.auc, 3), fmtPct(m.skill, 2),
+    ])), '');
+  }
+  if (Array.isArray(ml.folds) && ml.folds.length) {
+    lines.push('### Per fold (log-loss uji)', '');
+    lines.push(...table(['Fold', 'Mulai uji', 'n train', 'n uji', 'Base rate', 'Base', 'Isotonik', 'Logistik', 'GBDT'], ml.folds.map((f) => [
+      String(f.fold + 1), fmtDate(f.testStart), String(f.train), String(f.test), fmtPct(f.baseRate),
+      fmtNumber(f.logLoss?.base, 4), fmtNumber(f.logLoss?.isotonic, 4), fmtNumber(f.logLoss?.logistic, 4), fmtNumber(f.logLoss?.gbdt, 4),
+    ])), '');
+  }
+  const cmp = ml.comparison ?? {};
+  const cmpRows = Object.entries(cmp).filter(([, b]) => b).map(([name, b]) => [
+    MODEL_LABEL[name] ?? name, fmtNumber(b.mean, 5), `${fmtNumber(b.lower, 5)} … ${fmtNumber(b.upper, 5)}`, String(b.blocks),
+  ]);
+  if (cmpRows.length) {
+    lines.push('### Perbaikan log-loss vs kalibrasi isotonik (bootstrap blok per hari)', '',
+      'Positif = ML lebih baik. Bila interval mencakup 0, perbaikan tidak signifikan.', '');
+    lines.push(...table(['Model', 'Rata-rata', 'Interval 95%', 'Hari (blok)'], cmpRows), '');
+  }
+  const eco = ml.economics ?? {};
+  const ecoRows = ['isotonic', 'logistic', 'gbdt'].filter((k) => eco[k]).map((k) => {
+    const e = eco[k];
+    const ci = (b) => (b ? `${fmtR(b.mean)} (${fmtR(b.lower)} … ${fmtR(b.upper)})` : '—');
+    return [MODEL_LABEL[k], ci(e.selected), ci(e.lift), ci(e.vsIsotonic)];
+  });
+  if (ecoRows.length) {
+    lines.push('### Bukti ekonomi (bootstrap blok per hari, interval 95%)', '',
+      'Peluang yang lebih tajam belum tentu menghasilkan uang. ML hanya layak bila seleksinya menaikkan expectancy R neto.', '');
+    lines.push(...table(['Seleksi', 'Expectancy seleksi', 'Lift vs semua sinyal', 'Selisih vs seleksi isotonik'], ecoRows), '');
+  }
+  const sel = ml.selection;
+  if (sel) {
+    lines.push(`### Seleksi ${fmtPct(sel.fraction, 0)} sinyal teratas (ambang dari train, diterapkan ke uji)`, '');
+    lines.push(...table(['Pilihan', ...SUMMARY_HEADERS], [
+      ['Semua sinyal uji', ...summaryCells(sel.all)],
+      ...['isotonic', 'logistic', 'gbdt'].filter((k) => sel[k]).map((k) => [MODEL_LABEL[k], ...summaryCells(sel[k])]),
+    ]), '');
+  }
+  if (Array.isArray(ml.coefficients) && ml.coefficients.length) {
+    lines.push('### Fitur paling berpengaruh (koefisien logistik terstandar, seluruh data — penjelasan saja)', '');
+    lines.push(...table(['Fitur', 'Bobot'], ml.coefficients.slice(0, 10).map((c) => [c.name, fmtNumber(c.weight, 3)])), '');
+  }
   return lines;
 }
 
@@ -324,6 +446,7 @@ export function renderMarkdownReport(result) {
   lines.push('');
 
   lines.push(...comparisonSection(result, baselineName, candidateName));
+  lines.push(...costFilterSection(result));
 
   const names = Object.keys(result.variants);
   const ordered = [...names.filter((n) => n === baselineName), ...names.filter((n) => n === candidateName), ...names.filter((n) => n !== baselineName && n !== candidateName)];
@@ -355,6 +478,8 @@ export function renderMarkdownReport(result) {
   } else {
     lines.push('_Tidak ada data kalibrasi._', '');
   }
+
+  lines.push(...mlSection(result.ml, meta));
 
   lines.push('## Glosarium', '',
     '- **Win rate**: proporsi trade yang berakhir WIN (TP tersentuh). CI 95% memakai interval skor Wilson.',

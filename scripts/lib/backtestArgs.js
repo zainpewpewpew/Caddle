@@ -28,6 +28,11 @@ Opsi:
   --no-cache                  jangan baca/tulis cache disk
   --out reports/              folder laporan (backtest-<timestamp>.md & .json)
   --write-calibration config/calibration.json   tulis tabel kalibrasi hasil backtest
+  --entry next-open           harga entri: next-open (bawaan, open candle setelah sinyal) atau close (close candle sinyal)
+  --max-cost-r 0.15           ambang varian "v3 + filter biaya" (perkiraan biaya pulang-pergi saat entri, dalam R)
+  --calibration-method platt  metode tabel --write-calibration: platt (bawaan) atau isotonic
+  --ml                        lab meta-labeling: uji regresi logistik & gradient boosting vs kalibrasi skor
+                              (walk-forward 5 fold + embargo + kontrol label acak; hasil di laporan, tidak dipakai live)
   -h, --help                  tampilkan bantuan ini
 `;
 
@@ -51,6 +56,10 @@ const OPTIONS = Object.freeze({
   'no-cache': { type: 'boolean', default: false },
   out: { type: 'string', default: 'reports' },
   'write-calibration': { type: 'string' },
+  ml: { type: 'boolean', default: false },
+  entry: { type: 'string', default: 'next-open' },
+  'max-cost-r': { type: 'string', default: '0.15' },
+  'calibration-method': { type: 'string', default: 'platt' },
   help: { type: 'boolean', short: 'h', default: false },
 });
 
@@ -77,6 +86,18 @@ function date(name, text) {
   return ms;
 }
 
+function entryMode(text) {
+  const mode = { 'next-open': 'nextOpen', close: 'close' }[String(text).trim()];
+  if (!mode) throw new TypeError(`--entry harus next-open atau close (diberikan: ${String(text).slice(0, 20)})`);
+  return mode;
+}
+
+function calibrationMethod(text) {
+  const m = String(text).trim();
+  if (m !== 'platt' && m !== 'isotonic') throw new TypeError(`--calibration-method harus platt atau isotonic (diberikan: ${m.slice(0, 20)})`);
+  return m;
+}
+
 /**
  * Parse argumen CLI backtest.
  * @param {string[]} argv argumen setelah nama skrip (process.argv.slice(2))
@@ -85,7 +106,8 @@ function date(name, text) {
  *   help: boolean, source: 'binance'|'csv'|'synthetic', symbols: string[]|null, top: number|null, csv: string[]|null,
  *   timeframes: string[], from: number, to: number, rangeExplicit: boolean, targetR: number, maxBars: number, folds: number, embargoBars: number,
  *   seed: number, syntheticSymbols: number, syntheticBars: number, minQuoteVolume24h: number,
- *   cacheDir: string|null, out: string, writeCalibration: string|null,
+ *   cacheDir: string|null, out: string, writeCalibration: string|null, ml: boolean,
+ *   entry: 'nextOpen'|'close', maxCostR: number, calibrationMethod: 'platt'|'isotonic',
  * }}
  * @throws {TypeError|RangeError} pesan bahasa Indonesia untuk argumen tidak valid
  */
@@ -152,5 +174,9 @@ export function parseBacktestArgs(argv, { now = Date.now() } = {}) {
     cacheDir: v['no-cache'] ? null : v['cache-dir'],
     out: outDir,
     writeCalibration: v['write-calibration'] ?? null,
+    ml: v.ml,
+    entry: entryMode(v.entry),
+    maxCostR: number('max-cost-r', v['max-cost-r'], { min: 0.01, max: 5 }),
+    calibrationMethod: calibrationMethod(v['calibration-method']),
   };
 }

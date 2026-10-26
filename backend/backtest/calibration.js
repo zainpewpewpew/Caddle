@@ -2,10 +2,13 @@
 // Metode: bin kuantil → gabung bin kecil → posterior Beta (Laplace) → isotonik PAV (monoton naik terhadap skor).
 // Fungsi murni. Peluang hanya boleh ditampilkan bila sampel memadai (lihat MIN_CALIBRATION_SAMPLES).
 
+import { fitLogistic, predictLogistic } from '../ml/logistic.js';
 import { brierScore, wilsonInterval } from './metrics.js';
 
 export const CALIBRATION_VERSION = 1;
 export const CALIBRATION_METHOD = 'isotonic-pav+beta-prior';
+export const PLATT_METHOD = 'platt-logistic+bins';
+export const CALIBRATION_METHODS = Object.freeze(['platt', 'isotonic']);
 /** Total sampel minimum agar applyCalibration mau mengeluarkan peluang. */
 export const MIN_CALIBRATION_SAMPLES = 100;
 
@@ -96,6 +99,47 @@ export function fitCalibration(samples, { bins = 10, minSamplesPerBin = 30, prio
     return { lo: b.lo, hi: b.hi, n: b.n, wins: b.wins, probability: b.probability, lower, upper };
   });
   return table;
+}
+
+/**
+ * Kalibrasi Platt: regresi logistik 1 dimensi peluang = σ(a·skor + b), lalu disajikan dalam bentuk tabel bin yang SAMA
+ * dengan fitCalibration (bin kuantil, bin kecil digabung) agar applyCalibration, file config/calibration.json, dan worker
+ * live tetap bekerja tanpa perubahan. Peluang bin = rata-rata prediksi Platt atas sampel train di bin itu; interval =
+ * Wilson 95% dari hitungan bin (jujur soal ketidakpastian). Platt hanya punya 2 parameter, sehingga jauh lebih stabil
+ * daripada isotonik pada sampel kecil (Niculescu-Mizil & Caruana 2005; Kull dkk. 2017 — docs/16 §9).
+ * Kemiringan negatif (skor tinggi justru lebih sering kalah) TIDAK dipaksa monoton naik: itu temuan yang harus terlihat.
+ * @returns {ReturnType<typeof fitCalibration> & { coefficients?: { slope: number, intercept: number } }}
+ */
+export function fitPlattCalibration(samples, { bins = 10, minSamplesPerBin = 30 } = {}) {
+  if (!Number.isInteger(bins) || bins < 1) throw new RangeError('bins harus bilangan bulat ≥ 1');
+  const sorted = cleanSamples(samples);
+  const table = { version: CALIBRATION_VERSION, method: PLATT_METHOD, totalSamples: sorted.length, bins: [] };
+  if (sorted.length === 0) return table;
+  const wins = sorted.reduce((a, s) => a + s.win, 0);
+  // Satu kelas saja → logistik tak terdefinisi; pakai frekuensi (dengan prior Laplace) untuk semua bin.
+  const flat = wins === 0 || wins === sorted.length ? (wins + 1) / (sorted.length + 2) : null;
+  const model = flat === null ? fitLogistic(sorted.map((s) => [s.score / 100]), sorted.map((s) => s.win), { l2: 0.01 }) : null;
+  const predict = (score) => (model ? predictLogistic(model, [score / 100]) : flat);
+  if (model) {
+    // Koefisien dalam satuan skor mentah (prep menstandarkan skor/100).
+    const slope = model.weights[0] / model.prep.sds[0] / 100;
+    table.coefficients = { slope, intercept: model.bias - (model.weights[0] * model.prep.means[0]) / model.prep.sds[0] };
+  }
+  const merged = mergeSmall(quantileBins(sorted, bins), minSamplesPerBin);
+  table.bins = merged.map((b) => {
+    const inBin = sorted.filter((s) => s.score >= b.lo && s.score <= b.hi);
+    const probability = inBin.reduce((a, s) => a + predict(s.score), 0) / inBin.length;
+    const [lower, upper] = wilsonInterval(b.wins, b.n);
+    return { lo: b.lo, hi: b.hi, n: b.n, wins: b.wins, probability, lower, upper };
+  });
+  return table;
+}
+
+/** Pasang tabel kalibrasi dengan metode 'platt' (bawaan) atau 'isotonic'. */
+export function fitCalibrationBy(method, samples, options) {
+  if (method === 'platt') return fitPlattCalibration(samples, options);
+  if (method === 'isotonic') return fitCalibration(samples, options);
+  throw new RangeError(`Metode kalibrasi tidak dikenal: ${String(method)} (pilihan: ${CALIBRATION_METHODS.join(', ')})`);
 }
 
 /** Indeks bin untuk skor; celah antarbin dibelah di titik tengah, di luar rentang → bin ujung. */
