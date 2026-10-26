@@ -121,6 +121,31 @@
   to { opacity: 1; transform: none; }
 }
 
+/* Kolom "Update" (signalFormat.js: updatedCell). Basi = > 2 candle tanpa evaluasi baru. */
+.updated-at {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.updated-at[data-stale="true"] .updated-at__text {
+  color: var(--lr-warn);
+}
+
+.updated-at__stale:not([hidden]) {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--lr-warn-line);
+  border-radius: var(--lr-radius-xs);
+  background: var(--lr-warn-soft);
+  color: var(--lr-warn);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 /* Sorotan diff antarpolling (screener.js: diffRows). Kandidat baru: nada arah halaman; skor naik/turun: bull/bear. */
 .page--scanner tr[data-flash] > td {
   animation: lr-scanner-flash 1.2s var(--lr-ease) both;

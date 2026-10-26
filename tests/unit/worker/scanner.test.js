@@ -342,6 +342,20 @@ describe('bootstrap', () => {
     await scanner.stop();
   });
 
+  it('UNIT-SCN-029 restart di atas data tersimpan: setelah SEMUA bootstrap selesai, seri terpilih yang sudah punya data dievaluasi lanjut sekali (reason resume, tanpa candle) agar sinyal terbuka tidak basi; seri konteks HTF dan seri tanpa data tidak', async () => {
+    const { scanner, repos, analysed, log } = setup({ symbols: ['BTCUSDT', 'ETHUSDT'], bootstrapCandles: 5 });
+    repos.seed('BTCUSDT', '5m', [0, 1, 2, 3].map((i) => LAST_CLOSED - (6 - i) * M5));
+    repos.seed('BTCUSDT', '1h', [Math.floor(START / H1) * H1 - 3 * H1]); // konteks HTF saja (5m terpilih)
+    await scanner.start();
+    await flush();
+    expect(analysed).toEqual([{ symbol: 'BTCUSDT', timeframe: '5m', candles: [], reason: 'resume' }]);
+    // Evaluasi lanjut baru berjalan setelah semua upsert bootstrap (termasuk ETHUSDT & HTF).
+    const kinds = log.map((e) => e[0]);
+    expect(kinds.lastIndexOf('upsertClosed')).toBeLessThan(kinds.indexOf('analysis'));
+    expect(scanner.status().sync.lastAnalysisAt).toBe(START);
+    await scanner.stop();
+  });
+
   it('UNIT-SCN-002 gap historis dalam jendela bootstrap ditutup lewat findGaps', async () => {
     const { scanner, rest, repos } = setup({ symbols: ['BTCUSDT'], bootstrapCandles: 6 });
     // tersimpan: LAST_CLOSED-5..LAST_CLOSED kecuali -3 dan -2 (lubang)

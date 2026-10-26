@@ -1,6 +1,7 @@
 // Render bersama untuk data sinyal (screener, riwayat, overview). Semua via h() — aman XSS.
 import { badge, stage } from '../lib/components.js';
 import { h } from '../lib/dom.js';
+import { EMPTY, formatRelative, formatUtc } from '../lib/format.js';
 
 const ALIGNMENT_LABELS = {
   ALIGNED: ['Aligned', 'bull'],
@@ -195,4 +196,65 @@ export function confluenceFieldsOf(rows) {
     score: list.some((r) => confluenceValue(r?.confluenceScore) !== null),
     winProbability: list.some((r) => formatWinProbability(r?.winProbability) !== null),
   };
+}
+
+// ---------- kesegaran kolom "Update" ----------
+
+// Selaras dengan TIMEFRAME_MS di backend/market/contracts.js (frontend tidak dapat mengimpor modul backend).
+const UPDATE_TF_MS = Object.freeze({ '5m': 5 * 60_000, '15m': 15 * 60_000, '1h': 60 * 60_000 });
+/** Kelonggaran di atas 2 candle (antrean analisis, settle HTF, jeda polling) sebelum sinyal dinyatakan basi. */
+const STALE_GRACE_MS = 2 * 60_000;
+
+/**
+ * Kesegaran sinyal terbuka. `updatedAt` = waktu tutup candle terakhir yang dievaluasi worker (bukan jam klien):
+ * selama scanner berjalan nilainya maju tiap candle timeframe sinyal tertutup, jadi umur normal < 1 candle.
+ * Basi = lebih dari 2 candle + kelonggaran tanpa evaluasi baru — scanner mati, sedang mengejar data setelah
+ * restart, atau seri ini tertinggal. Timeframe tak dikenal / updatedAt kosong → tidak pernah dinyatakan basi.
+ * @param {{ updatedAt?: number|null, timeframe?: string }} row
+ * @param {number} [now]
+ * @returns {{ stale: boolean, ageMs: number|null, staleAfterMs: number|null }}
+ */
+export function signalFreshness(row, now = Date.now()) {
+  const at = row?.updatedAt;
+  if (typeof at !== 'number' || !Number.isFinite(at)) return { stale: false, ageMs: null, staleAfterMs: null };
+  const tfMs = UPDATE_TF_MS[row?.timeframe];
+  const staleAfterMs = tfMs ? 2 * tfMs + STALE_GRACE_MS : null;
+  const ageMs = Math.max(0, now - at);
+  return { stale: staleAfterMs !== null && ageMs > staleAfterMs, ageMs, staleAfterMs };
+}
+
+/** Mengisi ulang teks, judul, dan penanda basi sel "Update" dari data-* miliknya (dipakai render & ticker). */
+export function paintUpdatedCell(el, now = Date.now()) {
+  const updatedAt = Number(el.dataset.updatedAt);
+  const row = { updatedAt: el.dataset.updatedAt === '' ? null : updatedAt, timeframe: el.dataset.timeframe };
+  const { stale } = signalFreshness(row, now);
+  const text = formatRelative(row.updatedAt, now);
+  const label = el.firstChild;
+  if (label.textContent !== text) label.textContent = text;
+  const tag = el.querySelector('.updated-at__stale');
+  tag.hidden = !stale;
+  if (stale) el.dataset.stale = 'true';
+  else delete el.dataset.stale;
+  el.title = row.updatedAt === null ? 'Belum ada evaluasi tercatat'
+    : stale
+      ? `Basi: evaluasi terakhir pada candle ${row.timeframe} yang tutup ${formatUtc(row.updatedAt)}. Lebih dari 2 candle tanpa evaluasi baru — scanner mati, sedang mengejar data setelah restart, atau seri ini tertinggal.`
+      : `Evaluasi terakhir: candle ${row.timeframe} yang tutup ${formatUtc(row.updatedAt)}. Diperbarui tiap candle tertutup selama scanner berjalan.`;
+}
+
+/**
+ * Sel kolom "Update": waktu relatif evaluasi terakhir + penanda "Basi" bila sinyal tidak dievaluasi ulang lebih dari
+ * 2 candle. Teks dihitung ulang oleh refreshUpdatedCells (ticker halaman), jadi "x menit lalu" tidak membeku.
+ */
+export function updatedCell(row, now = Date.now()) {
+  const at = typeof row?.updatedAt === 'number' && Number.isFinite(row.updatedAt) ? String(row.updatedAt) : '';
+  const el = h('span', { class: 'updated-at', 'data-updated-at': at, 'data-timeframe': row?.timeframe ?? '', 'data-testid': 'updated-at' },
+    h('span', { class: 'updated-at__text' }, EMPTY),
+    h('span', { class: 'updated-at__stale', hidden: true }, 'Basi'));
+  paintUpdatedCell(el, now);
+  return el;
+}
+
+/** Menghitung ulang semua sel "Update" di dalam `root` terhadap `now`. */
+export function refreshUpdatedCells(root, now = Date.now()) {
+  for (const el of root.querySelectorAll('.updated-at[data-updated-at]')) paintUpdatedCell(el, now);
 }
