@@ -56,7 +56,8 @@ export function loadChartLibrary() {
     const fail = (script) => {
       script.remove();
       libraryPromise = null;
-      reject(new Error('Library grafik gagal dimuat'));
+      // Termasuk 503 dari server saat paket lightweight-charts belum terpasang (git pull tanpa npm ci).
+      reject(new Error('Library grafik gagal dimuat dari /vendor/lightweight-charts.js. Bila baru git pull, jalankan npm ci lalu start ulang server'));
     };
     const script = h('script', {
       src: CHART_VENDOR_SRC,
