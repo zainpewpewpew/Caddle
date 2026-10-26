@@ -38,7 +38,9 @@ const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {}
  *   onMonitoringStopped?: (e: { symbol: string, timeframes: string[]|null, reason: string, at: number }) => void,
  *   heartbeatOwner?: { pid: number, host: string } | null,
  *   analysisParams?: object,
+ *   directionTimeframes?: Record<string, string[]>|null,
  * }} deps
+ *   directionTimeframes: timeframe per arah (default DIRECTION_TIMEFRAMES: LONG 15m, SHORT 1h); null = semua (tes).
  *   clock: jam LOKAL host (default Date.now). Jam server (`serverClock.now` = jam lokal + offset terukur)
  *   dibuat di sini dan menjadi jam repositori, klien REST, dan scanner (`clock`); jam lokal menjadi
  *   `localClock` scanner untuk stempel operasional (heartbeat, run, error, lastIngestionAt).
@@ -72,6 +74,7 @@ export function assembleWorker({
   onMonitoringStopped,
   heartbeatOwner = null,
   directions = DIRECTIONS,
+  directionTimeframes = DIRECTION_TIMEFRAMES,
   analysisParams = {},
 } = {}) {
   if (!db) throw new TypeError('db wajib ada');
@@ -106,7 +109,7 @@ export function assembleWorker({
     onAlert,
     directions,
     // LONG hanya 15m, SHORT hanya 1h (keputusan pengguna); seri lain hanya konteks/tidak diingesti.
-    directionTimeframes: DIRECTION_TIMEFRAMES,
+    directionTimeframes,
     params: analysisParams,
   });
 

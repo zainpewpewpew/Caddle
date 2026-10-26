@@ -305,12 +305,14 @@ describe('Audit konfluensi: timeframe tanpa HTF (1h)', () => {
     expect(computeConfluence(noHtf(mirrorInput(x))).score).toBeCloseTo(h1.score, 12);
   });
 
-  it('DESAIN SAAT INI: tanpa HTF tier A mustahil — skor ≥ tierA (75) tanpa veto tetap maksimal tier B', () => {
+  it('DIPERBAIKI: tanpa HTF (1h) tier A tetap mungkin — skor ≥ tierA (75) tanpa veto, struktur & flow searah → A', () => {
     const c = computeConfluence(noHtf(idealLong()));
     expect(c.score).toBeGreaterThan(90);
     expect(c.vetoes).toEqual([]);
-    expect(c.tier).toBe('B'); // syarat tier A: alignment ALIGNED/PARTIALLY_CONFIRMED (confluence.js baris 410)
-    expect(computeConfluence(noHtf(mirrorInput(idealLong()))).tier).toBe('B');
+    expect(c.tier).toBe('A'); // sebelumnya B: syarat alignment ALIGNED/PARTIALLY_CONFIRMED mustahil tanpa HTF
+    expect(computeConfluence(noHtf(mirrorInput(idealLong()))).tier).toBe('A');
+    // 15m dengan HTF UNCONFIRMED tetap tidak boleh A.
+    expect(computeConfluence({ ...idealLong(), view: { ...idealLong().view, alignment: 'UNCONFIRMED' }, context: { alignment: 'UNCONFIRMED', trends: {} } }).tier).not.toBe('A');
   });
 
   it('DESAIN SAAT INI: tanpa HTF veto COUNTERTREND_HTF tidak pernah muncul (tidak ada pemeriksaan tren lebih tinggi)', () => {

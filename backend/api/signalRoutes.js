@@ -44,7 +44,11 @@ const historyQuerySchema = {
 
 const toInt = (value, fallback) => (value === undefined ? fallback : Number.parseInt(value, 10));
 
-export async function signalRoutes(app, { signals, candles }) {
+/**
+ * @param {{ signals: object, candles: object, directionTimeframes?: Record<string, string[]>|null }} deps
+ *   directionTimeframes: default DIRECTION_TIMEFRAMES; null = semua timeframe (tanpa pembatasan, dipakai tes mekanika).
+ */
+export async function signalRoutes(app, { signals, candles, directionTimeframes = DIRECTION_TIMEFRAMES }) {
   async function withLastPrice(rows) {
     const out = [];
     for (const row of rows) {
@@ -58,8 +62,8 @@ export async function signalRoutes(app, { signals, candles }) {
     const q = request.query;
     const limit = toInt(q.limit, 200);
     const direction = q.direction ?? 'LONG';
-    const allowed = DIRECTION_TIMEFRAMES[direction];
-    if (q.timeframe !== undefined && !allowed.includes(q.timeframe)) return { items: [], count: 0, timeframes: [...allowed] };
+    const allowed = directionTimeframes?.[direction] ?? TIMEFRAMES;
+    if (q.timeframe !== undefined && !allowed.includes(q.timeframe)) return { items: [], count: 0 };
     const rows = await signals.listActive({
       direction,
       timeframe: q.timeframe ?? (allowed.length === 1 ? allowed[0] : null),
@@ -70,7 +74,7 @@ export async function signalRoutes(app, { signals, candles }) {
       minTier: q.minTier ?? null,
       limit,
     });
-    return { items: await withLastPrice(rows), count: rows.length, timeframes: [...allowed] };
+    return { items: await withLastPrice(rows), count: rows.length };
   });
 
   app.get('/api/signals/history', { schema: { querystring: historyQuerySchema } }, async (request) => {

@@ -241,9 +241,9 @@ describe('AUDIT detektor LONG (SA/PVA)', () => {
     expect(computeInvalidation(s, { ...f, atr: 0.5 }, 0.25)).toBeLessThan(f.close);
   });
 
-  it('AUDIT-PAT-009 DESIGN-WEAKNESS: SA bisa terdeteksi saat EMA25 masih turun (pantulan setelah penurunan)', () => {
-    // ema25NotFalling hanya opsional (bobot 10): wajib 75 + atrNotExpanding 5 + notExtended 5 = 85
-    // = minScore. Pantulan 20 candle setelah turun 20 candle → LONG sementara tren EMA25 turun.
+  it('AUDIT-PAT-009 (diperbaiki v3) SA TIDAK terdeteksi saat EMA25 masih turun (pantulan setelah penurunan)', () => {
+    // v2: ema25NotFalling opsional (bobot 10) → wajib 75 + atrNotExpanding 5 + notExtended 5 = 85 = minScore, sehingga
+    // pantulan 20 candle setelah turun 20 candle terdeteksi LONG padahal EMA25 turun. v3: kondisi ini wajib.
     const c = generateCandles({ seed: 1, segments: [
       { bars: 48, cycle: zigzag(3, 0.002, 3, 0.002), volume: 1000, volumeNoise: 0.15 },
       { bars: 20, drift: -0.003, cycle: zigzag(3, 0.001, 3, 0.001), volume: 1000 },
@@ -253,6 +253,7 @@ describe('AUDIT detektor LONG (SA/PVA)', () => {
     const ema25 = r.conditions.find((x) => x.id === 'ema25NotFalling');
     expect(ema25.passed).toBe(false);
     expect(ema25.value).toBeLessThan(0);
-    expect(r.detected).toBe(true);
+    expect(r.patternScore).toBeGreaterThanOrEqual(85); // skor tetap tinggi — yang menolak adalah kondisi wajib
+    expect(r.detected).toBe(false);
   });
 });

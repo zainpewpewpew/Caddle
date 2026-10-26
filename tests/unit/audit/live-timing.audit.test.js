@@ -255,7 +255,8 @@ describe('API & UI', () => {
     await ctx.repos.candles.upsertClosed([...m15, ...h1], { now: NOW });
     const calls = [];
     const signals = { listActive: async (f) => { calls.push(f); return [{ symbol: SYMBOL, timeframe: '1h', direction: f.direction }]; } };
-    const server = await app({ signals, candles: ctx.repos.candles });
+    // Mekanika routing tanpa pembatasan timeframe per arah (DIRECTION_TIMEFRAMES diuji POS-SIG-TF-*).
+    const server = await app({ signals, candles: ctx.repos.candles, directionTimeframes: null });
     const res = await server.inject({ url: '/api/signals/active?timeframe=1h' });
     expect(calls[0]).toMatchObject({ direction: 'LONG', timeframe: '1h' });
     expect(res.json().items[0]).toMatchObject({ lastPrice: h1.at(-1).close, lastCandleAt: h1.at(-1).closeTime });

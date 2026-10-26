@@ -15,9 +15,10 @@ import { atr, confirmedAt, ema, findSwings, normalizedSlope, trailingHigherLows 
 /**
  * Versi metodologi pola (SA & PVA). Sinyal merujuk pattern_definitions lewat key + versi, jadi
  * setiap perubahan perilaku deteksi/skor WAJIB menaikkan versi. v2: earlyScore diukur dari awal
- * struktur (maxRunAtr 6); PVA menambah kondisi volumeGrowthBroad; batas warm-up 300 candle.
+ * struktur (maxRunAtr 6); PVA menambah kondisi volumeGrowthBroad; batas warm-up 300 candle. v3 (audit 2026-10-26):
+ * struktur higher-low patah bila low candle sesudah swing low menembusnya; SA mewajibkan EMA25 tidak turun.
  */
-export const PATTERN_VERSION = 2;
+export const PATTERN_VERSION = 3;
 export const EMA_FAST = 7;
 export const EMA_SLOW = 25;
 export const ATR_PERIOD = 14;

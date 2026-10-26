@@ -45,7 +45,7 @@
 //                    WIDE_SPREAD.
 //
 // ─── Tier ──────────────────────────────────────────────────────────────────────────────────────────
-// A  score ≥ tierA (75), tanpa veto, data lengkap, alignment ALIGNED/PARTIALLY_CONFIRMED, struktur searah
+// A  score ≥ tierA (75), tanpa veto, data lengkap, alignment ALIGNED/PARTIALLY_CONFIRMED (atau tanpa HTF, mis. 1h), struktur searah
 //    (structureScore·d > 0, atau bias searah bila structureScore null) dan flow searah (flowBias·d > 0,
 //    atau cvdSlope·d > 0 bila flowBias null).
 // B  score ≥ tierB (60), tanpa veto, data lengkap.
@@ -407,7 +407,10 @@ export function computeConfluence(input = {}, params = {}) {
   const structureOk = isNum(results.structure?.signal) && results.structure.signal > 0;
   const flowOk = isNum(results.orderFlow?.signal) && results.orderFlow.signal > 0;
   let tier = 'D';
-  if (!capped && score >= p.tierA && (alignment === 'ALIGNED' || alignment === 'PARTIALLY_CONFIRMED') && structureOk && flowOk) tier = 'A';
+  // Tanpa HTF di sistem (timeframe 1h: komponen htf dikeluarkan dari penyebut) syarat alignment tidak dapat dinilai,
+  // sehingga tidak boleh mengunci tier A (SHORT Scanner hanya 1h); 15m tanpa candle 1h tetap UNCONFIRMED (bukan null).
+  const htfOk = results.htf === null || alignment === 'ALIGNED' || alignment === 'PARTIALLY_CONFIRMED';
+  if (!capped && score >= p.tierA && htfOk && structureOk && flowOk) tier = 'A';
   else if (!capped && score >= p.tierB) tier = 'B';
   else if (score >= p.tierC) tier = 'C';
 

@@ -46,7 +46,7 @@ describe('Pattern #001 Silent Accumulation', () => {
   it('UNIT-PSA-001 bentuk output persis kontrak PatternResult §6', () => {
     const r = detectSilentAccumulation(silentAccumulationCandles(1));
     expect(Object.keys(r)).toEqual(RESULT_KEYS);
-    expect(r).toMatchObject({ pattern: 'SA', version: 2 });
+    expect(r).toMatchObject({ pattern: 'SA', version: 3 });
     expect(r.conditions.map((c) => c.id)).toEqual([...GATE_CONDITIONS, ...SA_CONDITIONS].map((c) => c.id));
     for (const c of r.conditions) {
       expect(Object.keys(c)).toEqual(['id', 'label', 'passed', 'value', 'threshold', 'weight']);
@@ -56,9 +56,9 @@ describe('Pattern #001 Silent Accumulation', () => {
     expect(JSON.parse(JSON.stringify(r))).toEqual(r);
   });
 
-  it('UNIT-PSA-002 bobot total 100 (wajib 75) dan patternScore dapat dijelaskan per kondisi', () => {
+  it('UNIT-PSA-002 bobot total 100 (wajib 85 sejak v3) dan patternScore dapat dijelaskan per kondisi', () => {
     expect(SA_CONDITIONS.reduce((a, c) => a + c.weight, 0)).toBe(100);
-    expect(SA_CONDITIONS.filter((c) => c.required).reduce((a, c) => a + c.weight, 0)).toBe(75);
+    expect(SA_CONDITIONS.filter((c) => c.required).reduce((a, c) => a + c.weight, 0)).toBe(85);
     for (const candles of [silentAccumulationCandles(2), progressiveVolumeCandles(2), downtrendCandles(2)]) {
       const r = detectSilentAccumulation(candles);
       const passed = r.conditions.filter((c) => c.passed).reduce((a, c) => a + c.weight, 0);

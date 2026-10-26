@@ -11,6 +11,7 @@ import { healthRoutes } from '../api/healthRoutes.js';
 import { marketRoutes } from '../api/marketRoutes.js';
 import { settingsRoutes } from '../api/settingsRoutes.js';
 import { signalRoutes } from '../api/signalRoutes.js';
+import { DIRECTION_TIMEFRAMES } from '../market/contracts.js';
 import { smartMoneyRoutes } from '../api/smartMoneyRoutes.js';
 import { systemRoutes } from '../api/systemRoutes.js';
 import { workerRoutes } from '../api/workerRoutes.js';
@@ -68,7 +69,7 @@ const CHART_VENDOR_DIR = resolveChartVendorDir();
  */
 export async function buildApp({
   config, db, clock = Date.now, hasherOptions, logger, workerSupervisor, workerScriptPath, workerRestartCooldownMs,
-  smartMoneyRegistry, smartMoneySync,
+  smartMoneyRegistry, smartMoneySync, directionTimeframes = DIRECTION_TIMEFRAMES,
 }) {
   const app = Fastify({
     logger: logger ?? {
@@ -186,7 +187,7 @@ export async function buildApp({
     workerSupervisor: supervisor, workerControl: config.workerControl,
   });
   await app.register(workerRoutes, { supervisor, enabled: config.workerControl, audit: repos.audit, clock });
-  await app.register(signalRoutes, { signals: repos.signals, candles: repos.candles });
+  await app.register(signalRoutes, { signals: repos.signals, candles: repos.candles, directionTimeframes });
   await app.register(marketRoutes, { candles: repos.candles });
   await app.register(smartMoneyRoutes, {
     repo: repos.smartMoney, signals: repos.signals, registry: smRegistry, config: config.smartMoney, clock, audit: repos.audit,

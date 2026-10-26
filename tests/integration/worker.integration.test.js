@@ -444,7 +444,10 @@ const problems = (entries) => entries.filter((e) => e.level === 'warn' || e.leve
 // Default: tidak ada rate limit / retry yang diharapkan; tidur berarti ada yang salah.
 const unexpectedSleep = async (ms) => { throw new Error(`klien REST menunggu ${ms} ms (tidak diharapkan)`); };
 
-async function createWorker({ timers, db, binance, settings, settleMs = 0, restSleep = unexpectedSleep, scannerOptions = {} }) {
+// Default pengaturan lama (5m + 15m + 1h) untuk tes mekanika; produksi memakai timeframe tetap per arah.
+const LEGACY_SETTINGS = Object.freeze({ ...DEFAULT_SCANNER_SETTINGS, timeframes: ['5m', '15m', '1h'] });
+
+async function createWorker({ timers, db, binance, settings = LEGACY_SETTINGS, settleMs = 0, restSleep = unexpectedSleep, scannerOptions = {}, directionTimeframes = null }) {
   const { logger, entries: logs } = createLogger();
   const hub = createFakeWebSocketHub();
   const alerts = [];
@@ -459,6 +462,9 @@ async function createWorker({ timers, db, binance, settings, settleMs = 0, restS
     db,
     logger,
     analysisParams: MECHANICS_PARAMS,
+    // Mekanika ingesti/replay diuji pada 5m dengan semua arah di semua timeframe; timeframe tetap produksi
+    // (LONG 15m, SHORT 1h) diuji INT-WRK-TF-*.
+    directionTimeframes,
     clock: timers.clock,
     fetch: binance.fetch,
     restSleep,
@@ -473,7 +479,7 @@ async function createWorker({ timers, db, binance, settings, settleMs = 0, restS
     }),
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
-    scannerOptions,
+    scannerOptions: { timeframes: null, ...scannerOptions },
     settleMs,
     pipelineSleep: (ms) => new Promise((resolve) => {
       settles.push({ at: timers.clock(), ms });
@@ -516,7 +522,7 @@ async function setup({ settings, configure, skip, delayOf, market = MARKET, sett
 }
 
 const withSettings = ({ symbols, refresh, liquidity } = {}) => ({
-  ...DEFAULT_SCANNER_SETTINGS,
+  ...LEGACY_SETTINGS,
   symbols: { ...DEFAULT_SCANNER_SETTINGS.symbols, ...symbols },
   refresh: { ...DEFAULT_SCANNER_SETTINGS.refresh, ...refresh },
   liquidity: { ...DEFAULT_SCANNER_SETTINGS.liquidity, ...liquidity },
@@ -1519,7 +1525,9 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
     // Dengan histori cukup, seri 15m (konteks 1h) juga dianalisis dan membuka sinyalnya sendiri.
     const reference15 = referenceReplay(SA, LIQ_SA, { market: LONG_MARKET, timeframe: '15m', from: 16, to: 24 });
     const expected15 = expectedHistory(SA, reference15, '15m');
-    expect(expected15.length).toBeGreaterThan(0);
+    // Sejak struktur dianggap patah bila wick 2 candle terakhir menembus swing low (audit 2026-10-26), jendela 15m
+    // sintetis ini tidak lagi membuka sinyal; yang dijaga: seri 15m benar-benar dievaluasi & identik dengan replay.
+    expect(referenceSaves(reference15).length + reference15.length).toBeGreaterThan(0);
 
     const history = withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }));
     expect(history.filter((s) => s.timeframe === '5m')).toEqual(expected);
