@@ -15,17 +15,19 @@
 // BUYING, TRENDING_UP ↔ TRENDING_DOWN, bias BULLISH ↔ BEARISH. Akibatnya input SHORT yang merupakan
 // cermin input LONG menghasilkan skor & tier yang identik (diuji).
 //
+//   Bobot v1 mengikuti docs/11-riset-akurasi-scanner.md: konteks HTF & struktur (bukti time-series momentum)
+//   lebih berat; order flow, rezim, dan Wyckoff (bukti empiris lemah / taker agresif cenderung berbalik) lebih ringan.
 // ─── Komponen (nilai 0..1, bobot default total 100) ────────────────────────────────────────────────
-// pattern   20  0.7·patternScore/100 + 0.3·earlyScore/100 (view).
-// htf       15  ALIGNED 1, PARTIALLY_CONFIRMED 0.5, UNCONFIRMED 0, COUNTERTREND 0 (+ veto).
-// structure 15  rata-rata berbobot: bias searah (0.4; NEUTRAL 0.3, berlawanan 0), lastEvent BOS/CHOCH
+// pattern   25  0.7·patternScore/100 + 0.3·earlyScore/100 (view).
+// htf       20  ALIGNED 1, PARTIALLY_CONFIRMED 0.5, UNCONFIRMED 0, COUNTERTREND 0 (+ veto).
+// structure 20  rata-rata berbobot: bias searah (0.4; NEUTRAL 0.3, berlawanan 0), lastEvent BOS/CHOCH
 //               searah (0.3; segar ≤ freshBars = 1, lebih lama = 0.5), max(0, structureScore·d) (0.3).
-// orderFlow 20  ramp(flowBias·d, 0..0.5) (0.5), ramp(cvdSlope·d, 0..0.2) (0.3),
+// orderFlow 15  ramp(flowBias·d, 0..0.5) (0.5), ramp(cvdSlope·d, 0..0.2) (0.3),
 //               ramp(takerBuyRatio searah, 0.5..0.6) (0.2); divergensi searah = bonus +0.15 (maks 1),
 //               divergensi berlawanan = konflik + veto.
-// regime    15  label (0.7): TRENDING searah 1, SQUEEZE 0.8, RANGING 0.5, CHOPPY 0.1, TRENDING berlawanan 0;
+// regime    10  label (0.7): TRENDING searah 1, SQUEEZE 0.8, RANGING 0.5, CHOPPY 0.1, TRENDING berlawanan 0;
 //               ramp(efficiencyRatio, 0.2..0.6) (0.3), dinolkan bila tren berlawanan.
-// liquidity 15  peristiwa (0.5) = maks(sapuan searah yang di-reclaim & segar, climax searah segar);
+// liquidity 10  peristiwa (0.5) = maks(sapuan searah yang di-reclaim & segar, climax searah segar);
 //               ramp(absorption·d, 0..0.5) (0.25); posisi dalam range (0.25) = clamp((0.6 − p')/0.4),
 //               p' = p untuk LONG, 1 − p untuk SHORT (dekat dasar range = baik untuk LONG).
 // Sub-bagian bernilai null dikeluarkan dari rata-rata komponen. Komponen dengan input null dikeluarkan
@@ -56,7 +58,7 @@ export const TIERS = Object.freeze(['A', 'B', 'C', 'D']);
 
 /** Parameter default (HIPOTESIS AWAL — wajib dikalibrasi backtest). */
 export const DEFAULT_CONFLUENCE_PARAMS = Object.freeze({
-  weights: Object.freeze({ pattern: 20, htf: 15, structure: 15, orderFlow: 20, regime: 15, liquidity: 15 }),
+  weights: Object.freeze({ pattern: 25, htf: 20, structure: 20, orderFlow: 15, regime: 10, liquidity: 10 }),
   tierA: 75,
   tierB: 60,
   tierC: 45,

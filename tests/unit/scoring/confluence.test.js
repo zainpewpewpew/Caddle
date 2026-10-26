@@ -165,12 +165,12 @@ describe('konfluensi v3', () => {
     expect(partial.conflicts.some((t) => /tidak lengkap/.test(t))).toBe(false);
 
     const y = idealLong();
-    y.orderFlow = null; y.regime = null; y.liquidity = null; // 50% bobot hilang
+    y.orderFlow = null; y.regime = null; y.liquidity = null; y.structure = null; // 55% bobot hilang
     const res = computeConfluence(y);
     expect(res.score).toBeGreaterThan(75); // komponen yang tersisa kuat
     expect(sumContrib(res)).toBeCloseTo(res.score, 9);
     expect(meetsTier(res.tier, 'B')).toBe(false);
-    expect(res.conflicts.some((t) => /Data fitur tidak lengkap — 50% bobot/.test(t))).toBe(true);
+    expect(res.conflicts.some((t) => /Data fitur tidak lengkap — 55% bobot/.test(t))).toBe(true);
 
     const empty = computeConfluence({ direction: 'SHORT' });
     expect(empty.score).toBe(0);
@@ -219,7 +219,7 @@ describe('konfluensi v3', () => {
     })).toThrow(RangeError);
     expect(() => computeConfluence(idealLong(), { bogus: true })).toThrow(TypeError);
     const p = resolveConfluenceParams({ weights: { pattern: 40 }, tierA: 80 });
-    expect(p.weights).toMatchObject({ pattern: 40, htf: 15 });
+    expect(p.weights).toMatchObject({ pattern: 40, htf: 20 });
     expect(p.tierA).toBe(80);
     expect(Object.isFrozen(DEFAULT_CONFLUENCE_PARAMS)).toBe(true);
     expect(Object.values(DEFAULT_CONFLUENCE_PARAMS.weights).reduce((a, v) => a + v, 0)).toBe(100);
