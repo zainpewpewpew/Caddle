@@ -1,4 +1,4 @@
-// LONG Scanner — Reversal Radar: deteksi dini potensi reversal bullish (docs/19 §8).
+// LONG Scanner — Reversal Radar: pelabel struktur proses dasar bullish — deskriptif, bukan prediksi (docs/19 §0/§8, docs/21 §7).
 // Data = GET /api/reversal/candidates (kandidat terbuka + evaluasi candle berjalan/provisional) dari mesin
 // backend/reversal (terpisah dari SA/PVA). Tiga panel bertumpuk urutan tetap — Early Formation, Developing Reversal,
 // Confirmed Breakout — dua pertama di atas agar tidak tertutup koin yang sudah pump. Klik baris → panel detail di
@@ -23,7 +23,7 @@ import { createSymbolChartPanel, isValidSymbol, normalizeTimeframe } from './sym
 import { workerControlBar } from './workerControl.js';
 import { isWorkerActive } from './workerFormat.js';
 
-const SUBTITLE = 'Koin yang chart-nya baru mulai membentuk potensi reversal bullish: bukti, yang masih perlu konfirmasi, dan kapan setup batal. Skor = kecocokan aturan, bukan probabilitas; bukan perintah transaksi.';
+const SUBTITLE = 'Pelabel struktur proses dasar pada 5m/15m/1h: di tahap mana chart berada (Early Formation → Developing Reversal → Confirmed Breakout), bukti yang terpenuhi, level kunci, dan kapan setup batal. Deskriptif, bukan prediksi — lihat status validasi di bawah. Skor = kecocokan aturan, bukan probabilitas; bukan perintah transaksi.';
 /** Penyegaran latar (hanya saat scanner benar-benar berjalan & halaman terlihat), pola screener.js. */
 const REFRESH_MS = 30_000;
 /** Teks relatif kolom "Update" dihitung ulang tiap interval ini. */
@@ -162,7 +162,7 @@ function emptyFor(stage, filters) {
     ? 'Longgarkan filter (timeframe, tahap, status, likuiditas, extended, provisional) untuk melihat kandidat lain.'
     : f.sensitivity === 'HIGH'
       ? 'Kandidat muncul setelah worker mengingesti candle tertutup 5m/15m/1h dan mesin Reversal Radar menemukan bukti awal. Tidak ada data contoh yang ditampilkan.'
-      : `Sensitivitas ${f.sensitivity === 'LOW' ? 'Rendah' : 'Sedang'} hanya menampilkan skor ≥ ${sens.minScore} dengan ≥ ${sens.minEvidence} bukti; pilih Tinggi untuk melihat kandidat lebih awal (kandidat Early Formation belum terbukti lebih baik dari kebetulan — docs/21 §6.9). Tidak ada data contoh yang ditampilkan.`;
+      : `Sensitivitas ${f.sensitivity === 'LOW' ? 'Rendah' : 'Sedang'} hanya menampilkan skor ≥ ${sens.minScore} dengan ≥ ${sens.minEvidence} bukti; pilih Tinggi untuk melihat kandidat dengan bukti lebih sedikit, termasuk Early Formation (belum terbukti lebih baik dari kebetulan — docs/21 §6.9). Tidak ada data contoh yang ditampilkan.`;
   return emptyState({ iconName: 'screener', title: `Belum ada kandidat ${STAGE_LABELS[stage].title} pada filter ini`, text });
 }
 
