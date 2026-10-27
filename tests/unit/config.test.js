@@ -12,6 +12,12 @@ describe('konfigurasi environment', () => {
     expect(c.databasePath).toBe('./data/alphalens.db');
   });
 
+  it('UNIT-CFG-010 API_RATE_LIMIT_MAX default 300 per menit per IP dan dapat dinaikkan lewat env', () => {
+    expect(loadConfig({}).api.rateLimitMax).toBe(300);
+    expect(loadConfig({ API_RATE_LIMIT_MAX: '3000' }).api.rateLimitMax).toBe(3000);
+    expect(() => loadConfig({ API_RATE_LIMIT_MAX: '100001' })).toThrow(/API_RATE_LIMIT_MAX/);
+  });
+
   it('UNIT-CFG-002 COOKIE_SECURE=auto menjadi true untuk origin https', () => {
     expect(loadConfig({ APP_ORIGIN: 'https://radar.local' }).cookieSecure).toBe(true);
   });
@@ -36,7 +42,7 @@ describe('konfigurasi environment', () => {
     ['PORT', 'abc'], ['PORT', '0'], ['PORT', '70000'], ['NODE_ENV', 'staging'], ['LOG_LEVEL', 'verbose'],
     ['TRUST_PROXY', 'yes'], ['TRUST_PROXY', 'true'], ['TRUST_PROXY', '1'], ['TRUST_PROXY', '0'],
     ['TRUST_PROXY', '10.0.0.0/33'], ['TRUST_PROXY', 'proxy.local'], ['TRUST_PROXY', '127.0.0.1,'], ['APP_ORIGIN', 'notaurl'], ['APP_ORIGIN', 'ftp://x.local'], ['APP_ORIGIN', 'https://x.local/path'],
-    ['APP_ORIGIN', 'https://user:pw@x.local'], ['SESSION_IDLE_MINUTES', '-5'], ['MAX_USERS', '0'],
+    ['APP_ORIGIN', 'https://user:pw@x.local'], ['SESSION_IDLE_MINUTES', '-5'], ['MAX_USERS', '0'], ['API_RATE_LIMIT_MAX', '0'], ['API_RATE_LIMIT_MAX', '300.5'],
   ])('NEG-CFG-005 nilai tidak valid %s=%s ditolak', (name, value) => {
     expect(() => loadConfig({ [name]: value })).toThrow(ConfigError);
   });

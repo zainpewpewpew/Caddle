@@ -376,7 +376,7 @@ describe('agregat data nyata multi-peristiwa', () => {
     expect(t('1h').T_NYATA_1).toMatchObject({ status: 'TIDAK_TERPENUHI', value: 0.25, n: 40 });
     expect(t('1h').T_NYATA_2).toMatchObject({ status: 'TIDAK_TERPENUHI', value: -3, n: 40 });
     expect(t('1h').T_NYATA_3).toMatchObject({ status: 'TIDAK_TERPENUHI', value: 0.05, n: 40 });
-    expect(Object.values(t('5m')).map((x) => x.status)).toEqual(Array(6).fill('TANPA_DATA'));
+    expect(Object.values(t('5m')).map((x) => x.status)).toEqual(Array(8).fill('TANPA_DATA')); // T-NYATA-1, 3 tahap, 2, 3, 4, 5
     // Basis empiris kosong → T-NYATA-1 tanpa data meski SUCCESS ada.
     const noBase = aggregateReplay({ series: [real('AAAUSDT', '15m', 40, { success: 32, early: 10, lead: () => 5, baseline: null })], meta: { source: 'binance' } });
     expect(noBase.targets.find((x) => x.id === 'T_NYATA_1')).toMatchObject({ status: 'TANPA_DATA', n: 40 });
@@ -450,5 +450,92 @@ describe('agregat data nyata multi-peristiwa', () => {
     expect(synth).toContain(`| 15m | Reversal sukses | EARLY_FORMATION | 50–59 | 1 | 1 | ${fmtRate(rate(1, 1))} | — (n = 0) | — | +2,00 ATR, n = 1 |`);
     expect(synth).toContain(`| 15m | Reversal sukses | EARLY_FORMATION | 70–79 | 1 | 1 | ${fmtRate(rate(0, 1))} | — (n = 0) | — | — (n = 0) |`); // FAIL tanpa s → tidak masuk ekspektasi
     expect(synth).not.toMatch(/NaN|undefined/);
+  });
+
+  // Seperti `real`, tetapi skor/bukti lolos LOW (skor 70, bukti 5); tahap awal DEVELOPING_REVERSAL untuk i < developing (sisanya EARLY_FORMATION),
+  // SUCCESS untuk i < success (sisanya FAIL); jarak stop s, basis per kandidat & targetAtr seri dapat diatur (menentukan basis & ekspektasi ATR).
+  const realLow = (symbol, timeframe, n, { success, developing = n, stop = 1.5, baseline = b(1, 3), targetAtr = 2 }) => series({
+    symbol, timeframe, scenario: undefined, seed: undefined, targetAtr,
+    candidates: Array.from({ length: n }, (_, i) => cand({
+      firstDetectedIndex: 200 + 10 * i, firstStage: i < developing ? 'DEVELOPING_REVERSAL' : 'EARLY_FORMATION', firstScore: 70, firstEvidenceCount: 5,
+      outcome: i < success ? 'SUCCESS' : 'FAIL', stopDistanceAtr: stop, baselineRandomWalk: stop / (2 + stop), baselineShuffled: baseline, leadVsOldNearest: 5,
+    })),
+  });
+
+  it('UNIT-RR-RR-005 target praregistrasi T-NYATA-4 (subset DEVELOPING pada LOW) & T-NYATA-5 (grup LOW): tiga syarat, toleransi float, tanpa data, render', () => {
+    // Aturan: ditambahkan setelah T-NYATA-3, keduanya pada LOW; T-NYATA-4 bertahap DEVELOPING_REVERSAL, T-NYATA-5 level grup (tanpa tahap).
+    expect(REAL_DATA_TARGET_RULES.map((x) => x.id)).toEqual(['T_NYATA_1', 'T_NYATA_1_STAGE', 'T_NYATA_1_STAGE', 'T_NYATA_1_STAGE', 'T_NYATA_2', 'T_NYATA_3', 'T_NYATA_4', 'T_NYATA_5']);
+    expect(REAL_DATA_TARGET_RULES.find((x) => x.id === 'T_NYATA_4')).toMatchObject({ stage: 'DEVELOPING_REVERSAL', scenario: 'dataNyata', sensitivity: 'LOW' });
+    expect(REAL_DATA_TARGET_RULES.find((x) => x.id === 'T_NYATA_5')).toMatchObject({ scenario: 'dataNyata', sensitivity: 'LOW' });
+    expect(REAL_DATA_TARGET_RULES.find((x) => x.id === 'T_NYATA_5').stage).toBeUndefined();
+    const t45 = (s, tf = '15m') => Object.fromEntries(aggregateReplay({ series: [s], meta: { source: 'binance' } }).targets
+      .filter((x) => x.timeframe === tf && (x.id === 'T_NYATA_4' || x.id === 'T_NYATA_5')).map((x) => [x.id, x]));
+    // TERPENUHI: 32/40 SUCCESS (CI bawah 65,2 % > basis 33,3 %), selisih +46,7 poin, ekspektasi (32 × 2 − 8 × 1,5) / 40 = +1,30 ATR; subset = grup (semua DEVELOPING).
+    const okRun = t45(realLow('AAAUSDT', '15m', 40, { success: 32 }));
+    expect(okRun.T_NYATA_4).toMatchObject({ status: 'TERPENUHI', value: 0.8, n: 40, stage: 'DEVELOPING_REVERSAL', smallSample: false, detail: { stage: 'DEVELOPING_REVERSAL', ci: wilsonInterval(32, 40), baseline: 1 / 3, baselineN: 120 } });
+    expect(okRun.T_NYATA_4.detail.diff).toBeCloseTo(0.8 - 1 / 3, 9);
+    expect(okRun.T_NYATA_4.detail.expectancyAtr).toBeCloseTo(1.3, 9);
+    expect(okRun.T_NYATA_4.text).toBe('T-NYATA-4 luar sampel (sel keputusan 5m, TF lain kontrol): SUCCESS DEVELOPING_REVERSAL pada LOW melampaui basis empiris subset (CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0)');
+    expect(okRun.T_NYATA_5).toMatchObject({ status: 'TERPENUHI', value: 0.8, n: 40, stage: null, smallSample: false, detail: { ci: wilsonInterval(32, 40), baseline: 1 / 3, baselineN: 120 } });
+    expect(okRun.T_NYATA_5.detail).not.toHaveProperty('stage');
+    expect(okRun.T_NYATA_5.detail.diff).toBeCloseTo(0.8 - 1 / 3, 9);
+    expect(okRun.T_NYATA_5.detail.expectancyAtr).toBeCloseTo(1.3, 9);
+    expect(okRun.T_NYATA_5.text).toBe('T-NYATA-5 luar sampel (sel keputusan 1h, TF lain kontrol): SUCCESS pada LOW melampaui basis empiris grup (CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0)');
+    // TIDAK terpenuhi hanya karena selisih: 200/200 SUCCESS → CI bawah 98,1 % > basis 97,5 %, tetapi selisih +2,5 poin < 3; ekspektasi +2 ATR.
+    const smallDiff = t45(realLow('AAAUSDT', '15m', 200, { success: 200, baseline: b(39, 40) }));
+    for (const id of ['T_NYATA_4', 'T_NYATA_5']) {
+      expect(smallDiff[id], id).toMatchObject({ status: 'TIDAK_TERPENUHI', value: 1, n: 200, detail: { baseline: 0.975, baselineN: 8000, expectancyAtr: 2 } });
+      expect(smallDiff[id].detail.ci[0], id).toBeGreaterThan(0.975);
+      expect(smallDiff[id].detail.diff, id).toBeCloseTo(0.025, 9);
+    }
+    // TIDAK terpenuhi hanya karena ekspektasi: jarak stop 10 ATR → (32 × 2 − 8 × 10) / 40 = −0,40 ATR walau CI & selisih lolos; ekspektasi tepat 0 juga gagal (> 0 ketat).
+    const negExp = t45(realLow('AAAUSDT', '15m', 40, { success: 32, stop: 10 }));
+    for (const id of ['T_NYATA_4', 'T_NYATA_5']) {
+      expect(negExp[id], id).toMatchObject({ status: 'TIDAK_TERPENUHI', value: 0.8, n: 40, detail: { baseline: 1 / 3 } });
+      expect(negExp[id].detail.ci[0], id).toBeGreaterThan(1 / 3);
+      expect(negExp[id].detail.expectancyAtr, id).toBeCloseTo(-0.4, 9);
+    }
+    const zeroExp = t45(realLow('AAAUSDT', '15m', 40, { success: 40, targetAtr: 0 }));
+    expect(zeroExp.T_NYATA_4).toMatchObject({ status: 'TIDAK_TERPENUHI', value: 1, n: 40, detail: { expectancyAtr: 0 } });
+    expect(zeroExp.T_NYATA_5).toMatchObject({ status: 'TIDAK_TERPENUHI', value: 1, n: 40, detail: { expectancyAtr: 0 } });
+    // Toleransi float pada "≥ 3 poin": 1400/2000 − 0,67 = 0,029999999999999916 (< 0,03 dalam float) tetap TERPENUHI; CI bawah ≈ 68,0 % > 67 %.
+    const edge = checkTargets([{ timeframe: '15m', scenario: 'dataNyata', ...summarizeCandidates([realLow('AAAUSDT', '15m', 2000, { success: 1400, baseline: b(67, 100) })], 'LOW') }], ['15m']);
+    for (const id of ['T_NYATA_4', 'T_NYATA_5']) {
+      const x = edge.find((y) => y.id === id);
+      expect(x, id).toMatchObject({ status: 'TERPENUHI', value: 0.7, n: 2000, detail: { baseline: 0.67, baselineN: 200000 } });
+      expect(x.detail.diff, id).toBeLessThan(0.03);
+      expect(x.detail.diff, id).toBeCloseTo(0.03, 12);
+    }
+    // Tanpa data, tidak pernah melempar: (a) grup LOW tanpa kandidat DEVELOPING → T-NYATA-4 tanpa data, T-NYATA-5 tetap dinilai;
+    const noDev = t45(realLow('AAAUSDT', '15m', 40, { success: 32, developing: 0 }));
+    expect(noDev.T_NYATA_4).toMatchObject({ status: 'TANPA_DATA', value: null, n: 0, smallSample: false, detail: { stage: 'DEVELOPING_REVERSAL', ci: null, baseline: null, baselineN: 0, diff: null, expectancyAtr: null } });
+    expect(noDev.T_NYATA_5).toMatchObject({ status: 'TERPENUHI', value: 0.8, n: 40 });
+    // (b) tanpa basis empiris → keduanya tanpa data meski SUCCESS ada (n tetap 40);
+    const noBase = t45(realLow('AAAUSDT', '15m', 40, { success: 32, baseline: null }));
+    expect(noBase.T_NYATA_4).toMatchObject({ status: 'TANPA_DATA', value: 0.8, n: 40, detail: { baseline: null, baselineN: 0, diff: null } });
+    expect(noBase.T_NYATA_5).toMatchObject({ status: 'TANPA_DATA', value: 0.8, n: 40, detail: { baseline: null, baselineN: 0, diff: null } });
+    // (c) tanpa ekspektasi (semua SUCCESS tanpa targetAtr seri → tidak masuk rata-rata) → tanpa data walau CI & selisih ada;
+    const noExp = t45(realLow('AAAUSDT', '15m', 40, { success: 40, targetAtr: null }));
+    expect(noExp.T_NYATA_4).toMatchObject({ status: 'TANPA_DATA', value: 1, n: 40, detail: { baselineN: 120, expectancyAtr: null } });
+    expect(noExp.T_NYATA_5).toMatchObject({ status: 'TANPA_DATA', value: 1, n: 40, detail: { baselineN: 120, expectancyAtr: null } });
+    // (d) kandidat hanya lolos MEDIUM (skor 50–54) → grup LOW kosong: T-NYATA-4/5 tanpa data sementara T-NYATA-1 (MEDIUM) terpenuhi.
+    const mediumOnly = aggregateReplay({ series: [real('AAAUSDT', '15m', 40, { success: 32, early: 10, lead: () => 5 })], meta: { source: 'binance' } });
+    expect(mediumOnly.targets.find((x) => x.id === 'T_NYATA_1')).toMatchObject({ status: 'TERPENUHI', n: 40 });
+    expect(mediumOnly.targets.filter((x) => x.id === 'T_NYATA_4' || x.id === 'T_NYATA_5').map((x) => [x.status, x.n])).toEqual([['TANPA_DATA', 0], ['TANPA_DATA', 0]]);
+    // Render tabel §10 & ringkasan stdout: nilai memuat CI, basis (subset/grup), selisih poin & ekspektasi ATR; TF tanpa kandidat → tanpa data.
+    const r = aggregateReplay({
+      series: [realLow('AAAUSDT', '15m', 40, { success: 32 }), realLow('AAAUSDT', '1h', 40, { success: 32, stop: 10 }), real('AAAUSDT', '5m', 0, { success: 0, early: 0, lead: () => null })],
+      meta: { source: 'binance', generatedAt: 0 },
+    });
+    const md = renderReplayReport(r);
+    expect(md).not.toMatch(/NaN|undefined/);
+    expect(md).toMatch(/\| 15m \| T-NYATA-4 luar sampel \(sel keputusan 5m, TF lain kontrol\): SUCCESS DEVELOPING_REVERSAL pada LOW melampaui basis empiris subset \(CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0\) \| TERPENUHI \| SUCCESS 80,0% \(CI [\d,]+–[\d,]+ %\) vs basis empiris subset 33,3% \(selisih \+46,7 poin, ekspektasi \+1,30 ATR\), n = 40 \| — \|/);
+    expect(md).toMatch(/\| 15m \| T-NYATA-5 luar sampel \(sel keputusan 1h, TF lain kontrol\): SUCCESS pada LOW melampaui basis empiris grup \(CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0\) \| TERPENUHI \| SUCCESS 80,0% \(CI [\d,]+–[\d,]+ %\) vs basis empiris grup 33,3% \(selisih \+46,7 poin, ekspektasi \+1,30 ATR\), n = 40 \| — \|/);
+    expect(md).toMatch(/\| 1h \| T-NYATA-4 luar sampel [^|]+ \| TIDAK terpenuhi \| SUCCESS 80,0% \(CI [\d,]+–[\d,]+ %\) vs basis empiris subset 33,3% \(selisih \+46,7 poin, ekspektasi −0,40 ATR\), n = 40 \| — \|/);
+    expect(md).toContain('| 5m | T-NYATA-4 luar sampel (sel keputusan 5m, TF lain kontrol): SUCCESS DEVELOPING_REVERSAL pada LOW melampaui basis empiris subset (CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0) | tanpa data | — | — |');
+    expect(md).toContain('| 5m | T-NYATA-5 luar sampel (sel keputusan 1h, TF lain kontrol): SUCCESS pada LOW melampaui basis empiris grup (CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0) | tanpa data | — | — |');
+    const summary = renderReplaySummary(r);
+    expect(summary).not.toMatch(/NaN|undefined/);
+    expect(summary).toMatch(/\[§10\] 1h T-NYATA-5 luar sampel \(sel keputusan 1h, TF lain kontrol\): SUCCESS pada LOW melampaui basis empiris grup \(CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0\): TIDAK terpenuhi \(SUCCESS 80,0% \(CI [\d,]+–[\d,]+ %\) vs basis empiris grup 33,3% \(selisih \+46,7 poin, ekspektasi −0,40 ATR\), n = 40\)/);
   });
 });

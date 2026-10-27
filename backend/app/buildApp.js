@@ -138,7 +138,8 @@ export async function buildApp({
   await app.register(cookie);
   await app.register(rateLimit, {
     global: true,
-    max: 300,
+    // API_RATE_LIMIT_MAX (default 300/menit/IP); config lama tanpa field api tetap memakai 300.
+    max: config.api?.rateLimitMax ?? 300,
     timeWindow: 60_000,
     // Aset statis (CSS/JS/ikon) tidak dihitung; batas ini melindungi endpoint API.
     // Keputusan dari route yang cocok, bukan URL mentah (path ter-encode / absolute-form).
