@@ -974,10 +974,11 @@ nyata** (§6.1–§6.9), dalam urutan dari yang paling pasti.
   (C) biarkan seperti sekarang (catatan validasi saja), tanpa uji lagi;
   (D) cabut Reversal Radar dari LONG Scanner dan kembalikan tampilan SA/PVA lama (mesin, API, dan replay tetap ada untuk
   riset).
+  **Dipilih pengguna 2026-10-27: (A).** Teks UI (subjudul, teks bantuan filter, komentar modul) dan docs/19 §0/§8 diubah ke
+  posisi pelabel struktur pada PR tindak lanjut; run 4 menunggu pengguna menjalankan perintah §6.10.
 - **Urutan pekerjaan berikutnya**:
-  1. Keputusan produk (A–D) oleh pengguna.
-  2. Bila A: run 4 di Mac dengan perintah §6.10 → isi tabel §6.10 → terapkan konsekuensi yang sudah ditetapkan (label UI
-     untuk sel yang lulus, atau penutupan sel). Bila A/B: ubah teks UI (subjudul, komentar modul, docs/19 §0/§8) ke posisi
-     pelabel struktur. Bila D: PR terpisah yang mengembalikan tampilan LONG lama tanpa menghapus `backend/reversal`.
+  1. Keputusan produk: **A dipilih** (2026-10-27); teks UI/docs sudah diubah ke posisi pelabel struktur.
+  2. Run 4 di Mac dengan perintah §6.10 → isi tabel §6.10 → terapkan konsekuensi yang sudah ditetapkan (label UI untuk
+     sel yang lulus, atau penutupan sel). Tidak ada uji lain setelah itu.
   3. Tetap terbuka dari §3/§5: fixture `brokenData` ≥ 120 candle rusak; fixture dasar mangkuk / lantai naik / volume
      mengering; pembanding lama mode `full`.

@@ -8,7 +8,7 @@ import { designSystemView } from './views/designSystem.js';
 import { healthView } from './views/health.js';
 import { labView } from './views/lab.js';
 import { overviewView } from './views/overview.js';
-// LONG Scanner = Reversal Radar (deteksi dini reversal bullish) + panel sekunder tabel SA/PVA 15m lama (reversalRadar.js).
+// LONG Scanner = Reversal Radar (pelabel struktur proses dasar bullish, bukan prediksi) + panel sekunder tabel SA/PVA 15m lama (reversalRadar.js).
 import { screenerView } from './views/reversalRadar.js';
 import { shortScannerView } from './views/screener.js';
 import { settingsView } from './views/settings.js';

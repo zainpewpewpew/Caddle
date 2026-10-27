@@ -1,4 +1,4 @@
-// Label Indonesia & helper murni untuk "Reversal Radar" (LONG Scanner): deteksi dini potensi reversal bullish.
+// Label Indonesia & helper murni untuk "Reversal Radar" (LONG Scanner): pelabel struktur proses dasar bullish (deskriptif, bukan prediksi).
 // Kontrak: docs/19-kontrak-reversal-radar.md §2 (konstanta), §5 (bentuk baris API `toView`), §8 (UI).
 // Bagian atas file ini bebas DOM (dapat diuji di Node); helper yang membuat elemen ada di bagian "DOM".
 // Skor di sini = jumlah poin aturan (0–100) yang dapat dijelaskan — BUKAN probabilitas, BUKAN perintah transaksi.
