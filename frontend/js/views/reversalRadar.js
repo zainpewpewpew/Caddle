@@ -32,8 +32,8 @@ const CLOCK_TICK_MS = 15_000;
 const LEGACY_OPEN_KEY = 'lr.reversal.legacyOpen';
 const STAGE_TEST_IDS = Object.freeze({ EARLY_FORMATION: 'reversal-early', DEVELOPING_REVERSAL: 'reversal-developing', CONFIRMED_BREAKOUT: 'reversal-confirmed' });
 const NOTE = 'Skor = jumlah poin aturan yang terpenuhi (0–100), bukan probabilitas; tidak ada perintah transaksi. Riset saja.';
-/** Status validasi data nyata (docs/21 §6.6–§6.7, run 1–2 Jun–Okt 2025): ditampilkan apa adanya di kepala panel. */
-const VALIDATION_NOTE = 'Status validasi (data Binance Jun–Okt 2025, 16 simbol, docs/21 §6.6): rasio keberhasilan kandidat setara entri acak pada penghalang yang sama dan kandidat tidak lebih awal dari scanner SA/PVA lama — belum ada bukti keunggulan. Kandidat Early Formation belum terbukti lebih baik dari kebetulan.';
+/** Status validasi data nyata (docs/21 §6.6–§6.9, run 1–3 Jun–Okt 2025): ditampilkan apa adanya di kepala panel. */
+const VALIDATION_NOTE = 'Status validasi (data Binance Jun–Okt 2025, 16–17 simbol, tiga run replay, docs/21 §6.6–§6.9): rasio keberhasilan kandidat setara entri acak pada penghalang yang sama — juga per tahap, per status terlambat, dan per bin skor dengan basis per subset — dan kandidat tidak lebih awal dari scanner SA/PVA lama; belum ada bukti keunggulan. Tidak ada tahap atau ambang skor yang terbukti lebih baik dari kebetulan, termasuk Early Formation.';
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 /** Kunci teks baris tabel Reversal Radar: sel Pair (0) + sel TF (1). */
@@ -162,7 +162,7 @@ function emptyFor(stage, filters) {
     ? 'Longgarkan filter (timeframe, tahap, status, likuiditas, extended, provisional) untuk melihat kandidat lain.'
     : f.sensitivity === 'HIGH'
       ? 'Kandidat muncul setelah worker mengingesti candle tertutup 5m/15m/1h dan mesin Reversal Radar menemukan bukti awal. Tidak ada data contoh yang ditampilkan.'
-      : `Sensitivitas ${f.sensitivity === 'LOW' ? 'Rendah' : 'Sedang'} hanya menampilkan skor ≥ ${sens.minScore} dengan ≥ ${sens.minEvidence} bukti; pilih Tinggi untuk melihat kandidat lebih awal (kandidat Early Formation belum terbukti lebih baik dari kebetulan — docs/21 §6.7). Tidak ada data contoh yang ditampilkan.`;
+      : `Sensitivitas ${f.sensitivity === 'LOW' ? 'Rendah' : 'Sedang'} hanya menampilkan skor ≥ ${sens.minScore} dengan ≥ ${sens.minEvidence} bukti; pilih Tinggi untuk melihat kandidat lebih awal (kandidat Early Formation belum terbukti lebih baik dari kebetulan — docs/21 §6.9). Tidak ada data contoh yang ditampilkan.`;
   return emptyState({ iconName: 'screener', title: `Belum ada kandidat ${STAGE_LABELS[stage].title} pada filter ini`, text });
 }
 
@@ -544,7 +544,7 @@ export async function reversalRadarView(ctx) {
   const titleWrap = h('div', { class: 'rr-title' });
   heading.before(titleWrap);
   titleWrap.append(heading, h('span', { class: 'rr-title__sub', 'data-testid': 'reversal-title' }, 'Reversal Radar'));
-  // Catatan status validasi data nyata (docs/21 §6.6) tepat di bawah subjudul — selalu tampil, statis.
+  // Catatan status validasi data nyata (docs/21 §6.6–§6.9) tepat di bawah subjudul — selalu tampil, statis.
   const validation = h('p', { class: 'rr-validation', 'data-testid': 'reversal-validation' }, VALIDATION_NOTE);
   (el.querySelector('.page__subtitle') ?? titleWrap).after(validation);
   el.classList.add('page--scanner', 'page--reversal');

@@ -5,7 +5,7 @@
 // perbandingan lama vs baru, dan pemeriksaan target docs/19 §10 (definisi keberhasilan ditetapkan SEBELUM evaluasi).
 // Untuk data nyata multi-peristiwa: hasil per tahap awal & per status terlambat, distribusi skor saat deteksi per tahap,
 // jarak stop + dua basis pembanding tanpa keterampilan (random walk & empiris), breakout gagal sebelum target, lead per
-// peristiwa (sinyal lama terdekat ±horizon), dan target T-NYATA-1..3 (hanya bila ada grup dataNyata).
+// peristiwa (sinyal lama terdekat ±horizon), dan target T-NYATA-1..5 (hanya bila ada grup dataNyata).
 // Data sintetis ≠ pasar nyata; laporan tidak pernah menyatakan probabilitas keberhasilan.
 import { wilsonInterval } from '../backtest/metrics.js';
 import { fmtNumber, fmtPct } from '../backtest/report.js';
@@ -42,6 +42,10 @@ export const REAL_DATA_TARGET_RULES = Object.freeze([
   })),
   { id: 'T_NYATA_2', scenario: REAL_DATA_SCENARIO, sensitivity: 'MEDIUM', text: 'T-NYATA-2 dataNyata: median lead per peristiwa (padanan ±horizon) > 0 pada MEDIUM' },
   { id: 'T_NYATA_3', scenario: REAL_DATA_SCENARIO, sensitivity: 'MEDIUM', text: 'T-NYATA-3 dataNyata: kandidat pertama EARLY_FORMATION ≥ 10 % pada MEDIUM' },
+  // T-NYATA-4/5 dipraregistrasi 2026-10-27 SEBELUM run 4 (uji luar sampel Jun–Okt 2026; docs/19 §10, docs/21 §6.10). Sel keputusan:
+  // 5m untuk T-NYATA-4 dan 1h untuk T-NYATA-5; TF lain tetap dihitung sebagai kontrol konsistensi, bukan sel keputusan.
+  { id: 'T_NYATA_4', stage: 'DEVELOPING_REVERSAL', scenario: REAL_DATA_SCENARIO, sensitivity: 'LOW', text: 'T-NYATA-4 luar sampel (sel keputusan 5m, TF lain kontrol): SUCCESS DEVELOPING_REVERSAL pada LOW melampaui basis empiris subset (CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0)' },
+  { id: 'T_NYATA_5', scenario: REAL_DATA_SCENARIO, sensitivity: 'LOW', text: 'T-NYATA-5 luar sampel (sel keputusan 1h, TF lain kontrol): SUCCESS pada LOW melampaui basis empiris grup (CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0)' },
 ]);
 
 /** Catatan metodologi basis per subset — dimasukkan ke meta.notes setiap run (basis subset ≠ basis grup bila jarak stop berbeda). */
@@ -391,6 +395,18 @@ export function checkTargets(groups, timeframes) {
           n = early.n;
           value = early.p;
           ok = n > 0 ? value >= 0.1 : null;
+        } else if (rule.id === 'T_NYATA_4' || rule.id === 'T_NYATA_5') {
+          // Praregistrasi run 4 — tiga syarat sekaligus: CI bawah SUCCESS > basis empiris, selisih SUCCESS − basis ≥ 3 poin (toleransi float
+          // 1e-12), ekspektasi ATR > 0. T-NYATA-4 memakai subset tahap awal (basis & ekspektasi subset itu sendiri), T-NYATA-5 memakai grup;
+          // subset/basis/ekspektasi kosong → tanpa data, tidak pernah melempar.
+          const o = rule.id === 'T_NYATA_4' ? (g.outcomesByFirstStage?.[rule.stage] ?? null) : { success: g.outcomes.success, baselineShuffled: g.baselineShuffled, expectancyAtr: g.expectancyAtr };
+          const base = o?.baselineShuffled ?? rate(0, 0);
+          const expectancy = isNum(o?.expectancyAtr?.mean) ? o.expectancyAtr.mean : null;
+          n = o?.success?.n ?? 0;
+          value = o?.success?.p ?? null;
+          const diff = isNum(value) && isNum(base.p) ? value - base.p : null;
+          detail = { ...(rule.stage ? { stage: rule.stage } : {}), ci: o?.success?.ci ?? null, baseline: base.p, baselineN: base.n, diff, expectancyAtr: expectancy };
+          ok = n > 0 && base.n > 0 && expectancy !== null ? o.success.ci[0] > base.p && diff >= 0.03 - 1e-12 && expectancy > 0 : null;
         }
       }
       out.push({ id: rule.id, stage: rule.stage ?? null, text: rule.text, timeframe: tf, status: targetStatus(ok), value, n, smallSample: n > 0 && n < REPLAY_REPORT_THRESHOLDS.minSample, detail });
@@ -542,6 +558,8 @@ function fmtQ(q, digits = 1, unit = '') {
 const fmtSigned = (v, digits = 0) => (isNum(v) ? `${v > 0 ? '+' : ''}${fmtNumber(v, digits)}` : '—');
 /** Lead ringkas: "+k candle, n = m" atau "— (n = 0)". */
 const fmtLead = (q) => (q && q.n ? `${fmtSigned(q.median)} candle, n = ${q.n}` : '— (n = 0)');
+/** Selisih dalam poin persen bertanda: "+4,2 poin" atau "—". */
+const fmtPoints = (v) => (isNum(v) ? `${fmtSigned(v * 100, 1)} poin` : '—');
 
 function fmtDate(v) {
   if (!isNum(v)) return '—';
@@ -565,6 +583,11 @@ function targetValue(t) {
   if (t.id === 'LEAD_POSITIVE' || t.id === 'T_NYATA_2') return `median ${fmtSigned(t.value)} candle, n = ${t.n}`;
   if (t.id === 'T_NYATA_1') return `SUCCESS ${fmtPct(t.value)} (CI ${fmtCi(t.detail?.ci)}) vs basis empiris ${fmtPct(t.detail?.baseline)}, n = ${t.n}`;
   if (t.id === 'T_NYATA_1_STAGE') return `SUCCESS ${fmtPct(t.value)} (CI ${fmtCi(t.detail?.ci)}) vs basis empiris subset ${fmtPct(t.detail?.baseline)}, n = ${t.n}`;
+  if (t.id === 'T_NYATA_4' || t.id === 'T_NYATA_5') {
+    // Praregistrasi run 4: ketiga syarat ditampilkan (CI, selisih dalam poin, ekspektasi ATR) agar tiap syarat dapat diperiksa dari tabel.
+    return `SUCCESS ${fmtPct(t.value)} (CI ${fmtCi(t.detail?.ci)}) vs basis empiris ${t.id === 'T_NYATA_4' ? 'subset' : 'grup'} ${fmtPct(t.detail?.baseline)} `
+      + `(selisih ${fmtPoints(t.detail?.diff)}, ekspektasi ${fmtSigned(t.detail?.expectancyAtr, 2)} ATR), n = ${t.n}`;
+  }
   return `${fmtPct(t.value)}, n = ${t.n}`;
 }
 
@@ -577,9 +600,6 @@ function fmtExpectancy(e) {
 function fmtMean(m) {
   return m && isNum(m.n) && m.n > 0 ? `${fmtPct(m.p)}, n = ${m.n}` : '— (n = 0)';
 }
-
-/** Selisih dalam poin persen bertanda: "+4,2 poin" atau "—". */
-const fmtPoints = (v) => (isNum(v) ? `${fmtSigned(v * 100, 1)} poin` : '—');
 
 /**
  * Render laporan Markdown (bahasa Indonesia).
