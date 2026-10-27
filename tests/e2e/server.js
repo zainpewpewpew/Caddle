@@ -29,10 +29,13 @@ const dbPath = join(mkdtempSync(join(tmpdir(), 'lr-e2e-')), 'e2e.db');
 // Batas login dinaikkan khusus E2E: tiap spec masuk ulang per tes, dan server kosong (8181) dipakai
 // app/neural/reversal/scanner/smartmoney ≈ 36 login per proyek; desktop + mobile berjalan dalam satu
 // jendela 15 menit (≈ 72 login > 60 → "Terlalu banyak percobaan"). Tidak ada skenario E2E yang
-// menguji rate limit (itu diuji di tests/security & tests/negative), jadi batasnya 200.
+// menguji rate limit (itu diuji di tests/security & tests/negative), jadi batasnya 200. Batas global API
+// (default 300/menit/IP) juga dinaikkan: proyek mobile pada mesin cepat mengirim > 300 permintaan API per
+// menit dari satu IP (Reversal Radar 3 TF + tabel SA/PVA + status worker + smart money), yang pada putaran
+// cepat memunculkan 429 "Terlalu banyak permintaan" di Signal History / SHORT Scanner (E2E-NEU-009, E2E-SM-007).
 const config = loadConfig({
   NODE_ENV: 'test', HOST: '127.0.0.1', PORT: String(port), APP_ORIGIN: `http://127.0.0.1:${port}`,
-  DATABASE_PATH: dbPath, LOG_LEVEL: 'warn', LOGIN_RATE_LIMIT_MAX: '200', WORKER_CONTROL: 'true',
+  DATABASE_PATH: dbPath, LOG_LEVEL: 'warn', LOGIN_RATE_LIMIT_MAX: '200', API_RATE_LIMIT_MAX: '3000', WORKER_CONTROL: 'true',
   SMART_MONEY_PROVIDERS: seeded ? 'fixture' : 'off',
 });
 const db = openDatabase(dbPath);

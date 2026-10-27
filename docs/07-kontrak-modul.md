@@ -632,7 +632,7 @@ API (gerbang autentikasi & CSRF standar, lihat `docs/01-arsitektur.md` §4):
 | `POST /api/system/worker/stop` | admin + `X-CSRF-Token` | 200 status (`stopping`, tidak menunggu exit) · 409/429/503 |
 | `GET /api/system/status` | semua | `+ workerControl` (bentuk sama dengan `GET /api/system/worker`, memakai heartbeat yang sudah dibaca) |
 
-Body/query start/stop diabaikan. Rate limit khusus route `WORKER_ACTION_RATE_LIMIT = { max: 10, timeWindow: 60_000 }` per IP untuk masing-masing POST (menggantikan batas global 300/menit; 429 `RATE_LIMITED`). Audit `worker.start` / `worker.stop` untuk setiap POST dari sesi yang dikenali:
+Body/query start/stop diabaikan. Rate limit khusus route `WORKER_ACTION_RATE_LIMIT = { max: 10, timeWindow: 60_000 }` per IP untuk masing-masing POST (menggantikan batas global `API_RATE_LIMIT_MAX`, default 300/menit; 429 `RATE_LIMITED`). Audit `worker.start` / `worker.stop` untuk setiap POST dari sesi yang dikenali:
 
 | Kasus | `outcome` | `detail` |
 |---|---|---|

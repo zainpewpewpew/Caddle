@@ -14,6 +14,7 @@ const DEFAULTS = Object.freeze({
   SESSION_ABSOLUTE_HOURS: '12',
   LOGIN_RATE_LIMIT_MAX: '5',
   LOGIN_RATE_LIMIT_WINDOW_MINUTES: '15',
+  API_RATE_LIMIT_MAX: '300',
   ACCOUNT_LOCK_THRESHOLD: '10',
   ACCOUNT_LOCK_MINUTES: '15',
   MAX_USERS: '2',
@@ -161,6 +162,9 @@ export function loadConfig(env = process.env) {
       lockThreshold: parseInteger('ACCOUNT_LOCK_THRESHOLD', read('ACCOUNT_LOCK_THRESHOLD'), { min: 1, max: 1000 }),
       lockMs: parseInteger('ACCOUNT_LOCK_MINUTES', read('ACCOUNT_LOCK_MINUTES'), { min: 1, max: 1440 }) * 60_000,
     }),
+    // Batas global API per IP per menit (aset statis tidak dihitung, lihat buildApp). Default 300 = nilai yang sebelumnya
+    // ditulis tetap; hanya E2E yang menaikkannya karena seluruh suite berjalan dari satu IP.
+    api: Object.freeze({ rateLimitMax: parseInteger('API_RATE_LIMIT_MAX', read('API_RATE_LIMIT_MAX'), { min: 1, max: 100_000 }) }),
     maxUsers: parseInteger('MAX_USERS', read('MAX_USERS'), { min: 1, max: 10 }),
     defaultUser: parseDefaultUser(read('DEFAULT_USER'), nodeEnv),
     workerControl: parseFlag('WORKER_CONTROL', read('WORKER_CONTROL'), nodeEnv === 'development'),
