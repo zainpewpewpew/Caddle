@@ -32,8 +32,8 @@ const CLOCK_TICK_MS = 15_000;
 const LEGACY_OPEN_KEY = 'lr.reversal.legacyOpen';
 const STAGE_TEST_IDS = Object.freeze({ EARLY_FORMATION: 'reversal-early', DEVELOPING_REVERSAL: 'reversal-developing', CONFIRMED_BREAKOUT: 'reversal-confirmed' });
 const NOTE = 'Skor = jumlah poin aturan yang terpenuhi (0–100), bukan probabilitas; tidak ada perintah transaksi. Riset saja.';
-/** Status validasi data nyata (docs/21 §6.6–§6.9, run 1–3 Jun–Okt 2025): ditampilkan apa adanya di kepala panel. */
-const VALIDATION_NOTE = 'Status validasi (data Binance Jun–Okt 2025, 16–17 simbol, tiga run replay, docs/21 §6.6–§6.9): rasio keberhasilan kandidat setara entri acak pada penghalang yang sama — juga per tahap, per status terlambat, dan per bin skor dengan basis per subset — dan kandidat tidak lebih awal dari scanner SA/PVA lama; belum ada bukti keunggulan. Tidak ada tahap atau ambang skor yang terbukti lebih baik dari kebetulan, termasuk Early Formation.';
+/** Status validasi data nyata (docs/21 §6.6–§6.10: run 1–3 Jun–Okt 2025 + uji luar sampel run 4 Jun–Okt 2026): ditampilkan apa adanya di kepala panel. */
+const VALIDATION_NOTE = 'Status validasi (data Binance: tiga run replay Jun–Okt 2025 pada 16–17 simbol plus satu uji luar sampel Jun–Okt 2026 pada 20 simbol — docs/21 §6.6–§6.10): rasio keberhasilan kandidat setara entri acak pada penghalang yang sama — juga per tahap, per status terlambat, dan per bin skor dengan basis per subset — dan kandidat tidak lebih awal dari scanner SA/PVA lama; belum ada bukti keunggulan. Dua sel sensitivitas Rendah yang menonjol pada data 2025 gagal pada uji luar sampel 2026. Tidak ada tahap, sensitivitas, atau ambang skor yang terbukti lebih baik dari kebetulan, termasuk Early Formation; validasi ditutup tanpa uji lanjutan.';
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 /** Kunci teks baris tabel Reversal Radar: sel Pair (0) + sel TF (1). */
@@ -544,7 +544,7 @@ export async function reversalRadarView(ctx) {
   const titleWrap = h('div', { class: 'rr-title' });
   heading.before(titleWrap);
   titleWrap.append(heading, h('span', { class: 'rr-title__sub', 'data-testid': 'reversal-title' }, 'Reversal Radar'));
-  // Catatan status validasi data nyata (docs/21 §6.6–§6.9) tepat di bawah subjudul — selalu tampil, statis.
+  // Catatan status validasi data nyata (docs/21 §6.6–§6.10) tepat di bawah subjudul — selalu tampil, statis.
   const validation = h('p', { class: 'rr-validation', 'data-testid': 'reversal-validation' }, VALIDATION_NOTE);
   (el.querySelector('.page__subtitle') ?? titleWrap).after(validation);
   el.classList.add('page--scanner', 'page--reversal');

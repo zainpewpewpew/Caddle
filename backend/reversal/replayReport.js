@@ -44,6 +44,8 @@ export const REAL_DATA_TARGET_RULES = Object.freeze([
   { id: 'T_NYATA_3', scenario: REAL_DATA_SCENARIO, sensitivity: 'MEDIUM', text: 'T-NYATA-3 dataNyata: kandidat pertama EARLY_FORMATION ≥ 10 % pada MEDIUM' },
   // T-NYATA-4/5 dipraregistrasi 2026-10-27 SEBELUM run 4 (uji luar sampel Jun–Okt 2026; docs/19 §10, docs/21 §6.10). Sel keputusan:
   // 5m untuk T-NYATA-4 dan 1h untuk T-NYATA-5; TF lain tetap dihitung sebagai kontrol konsistensi, bukan sel keputusan.
+  // Hasil run 4 (2026-10-27, docs/21 §6.10): kedua sel TIDAK terpenuhi dan ditutup; aturan dipertahankan agar laporan lama dapat
+  // direproduksi, bukan sebagai dasar uji lanjutan.
   { id: 'T_NYATA_4', stage: 'DEVELOPING_REVERSAL', scenario: REAL_DATA_SCENARIO, sensitivity: 'LOW', text: 'T-NYATA-4 luar sampel (sel keputusan 5m, TF lain kontrol): SUCCESS DEVELOPING_REVERSAL pada LOW melampaui basis empiris subset (CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0)' },
   { id: 'T_NYATA_5', scenario: REAL_DATA_SCENARIO, sensitivity: 'LOW', text: 'T-NYATA-5 luar sampel (sel keputusan 1h, TF lain kontrol): SUCCESS pada LOW melampaui basis empiris grup (CI bawah > basis, selisih ≥ 3 poin, ekspektasi ATR > 0)' },
 ]);
