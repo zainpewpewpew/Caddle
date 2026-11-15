@@ -1,6 +1,6 @@
 /* AlphaLens — Insider / Smart Money Radar (radar, wallet, token, watchlist) + chip "SM ×N" di LONG Scanner.
  *
- * Mengikuti gaya "Neural Aurora": panel kaca, aksen cyan → violet, nada pasar hanya untuk arah nyata.
+ * Mengikuti dunia "Konsol Grafit": permukaan grafit, seam 1px, nada pasar hanya untuk arah nyata.
  * Warna jenis aktivitas sengaja dibedakan: hanya swap beli/jual bernada bull/bear; transfer/exchange/bridge/airdrop/LP
  * memakai nada netral/violet/kuning agar tidak pernah terbaca sebagai pembelian. Warna tidak pernah satu-satunya
  * penanda (selalu ada teks). Token baru belum tentu ada di tokens.css → selalu dengan fallback var().
@@ -10,20 +10,22 @@
   padding: var(--lr-space-4);
 }
 
+/* Judul dan label kunci memakai small caps sungguhan (DESIGN.md, Small Caps Rule), satu tingkat ukuran di atas
+   kapital penuh lama agar tinggi hurufnya setara. */
 .sm-h {
   margin: 0 0 var(--lr-space-2);
   color: var(--lr-text-2);
-  font-size: var(--lr-text-xs);
+  font-size: var(--lr-text-md);
+  font-variant-caps: all-small-caps;
   font-weight: var(--lr-weight-semibold);
   letter-spacing: var(--lr-tracking-caps);
-  text-transform: uppercase;
 }
 
 .sm-k {
   color: var(--lr-text-3);
-  font-size: var(--lr-text-2xs);
+  font-size: var(--lr-text-sm);
+  font-variant-caps: all-small-caps;
   letter-spacing: var(--lr-tracking-caps);
-  text-transform: uppercase;
 }
 
 /* ---------- Pita DATA SIMULASI: mencolok, tidak pernah tampil seperti data live ---------- */
@@ -78,9 +80,9 @@
 
 .sm-strip__k {
   color: var(--lr-text-3);
-  font-size: var(--lr-text-2xs);
+  font-size: var(--lr-text-sm);
+  font-variant-caps: all-small-caps;
   letter-spacing: var(--lr-tracking-caps);
-  text-transform: uppercase;
 }
 
 .sm-strip__stale {
@@ -118,7 +120,7 @@
 
 .sm-disclaimer {
   padding: var(--lr-space-3) var(--lr-space-4);
-  border-left: 2px solid var(--lr-border-strong);
+  border-left: 1px solid var(--lr-border-strong);
   color: var(--lr-text-3);
   font-size: var(--lr-text-xs);
 }
@@ -157,13 +159,13 @@
 }
 
 .sm-card {
-  --lr-card-tone: var(--lr-neural-cyan, var(--lr-accent));
+  --lr-card-tone: var(--lr-accent, var(--lr-accent));
   position: relative;
   display: grid;
   gap: var(--lr-space-3);
   padding: var(--lr-space-4);
   border: 1px solid var(--lr-glass-border, var(--lr-border));
-  border-left: 2px solid var(--lr-card-tone);
+  border-left: 1px solid var(--lr-card-tone);
   border-radius: var(--lr-radius-md);
   background: var(--lr-glass-soft, var(--lr-surface-2));
   transition: border-color var(--lr-dur) var(--lr-ease), box-shadow var(--lr-dur) var(--lr-ease);
@@ -273,9 +275,9 @@
   display: block;
   height: 100%;
   width: calc(var(--lr-score, 0) * 1%);
-  border-radius: 3px;
-  background: linear-gradient(90deg, var(--lr-neural-violet, var(--lr-accent)), var(--lr-neural-cyan, var(--lr-accent)));
-  box-shadow: 0 0 8px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
+  border-radius: 1px;
+  background: var(--lr-accent);
+  box-shadow: none;
 }
 
 .sm-components {
@@ -304,8 +306,8 @@
 }
 
 .sm-component[data-penalty] .sm-component__fill {
-  background: linear-gradient(90deg, rgb(241 107 117 / 0.55), var(--lr-bear));
-  box-shadow: 0 0 8px var(--lr-bear-line);
+  background: var(--lr-bear);
+  box-shadow: none;
 }
 
 .sm-bigscore {
@@ -316,12 +318,11 @@
 }
 
 .sm-bigscore__value {
+  font-family: var(--lr-font-mono);
   font-size: var(--lr-text-2xl);
-  font-weight: var(--lr-weight-semibold);
-  background: var(--lr-gradient-brand);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  font-weight: var(--lr-weight-medium);
+  letter-spacing: -0.03em;
+  color: var(--lr-text);
 }
 
 .sm-bigscore__unit {
@@ -534,9 +535,7 @@
   padding: var(--lr-space-4);
   border: 1px solid var(--lr-warn-line);
   border-radius: var(--lr-radius-md);
-  background:
-    linear-gradient(180deg, var(--lr-warn-soft), transparent 60%),
-    var(--lr-glass, var(--lr-surface));
+  background: color-mix(in srgb, var(--lr-warn) 6%, var(--lr-surface));
   color: var(--lr-text-2);
 }
 
@@ -624,8 +623,8 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--lr-neural-cyan, var(--lr-accent));
-  box-shadow: 0 0 8px var(--lr-neural-glow, rgb(56 225 255 / 0.35));
+  background: var(--lr-accent, var(--lr-accent));
+  box-shadow: none;
 }
 
 .sm-alert__title {
@@ -687,7 +686,7 @@
   padding: 0 6px;
   border: 1px solid var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
   border-radius: var(--lr-radius-pill);
-  background: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  background: var(--lr-violet-soft, rgb(124 108 255 / 0.14));
   color: rgb(170 160 255);
   font-size: var(--lr-text-2xs);
   font-weight: var(--lr-weight-semibold);
@@ -771,7 +770,7 @@
 /* Pesan (409 / 429 / error / tanpa ringkasan baru): teks selalu menjelaskan; warna hanya penguat. */
 .sm-sync__notice {
   padding: var(--lr-space-2) var(--lr-space-3);
-  border-left: 2px solid var(--lr-accent);
+  border-left: 1px solid var(--lr-accent);
   border-radius: var(--lr-radius-xs);
   background: var(--lr-accent-soft);
   color: var(--lr-text-2);
@@ -826,7 +825,7 @@
 .sm-sync__result {
   min-width: 0;
   border: 1px solid var(--lr-glass-border, var(--lr-border));
-  border-left: 2px solid var(--lr-border-strong);
+  border-left: 1px solid var(--lr-border-strong);
   border-radius: var(--lr-radius-sm);
   background: var(--lr-glass, var(--lr-surface));
   font-size: var(--lr-text-xs);
@@ -866,7 +865,7 @@
   width: 6px;
   height: 6px;
   margin-right: 2px;
-  border-right: 1.5px solid currentColor;
+  border-right: 1px solid currentColor;
   border-bottom: 1.5px solid currentColor;
   transform: rotate(-45deg);
   transition: transform var(--lr-dur-fast) var(--lr-ease);
@@ -907,7 +906,7 @@
 /* Petunjuk "Belum ada wallet yang dilacak": langkah berikutnya, bukan sekadar angka. */
 .sm-sync__lines li[data-hint] {
   padding: var(--lr-space-2) var(--lr-space-3);
-  border-left: 2px solid var(--lr-warn);
+  border-left: 1px solid var(--lr-warn);
   border-radius: var(--lr-radius-xs);
   background: var(--lr-warn-soft);
   color: var(--lr-text);
@@ -968,8 +967,8 @@
   --sm-thr-sell: var(--lr-bear);
   --sm-thr-cex: var(--lr-warn);
   --sm-thr-unknown: var(--lr-text-3);
-  --sm-thr-wallet: var(--lr-neural-violet, var(--lr-accent));
-  --sm-thr-violet-text: var(--lr-neural-violet-text, rgb(170 160 255));
+  --sm-thr-wallet: var(--lr-violet, var(--lr-accent));
+  --sm-thr-violet-text: var(--lr-violet, rgb(170 160 255));
   display: grid;
   gap: var(--lr-space-3);
   min-width: 0;
@@ -1039,7 +1038,7 @@
   padding: 0 5px;
   border: 1px solid var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
   border-radius: var(--lr-radius-xs);
-  background: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  background: var(--lr-violet-soft, rgb(124 108 255 / 0.14));
   color: var(--sm-thr-violet-text);
   font-size: var(--lr-text-2xs);
   font-weight: var(--lr-weight-semibold);
@@ -1052,9 +1051,9 @@
   margin-bottom: calc(var(--lr-space-2) * -1);
   padding: 0 var(--lr-space-2);
   color: var(--lr-text-3);
-  font-size: var(--lr-text-2xs);
+  font-size: var(--lr-text-sm);
+  font-variant-caps: all-small-caps;
   letter-spacing: var(--lr-tracking-caps);
-  text-transform: uppercase;
 }
 
 .sm-thr__frame {
@@ -1063,10 +1062,7 @@
   overflow: hidden;
   border: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
   border-radius: var(--lr-radius-md);
-  background:
-    radial-gradient(70% 60% at 20% 0%, var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14)), transparent 70%),
-    radial-gradient(60% 60% at 85% 100%, var(--lr-neural-cyan-soft, rgb(56 225 255 / 0.12)), transparent 70%),
-    var(--lr-glass-strong, var(--lr-bg-sunken));
+  background: var(--lr-bg-sunken);
 }
 
 .sm-thr__svg {
@@ -1095,7 +1091,7 @@
 }
 
 .sm-thr-band {
-  fill: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  fill: var(--lr-violet-soft, rgb(124 108 255 / 0.14));
   stroke: var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
   stroke-width: 1;
   stroke-dasharray: 3 3;
@@ -1233,7 +1229,7 @@
 }
 
 .sm-thr-chip rect {
-  fill: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  fill: var(--lr-violet-soft, rgb(124 108 255 / 0.14));
   stroke: var(--lr-neural-glow-violet, rgb(124 108 255 / 0.32));
 }
 
@@ -1255,7 +1251,7 @@
 }
 
 .sm-thr-tag rect {
-  fill: var(--lr-neural-violet-soft, rgb(124 108 255 / 0.14));
+  fill: var(--lr-violet-soft, rgb(124 108 255 / 0.14));
   stroke: var(--sm-thr-wallet);
 }
 

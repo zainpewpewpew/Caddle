@@ -43,11 +43,18 @@ describe('alur negatif autentikasi', () => {
     expect((await ctx.app.inject({ url: '/api/auth/session', headers: { cookie } })).statusCode).toBe(401);
   });
 
-  it('NEG-AUTH-005 dashboard tanpa sesi diarahkan ke login; /index.html tidak dapat diakses langsung', async () => {
+  it('NEG-AUTH-005 tanpa sesi "/" menyajikan halaman awal publik (bukan aplikasi); /index.html & /landing.html tidak dapat diakses langsung', async () => {
     const res = await ctx.app.inject({ url: '/' });
-    expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toBe('/login.html');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.body).toContain('id="lp-main"');
+    expect(res.body).not.toContain('id="app"');
+    // Cookie palsu diperlakukan sama dengan tanpa sesi: tetap halaman awal, aplikasi tidak pernah dikirim.
+    const bogus = await ctx.app.inject({ url: '/', headers: { cookie: 'lr_session=bukan-token-asli' } });
+    expect(bogus.statusCode).toBe(200);
+    expect(bogus.body).not.toContain('id="app"');
     expect((await ctx.app.inject({ url: '/index.html' })).statusCode).toBe(404);
+    expect((await ctx.app.inject({ url: '/landing.html' })).statusCode).toBe(404);
   });
 
   it('NEG-AUTH-006 sesi idle kedaluwarsa → 401', async () => {

@@ -1,4 +1,44 @@
-/* AlphaLens — reset & tipografi dasar. */
+/* AlphaLens — reset, font self-hosted, tipografi dasar, permukaan browser (seleksi, caret, scrollbar). */
+
+/* Atkinson Hyperlegible Next & Mono (Braille Institute, SIL OFL 1.1 — frontend/fonts/OFL-*.txt).
+   Dipilih karena membedakan karakter yang mirip (0/O, 1/l/I, 5/S) pada ticker dan angka yang dibaca berjam-jam.
+   Disajikan dari 'self' (CSP font-src 'self'); subset latin & latin-ext dimuat sesuai unicode-range. */
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("/fonts/AtkinsonHyperlegibleNext-latin.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("/fonts/AtkinsonHyperlegibleNext-latin-ext.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Mono";
+  src: url("/fonts/AtkinsonHyperlegibleMono-latin.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Mono";
+  src: url("/fonts/AtkinsonHyperlegibleMono-latin-ext.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 *,
 *::before,
 *::after {
@@ -8,23 +48,18 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-}
-
-html {
   background: var(--lr-bg);
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  /* Aurora statis sebagai cadangan bila canvas latar tidak berjalan; canvas digambar di atasnya. */
-  background: var(--lr-gradient-aurora), var(--lr-bg);
-  background-attachment: fixed;
+  background: var(--lr-bg);
   color: var(--lr-text);
   font-family: var(--lr-font-sans);
   font-size: var(--lr-text-sm);
   line-height: var(--lr-leading-normal);
-  font-feature-settings: "cv11", "ss01";
+  caret-color: var(--lr-accent);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -36,17 +71,23 @@ h1, h2, h3, h4, p, figure, dl, dd {
 h1, h2, h3, h4 {
   font-weight: var(--lr-weight-semibold);
   line-height: var(--lr-leading-tight);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
 }
 
 a {
   color: var(--lr-accent);
   text-decoration: none;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
 }
 
 a:hover {
   text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 button, input, select, textarea {
@@ -86,19 +127,17 @@ table {
 }
 
 ::selection {
-  background: rgb(56 225 255 / 0.28);
+  background: rgb(116 185 255 / 0.3);
   color: var(--lr-text);
 }
 
-/* Angka finansial selalu tabular agar kolom sejajar. */
+/* Angka selalu mono tabular agar kolom sejajar dan angka terbaca sebagai data. */
 .num,
 .mono {
-  font-variant-numeric: tabular-nums slashed-zero;
-}
-
-.mono {
   font-family: var(--lr-font-mono);
-  font-size: 0.95em;
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-size: 0.94em;
+  letter-spacing: -0.01em;
 }
 
 .sr-only {
@@ -122,6 +161,7 @@ table {
   background: var(--lr-accent);
   color: var(--lr-text-inverse);
   border-radius: var(--lr-radius-sm);
+  font-weight: var(--lr-weight-semibold);
 }
 
 .skip-link:focus {
@@ -132,15 +172,15 @@ table {
   display: none !important;
 }
 
-/* Scrollbar tipis bergaya kaca; thumb bergradien saat disorot. */
+/* Scrollbar tipis grafit. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--lr-border-strong) transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 *::-webkit-scrollbar-track {
@@ -148,14 +188,14 @@ table {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: var(--lr-border);
-  border: 2px solid transparent;
+  background: var(--lr-border-strong);
+  border: 3px solid transparent;
   background-clip: padding-box;
   border-radius: var(--lr-radius-pill);
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: var(--lr-gradient-brand);
+  background: var(--lr-border-control);
   background-clip: padding-box;
 }
 
@@ -164,19 +204,19 @@ table {
 }
 
 /* ---- Keyframes umum (dipakai lintas komponen/view) ----
- * lr-fade-up    : masuk dari bawah 6px + fade.         animation: lr-fade-up var(--lr-dur-page) var(--lr-ease-out-expo) both;
+ * lr-fade-up    : masuk dari bawah 4px + fade.
  * lr-fade-in    : fade saja.
- * lr-shimmer    : kilau skeleton; pakai background-size 200% 100% dan gradien horizontal.
- * lr-pulse-glow : denyut glow halus; warna dari --lr-pulse-color (default cyan).
- * lr-scan       : garis pindai bergerak kiri → kanan; elemen ::after selebar ±40%, translateX(-100% → 250%).
+ * lr-shimmer    : sapuan muat skeleton (background-size 200% 100%).
+ * lr-pulse-glow : cincin tipis yang mengembang lalu hilang (bukan glow); warna dari --lr-pulse-color.
+ * lr-scan       : garis pindai kiri → kanan; elemen ::after selebar ±40%, translateX(-100% → 250%).
  * lr-spin       : rotasi penuh (spinner).
- * lr-float      : melayang naik-turun 2px (dekoratif).
- * lr-hue-drift  : pergeseran posisi gradien (background-size ≥ 200%).
+ * lr-float      : naik-turun 1px (dipertahankan untuk kompatibilitas; hindari pemakaian baru).
+ * lr-hue-drift  : pergeseran posisi latar (kompatibilitas; tidak dipakai komponen baru).
  */
 @keyframes lr-fade-up {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -195,12 +235,11 @@ table {
 }
 
 @keyframes lr-pulse-glow {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 transparent;
+  0% {
+    box-shadow: 0 0 0 0 var(--lr-pulse-color, rgb(116 185 255 / 0.5));
   }
-  50% {
-    box-shadow: 0 0 0 1px var(--lr-pulse-color, rgb(56 225 255 / 0.35)), 0 0 14px var(--lr-pulse-color, rgb(56 225 255 / 0.35));
+  100% {
+    box-shadow: 0 0 0 6px rgb(0 0 0 / 0);
   }
 }
 
@@ -216,7 +255,7 @@ table {
 @keyframes lr-float {
   0%,
   100% { transform: translateY(0); }
-  50% { transform: translateY(-2px); }
+  50% { transform: translateY(-1px); }
 }
 
 @keyframes lr-hue-drift {
@@ -231,7 +270,7 @@ table {
 }
 
 .lr-anim-pulse {
-  animation: lr-pulse-glow var(--lr-dur-ambient) var(--lr-ease) infinite;
+  animation: lr-pulse-glow var(--lr-dur-ambient) var(--lr-ease-out-expo) infinite;
 }
 
 /* Gerak dekoratif dimatikan bila pengguna memilih "Animasi latar: mati" atau OS meminta reduced motion.

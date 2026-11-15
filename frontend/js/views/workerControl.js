@@ -35,6 +35,8 @@ function activityTracker(el) {
     const active = isWorkerActive(status);
     el.dataset.active = String(active);
     if (status?.state) el.dataset.workerState = status.state;
+    // Garis sync topbar (layout.css) mengikuti status yang BARU dibaca kontrol ini, juga pada pembacaan pertama.
+    if (typeof document !== 'undefined') document.documentElement.dataset.scanner = active ? 'active' : 'idle';
     if (last === null || last === active) {
       last = active;
       return;
@@ -123,7 +125,7 @@ export function workerControlCard({ user, status: initial }) {
   h('div', { class: 'cluster' }, confirmBtn, cancelBtn));
 
   const controls = isAdmin
-    ? h('div', { class: 'cluster', 'data-testid': 'worker-control-actions' }, startBtn, stopBtn)
+    ? h('div', { class: 'cluster worker-control__actions', 'data-testid': 'worker-control-actions' }, startBtn, stopBtn)
     : h('p', { class: 'subtle' }, 'Hanya admin yang dapat menjalankan atau menghentikan scanner.');
 
   const body = h('div', { class: 'worker-control', tabindex: '-1' }, stateEl, progressEl, descEl, controls, confirmEl, errorEl);

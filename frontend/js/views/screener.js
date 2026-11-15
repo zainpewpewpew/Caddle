@@ -350,7 +350,7 @@ export function createScannerSection(ctx, direction, { onLoaded } = {}) {
     // Timeframe tetap (bukan filter): LONG 15m, SHORT 1h.
     h('div', { class: 'field', 'data-testid': 'scanner-timeframe' },
       h('span', { class: 'field__label' }, 'Timeframe'),
-      badge(cfg.timeframe, 'accent'),
+      h('span', { class: 'field__static' }, cfg.timeframe),
       h('span', { class: 'field__hint' }, cfg.timeframeHint)),
     selectField({ label: 'Pola', name: 'pattern', options: cfg.patterns }),
     selectField({ label: 'Tahap', name: 'stage', options: cfg.stages }),
@@ -520,7 +520,8 @@ export async function scannerPage(ctx, direction) {
     },
   });
 
-  const el = page({ title: cfg.title, subtitle: cfg.subtitle, actions: radar.el }, control, section.el);
+  // Kontrol scanner di kanan header (bukan bilah selebar halaman) agar tabel kandidat naik ke viewport pertama.
+  const el = page({ title: cfg.title, subtitle: cfg.subtitle, actions: [radar.el, control] }, section.el);
   el.classList.add('page--scanner');
   el.dataset.direction = dir;
   section.start();

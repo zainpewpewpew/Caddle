@@ -1,6 +1,7 @@
 // Konfigurasi aplikasi berbasis environment variable.
 // Semua nilai divalidasi saat startup; konfigurasi tidak valid menghentikan proses (fail fast).
 import { isIP } from 'node:net';
+import { BINANCE_DNS_MODES, parseBinanceDnsMode } from '../ingestion/binance/doh.js';
 import { parseSmartMoneyConfig } from '../smartmoney/config.js';
 
 const DEFAULTS = Object.freeze({
@@ -20,6 +21,7 @@ const DEFAULTS = Object.freeze({
   MAX_USERS: '2',
   TRUST_PROXY: 'false',
   LOG_LEVEL: 'info',
+  BINANCE_DNS: 'doh',
 });
 
 const ENVIRONMENTS = new Set(['development', 'test', 'production']);
@@ -43,6 +45,19 @@ function parseBoolean(name, raw) {
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   throw new ConfigError(`${name} harus 'true' atau 'false'`);
+}
+
+/**
+ * BINANCE_DNS: cara me-resolve host Binance (backend/ingestion/binance/doh.js). `doh` (default): DNS-over-HTTPS khusus
+ * host Binance — scanner tetap jalan di jaringan yang membajak DNS *.binance.com tanpa WARP/VPN. `system`: resolver
+ * sistem saja (perilaku lama).
+ */
+function parseBinanceDns(raw) {
+  try {
+    return parseBinanceDnsMode(raw);
+  } catch {
+    throw new ConfigError(`BINANCE_DNS harus salah satu dari: ${BINANCE_DNS_MODES.join(', ')}`);
+  }
 }
 
 /**
@@ -169,6 +184,7 @@ export function loadConfig(env = process.env) {
     defaultUser: parseDefaultUser(read('DEFAULT_USER'), nodeEnv),
     workerControl: parseFlag('WORKER_CONTROL', read('WORKER_CONTROL'), nodeEnv === 'development'),
     workerAutostart: parseFlag('WORKER_AUTOSTART', read('WORKER_AUTOSTART'), false),
+    binanceDns: parseBinanceDns(read('BINANCE_DNS')),
     smartMoney: parseSmartMoneyConfig({ ...env, NODE_ENV: nodeEnv }),
   });
 }

@@ -18,6 +18,7 @@ import { smartTokenView } from './views/smartToken.js';
 import { smartWalletView, smartWalletsView } from './views/smartWallets.js';
 import { smartWatchlistView } from './views/smartWatchlist.js';
 import { symbolView } from './views/symbol.js';
+import { isWorkerActive, workerControlLabel } from './views/workerFormat.js';
 
 const NAV_KEY = 'lr.nav';
 const MOTION_KEY = 'lr.motion';
@@ -216,6 +217,8 @@ async function initMotion() {
     }
     if (typeof detail.level === 'number' && Number.isFinite(detail.level)) {
       neuralCall('setActivity', Math.min(1, Math.max(0, detail.level)));
+      // Garis sync di topbar (layout.css) hanya bergerak saat kontrol scanner melaporkan scanner berjalan.
+      document.documentElement.dataset.scanner = detail.level >= 0.5 ? 'active' : 'idle';
     }
   });
 
@@ -239,6 +242,34 @@ async function initMotion() {
     neural = null;
     canvas.hidden = true;
   }
+}
+
+// Status scanner global di topbar: status NYATA dari API (supervisor worker), dibaca ulang tiap 20 detik sebagai
+// polling latar (X-LR-Background: tidak memperpanjang idle timeout sesi). Kontrol scanner di layar memperbaruinya
+// lebih cepat lewat data-scanner. Garis sync topbar (layout.css) mengikuti data-scanner.
+const SCANNER_POLL_MS = 20_000;
+
+function renderScannerStatus(status) {
+  const el = document.getElementById('scanner-status');
+  const text = document.getElementById('scanner-status-text');
+  if (!el || !text || !status) return;
+  const { tone, text: label, live } = workerControlLabel(status);
+  el.dataset.state = tone;
+  if (live) el.dataset.live = '';
+  else delete el.dataset.live;
+  text.textContent = label;
+  el.hidden = false;
+  document.documentElement.dataset.scanner = isWorkerActive(status) ? 'active' : 'idle';
+}
+
+async function pollScanner() {
+  try {
+    renderScannerStatus(await api('/api/system/worker', { background: true, redirectOn401: false }));
+  } catch (err) {
+    // Sesi berakhir: berhenti memantau (alur 401 biasa yang mengarahkan ke login). Galat lain: coba lagi nanti.
+    if (err instanceof ApiError && err.status === 401) return;
+  }
+  setTimeout(pollScanner, SCANNER_POLL_MS);
 }
 
 function showLoadError() {
@@ -346,6 +377,7 @@ async function boot() {
   startClock();
   pollConnection();
   setInterval(pollConnection, 30_000);
+  pollScanner();
   createRouter({
     routes: ROUTES.filter((r) => r.path),
     fallback: '/overview',

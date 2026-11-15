@@ -104,7 +104,9 @@ Gerbang autentikasi, rate limit, dan header `no-store` memutuskan berdasarkan **
 ## 5. Frontend
 
 - **Tanpa framework dan tanpa bundler** — ES Modules native dimuat langsung oleh browser (ADR-0005).
-- `index.html` hanya disajikan oleh route `/` setelah sesi diverifikasi di server; tanpa sesi → redirect `/login.html`.
+- Route `/` memeriksa sesi di server: dengan sesi → `index.html` (aplikasi); tanpa sesi → `landing.html` (halaman
+  awal publik: pintu depan privat, `noindex`, tanpa data; tombol Masuk ke `/login.html`). Keduanya `Cache-Control:
+  no-store` dan tidak dapat diakses langsung lewat `/index.html` atau `/landing.html` (404).
 - Router hash (`#/overview`, …) dengan satu modul view per layar di `frontend/js/views/`.
 - Semua render melalui `h()` (`js/lib/dom.js`) yang memakai `textContent` — `innerHTML` dilarang oleh ESLint dan Semgrep.
 - Token CSRF disimpan di memori modul `api.js`, bukan di Web Storage. `localStorage` hanya untuk preferensi UI (sidebar diciutkan).

@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <title>AlphaLens</title>
+  <meta name="color-scheme" content="dark">
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/AtkinsonHyperlegibleNext-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/AtkinsonHyperlegibleMono-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/layout.css">
@@ -27,7 +30,7 @@
         <img class="brand__mark" src="/assets/logo.svg" alt="">
         <span class="brand__text">
           <span class="brand__name">AlphaLens</span>
-          <span class="brand__tag">Intelligence terminal</span>
+          <span class="brand__tag">Terminal riset privat</span>
         </span>
       </a>
       <nav class="nav" id="nav"></nav>
@@ -52,6 +55,7 @@
         <span class="topbar__heading" id="heading">Memuat…</span>
       </div>
       <div class="topbar__meta">
+        <span class="status topbar__scanner" data-state="idle" id="scanner-status" data-testid="topbar-scanner" hidden><span class="status__dot" aria-hidden="true"></span><span class="topbar__scanner-label"><span class="topbar__scanner-prefix">Scanner · </span><span id="scanner-status-text">…</span></span></span>
         <span class="status" data-state="idle" id="conn-status"><span class="status__dot" aria-hidden="true"></span><span>Memeriksa server…</span></span>
         <button class="motion-toggle" type="button" id="motion-toggle" aria-pressed="true" aria-label="Animasi latar" title="Nyalakan/matikan animasi jaringan di latar">
           <svg class="motion-toggle__icon" aria-hidden="true"><use href="/assets/icons.svg#i-neural"></use></svg>

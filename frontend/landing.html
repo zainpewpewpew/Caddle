@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="AlphaLens — terminal riset privat untuk membaca struktur pasar kripto dua arah.">
+  <title>AlphaLens · Terminal riset struktur pasar</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/AtkinsonHyperlegibleNext-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/neural.css">
+  <link rel="stylesheet" href="/css/landing.css">
+  <script type="module" src="/js/landing.js"></script>
+</head>
+<body class="lp-body">
+  <canvas class="neural-bg" id="neural-bg" aria-hidden="true"></canvas>
+  <a class="skip-link" href="#lp-main">Lewati ke konten</a>
+
+  <div class="lp">
+    <header class="lp-bar">
+      <a class="brand lp-bar__brand" href="/" aria-label="AlphaLens, halaman awal">
+        <img class="brand__mark" src="/assets/logo.svg" alt="">
+        <span class="brand__name">AlphaLens</span>
+      </a>
+      <nav class="lp-bar__nav" aria-label="Bagian halaman">
+        <a href="#modul">Modul</a>
+        <a href="#cara-kerja">Cara kerja</a>
+        <a href="#batasan">Batasan</a>
+      </nav>
+      <a class="btn btn--primary lp-bar__login" href="/login.html" data-login-link>Masuk</a>
+    </header>
+
+    <main class="lp-main" id="lp-main" tabindex="-1">
+      <section class="lp-hero" aria-labelledby="lp-title">
+        <h1 class="lp-hero__title" id="lp-title">Baca struktur pasar <span class="lp-hero__break">dua arah.</span></h1>
+        <p class="lp-hero__lead">AlphaLens adalah terminal riset privat untuk USDT-M perpetual Binance. Ia memindai struktur akumulasi (kandidat LONG) dan distribusi (kandidat SHORT) dari candle tertutup, lalu menunjukkan aturan mana yang terpenuhi. Tidak ada eksekusi order.</p>
+        <div class="lp-hero__actions">
+          <a class="btn btn--primary lp-cta" href="/login.html" data-login-link>Masuk ke terminal</a>
+          <a class="btn lp-cta" href="#cara-kerja">Lihat cara kerja</a>
+        </div>
+        <p class="lp-hero__note">Akses privat. Akun dibuat oleh administrator; tidak ada pendaftaran publik.</p>
+      </section>
+
+      <section class="lp-pipe" aria-labelledby="lp-pipe-title">
+        <div class="lp-pipe__head">
+          <h2 class="lp-pipe__title" id="lp-pipe-title">Proses sync scanner</h2>
+          <span class="badge badge--warn">Ilustrasi alur · bukan data langsung</span>
+        </div>
+        <ol class="lp-pipe__steps" data-demo-pipeline>
+          <li class="lp-step" data-demo-step data-state="pending">
+            <span class="lp-step__marker" aria-hidden="true"></span>
+            <span class="lp-step__label">Sinkron jam</span>
+            <span class="lp-step__detail">Menyamakan waktu dengan server Binance</span>
+          </li>
+          <li class="lp-step" data-demo-step data-state="pending">
+            <span class="lp-step__marker" aria-hidden="true"></span>
+            <span class="lp-step__label">Discovery simbol</span>
+            <span class="lp-step__detail">Daftar USDT-M perpetual yang aktif</span>
+          </li>
+          <li class="lp-step" data-demo-step data-state="pending" data-demo-progress>
+            <span class="lp-step__marker" aria-hidden="true"></span>
+            <span class="lp-step__label">Backfill candle</span>
+            <span class="lp-step__detail">Seri candle historis per timeframe</span>
+            <span class="lp-step__bar" aria-hidden="true"><span class="lp-step__fill"></span></span>
+          </li>
+          <li class="lp-step" data-demo-step data-state="pending" data-demo-live>
+            <span class="lp-step__marker" aria-hidden="true"></span>
+            <span class="lp-step__label">Stream live</span>
+            <span class="lp-step__detail">Candle baru lewat WebSocket</span>
+          </li>
+          <li class="lp-step" data-demo-step data-state="pending" data-demo-live>
+            <span class="lp-step__marker" aria-hidden="true"></span>
+            <span class="lp-step__label">Analisis pola</span>
+            <span class="lp-step__detail">Hanya pada candle yang sudah tertutup</span>
+          </li>
+        </ol>
+      </section>
+
+      <section class="lp-section" id="modul" aria-labelledby="modul-title">
+        <h2 class="lp-section__title" id="modul-title">Modul</h2>
+        <dl class="lp-modules">
+          <div class="lp-module">
+            <dt class="lp-module__name">LONG Scanner</dt>
+            <dd class="lp-module__text">Kandidat struktur bullish: Silent Accumulation (#001) dan Progressive Volume Accumulation (#002), dengan Early Score dan tier A–D. Reversal Radar di layar yang sama melabeli tahap potensi pembalikan pada 5m, 15m, dan 1h.</dd>
+            <dd class="lp-module__state"><span class="badge badge--bull">Aktif</span></dd>
+          </div>
+          <div class="lp-module">
+            <dt class="lp-module__name">SHORT Scanner</dt>
+            <dd class="lp-module__text">Cermin bearish: Silent Distribution (#003) dan Progressive Volume Distribution (#004), dinilai dengan aturan yang sama pada harga yang dicerminkan.</dd>
+            <dd class="lp-module__state"><span class="badge badge--bull">Aktif</span></dd>
+          </div>
+          <div class="lp-module">
+            <dt class="lp-module__name">Symbol Intelligence</dt>
+            <dd class="lp-module__text">Grafik candle tertutup dengan EMA, level invalidasi, riwayat sinyal kedua arah, dan penjelasan kondisi sinyal terakhir.</dd>
+            <dd class="lp-module__state"><span class="badge badge--bull">Aktif</span></dd>
+          </div>
+          <div class="lp-module">
+            <dt class="lp-module__name">Signal History</dt>
+            <dd class="lp-module__text">Riwayat sinyal LONG dan SHORT beserta tahap dan alasannya.</dd>
+            <dd class="lp-module__state"><span class="badge badge--bull">Aktif</span></dd>
+          </div>
+          <div class="lp-module">
+            <dt class="lp-module__name">Smart Money Radar</dt>
+            <dd class="lp-module__text">Token yang sedang dibeli lewat swap oleh beberapa wallet on-chain yang saling independen, dengan bukti transaksi dan flag risiko. Hanya alamat publik.</dd>
+            <dd class="lp-module__state"><span class="badge badge--bull">Aktif</span></dd>
+          </div>
+          <div class="lp-module">
+            <dt class="lp-module__name">System Health</dt>
+            <dd class="lp-module__text">Kontrol scanner dan proses sync langsung, langkah demi langkah.</dd>
+            <dd class="lp-module__state"><span class="badge badge--bull">Aktif</span></dd>
+          </div>
+          <div class="lp-module">
+            <dt class="lp-module__name">Backtest Lab</dt>
+            <dd class="lp-module__text">Backtest walk-forward dengan triple barrier dan interval kepercayaan Wilson, dijalankan dari terminal server; tampilannya di web masih dikerjakan.</dd>
+            <dd class="lp-module__state"><span class="badge badge--warn">Sebagian</span></dd>
+          </div>
+          <div class="lp-module">
+            <dt class="lp-module__name">Pattern Discovery Lab</dt>
+            <dd class="lp-module__text">Unggah, anotasi, dan definisi pola berversi.</dd>
+            <dd class="lp-module__state"><span class="badge">Belum dimulai</span></dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="lp-section" id="cara-kerja" aria-labelledby="cara-kerja-title">
+        <h2 class="lp-section__title" id="cara-kerja-title">Cara kerja</h2>
+        <p class="lp-section__lead">Setiap kandidat berjalan melewati tahap yang sama. Sisi SHORT adalah cermin sisi LONG.</p>
+
+        <div class="lp-lines">
+          <figure class="lp-line" data-direction="LONG">
+            <figcaption class="lp-line__name">LONG</figcaption>
+            <ol class="lp-line__stops">
+              <li class="lp-stop">Quiet</li>
+              <li class="lp-stop">Early bullish</li>
+              <li class="lp-stop">Momentum building</li>
+              <li class="lp-stop lp-stop--end">Breakout</li>
+            </ol>
+            <span class="lp-line__train" aria-hidden="true"></span>
+          </figure>
+          <figure class="lp-line" data-direction="SHORT">
+            <figcaption class="lp-line__name">SHORT</figcaption>
+            <ol class="lp-line__stops">
+              <li class="lp-stop">Quiet</li>
+              <li class="lp-stop">Early bearish</li>
+              <li class="lp-stop">Momentum building</li>
+              <li class="lp-stop lp-stop--end">Breakdown</li>
+            </ol>
+            <span class="lp-line__train" aria-hidden="true"></span>
+          </figure>
+        </div>
+
+        <div class="lp-facts">
+          <div class="lp-fact">
+            <h3 class="lp-fact__title">Hanya candle tertutup</h3>
+            <p class="lp-fact__text">Sinyal terkonfirmasi dihitung dari candle yang sudah tertutup, jadi tidak berubah di tengah candle.</p>
+          </div>
+          <div class="lp-fact">
+            <h3 class="lp-fact__title">Aturan berversi</h3>
+            <p class="lp-fact__text">Setiap skor dapat ditelusuri ke aturan pola yang berversi. Skor 0–100 adalah kecocokan aturan.</p>
+          </div>
+          <div class="lp-fact">
+            <h3 class="lp-fact__title">Aturan cermin</h3>
+            <p class="lp-fact__text">Pola SHORT adalah detektor pola LONG yang dijalankan pada harga dicerminkan, sehingga kedua arah selalu konsisten.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="lp-section" id="batasan" aria-labelledby="batasan-title">
+        <h2 class="lp-section__title" id="batasan-title">Batasan yang ditulis terang</h2>
+        <ul class="lp-limits">
+          <li>Skor bukan probabilitas profit yang terkalibrasi.</li>
+          <li>Empat putaran validasi Reversal Radar pada data nyata, termasuk uji luar sampel Jun–Okt 2026, tidak menunjukkan keunggulan terukur. Validasi ditutup; fitur ini diposisikan sebagai pelabel struktur, bukan prediksi.</li>
+          <li>AlphaLens tidak pernah mengirim order, baik LONG maupun SHORT.</li>
+          <li>Tanpa data, layar menampilkan keadaan kosong, tidak pernah data contoh.</li>
+          <li>Validasi setiap pola dengan data out-of-sample sebelum diandalkan.</li>
+        </ul>
+      </section>
+
+      <section class="lp-access" aria-labelledby="akses-title">
+        <div class="lp-access__text">
+          <h2 class="lp-section__title" id="akses-title">Akses privat</h2>
+          <p>AlphaLens berjalan di server pemiliknya. Akun dibuat oleh administrator; tidak ada pendaftaran publik. Bila Anda sudah diberi akun, masuk di sini.</p>
+        </div>
+        <a class="btn btn--primary lp-cta" href="/login.html" data-login-link>Masuk ke terminal</a>
+      </section>
+    </main>
+
+    <footer class="lp-foot">
+      <span>AlphaLens · terminal riset privat</span>
+      <span>Data pasar: Binance USDT-M perpetual · on-chain: Etherscan</span>
+    </footer>
+  </div>
+</body>
+</html>

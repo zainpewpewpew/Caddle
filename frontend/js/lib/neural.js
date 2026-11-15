@@ -553,6 +553,8 @@ function makeBuckets(n) {
 /**
  * Memasang latar jaringan saraf pada `canvas`.
  * @param {HTMLCanvasElement} canvas
+ * Rasi datar (dunia "Konsol Grafit"): garis dan titik solid tanpa aurora, halo, vignette, maupun sprite cahaya
+ * radial; kepala pulsa berupa titik solid kecil.
  * @param {{density?:number, interactive?:boolean, palette?:'aurora'|'bull'|'bear', fps?:number, seed?:number}} opts
  */
 export function mountNeuralBackground(canvas, opts = {}) {
@@ -580,8 +582,6 @@ export function mountNeuralBackground(canvas, opts = {}) {
   let slow = false;
   let destroyed = false;
   let palette = resolvePalette(null);
-  let sprites = {};
-  let auroraAt = -Infinity;
   const view = { px: 0, py: 0 };
   const ox = new Float64Array(LAYERS.length);
   const oy = new Float64Array(LAYERS.length);
@@ -602,11 +602,6 @@ export function mountNeuralBackground(canvas, opts = {}) {
   let cursorStyle = '';
   const nb = [];
 
-  const aurora = doc.createElement('canvas');
-  const actx = aurora.getContext ? aurora.getContext('2d') : null;
-  const vignette = doc.createElement('canvas');
-  const vctx = vignette.getContext ? vignette.getContext('2d') : null;
-
   const graph = createGraph(1, 1, 0, rng);
   let coarse = false;
   try {
@@ -621,23 +616,6 @@ export function mountNeuralBackground(canvas, opts = {}) {
     listeners.push(() => target.removeEventListener(type, fn, options));
   }
 
-  function makeSprite(color) {
-    const size = 64;
-    const c = doc.createElement('canvas');
-    c.width = size;
-    c.height = size;
-    const g = c.getContext ? c.getContext('2d') : null;
-    if (!g) return null;
-    const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-    grad.addColorStop(0, rgba([255, 255, 255], 0.9));
-    grad.addColorStop(0.12, rgba(color, 0.85));
-    grad.addColorStop(0.4, rgba(color, 0.25));
-    grad.addColorStop(1, rgba(color, 0));
-    g.fillStyle = grad;
-    g.fillRect(0, 0, size, size);
-    return c;
-  }
-
   function readPaletteFromCss() {
     let style;
     try {
@@ -648,11 +626,9 @@ export function mountNeuralBackground(canvas, opts = {}) {
     palette = resolvePalette(style ? (name) => style.getPropertyValue(name) : null);
     if (paletteMode === 'bull') palette = { ...palette, violet: palette.bull };
     if (paletteMode === 'bear') palette = { ...palette, cyan: palette.bear };
-    sprites = {};
     tailStyle = {};
     solidStyle = {};
     for (const key of Object.keys(palette)) {
-      sprites[key] = makeSprite(palette[key]);
       tailStyle[key] = [0.14, 0.32, 0.58, 0.92].map((a) => rgba(palette[key], a));
       solidStyle[key] = rgba(palette[key], 1);
     }
@@ -666,40 +642,7 @@ export function mountNeuralBackground(canvas, opts = {}) {
     cursorStyle = rgba(palette.cyan, 1);
   }
 
-  function renderAurora(t) {
-    if (!actx) return;
-    const w = aurora.width;
-    const h = aurora.height;
-    const R = Math.max(w, h);
-    const act = graph.activity;
-    actx.clearRect(0, 0, w, h);
-    const blobs = [
-      [palette.cyan, 0.22 + 0.14 * Math.sin(t * 0.00006), 0.18 + 0.1 * Math.cos(t * 0.00005), 0.17],
-      [palette.violet, 0.78 + 0.12 * Math.cos(t * 0.00004 + 1.3), 0.3 + 0.14 * Math.sin(t * 0.00005 + 0.4), 0.18],
-      [palette.bull, 0.5 + 0.2 * Math.sin(t * 0.00003 + 2.1), 0.95 + 0.06 * Math.cos(t * 0.00004), 0.11],
-    ];
-    for (let k = 0; k < blobs.length; k += 1) {
-      const [c, fx, fy, a] = blobs[k];
-      const g = actx.createRadialGradient(fx * w, fy * h, 0, fx * w, fy * h, R * 0.6);
-      g.addColorStop(0, rgba(c, a + act * 0.05));
-      g.addColorStop(1, rgba(c, 0));
-      actx.fillStyle = g;
-      actx.fillRect(0, 0, w, h);
-    }
-    auroraAt = t;
-  }
 
-  function renderVignette() {
-    if (!vctx) return;
-    const w = vignette.width;
-    const h = vignette.height;
-    vctx.clearRect(0, 0, w, h);
-    const g = vctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.max(w, h) * 0.75);
-    g.addColorStop(0, 'rgba(0,0,0,0)');
-    g.addColorStop(1, 'rgba(0,0,0,0.55)');
-    vctx.fillStyle = g;
-    vctx.fillRect(0, 0, w, h);
-  }
 
   function measure() {
     const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
@@ -717,10 +660,6 @@ export function mountNeuralBackground(canvas, opts = {}) {
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    aurora.width = Math.max(1, Math.ceil(w / 4));
-    aurora.height = Math.max(1, Math.ceil(h / 4));
-    vignette.width = Math.max(1, Math.ceil(w / 2));
-    vignette.height = Math.max(1, Math.ceil(h / 2));
     const count = nodeCountFor(w, h, density);
     if (graph.nodes.length === 0) {
       const fresh = createGraph(w, h, count, rng);
@@ -729,8 +668,6 @@ export function mountNeuralBackground(canvas, opts = {}) {
       resizeGraph(graph, w, h, count);
     }
     readPaletteFromCss();
-    renderAurora(graph.time);
-    renderVignette();
     if (mode !== 'on') drawStatic();
   }
 
@@ -765,8 +702,6 @@ export function mountNeuralBackground(canvas, opts = {}) {
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
     ctx.clearRect(0, 0, W, H);
-    if (animate && t - auroraAt >= 250) renderAurora(t); // ±4 fps
-    if (actx) ctx.drawImage(aurora, 0, 0, W, H);
 
     const pointerOn = interactive && animate && graph.pointer.active;
     const tx = pointerOn ? graph.pointer.x - W / 2 : 0;
@@ -856,24 +791,8 @@ export function mountNeuralBackground(canvas, opts = {}) {
       ctx.fill();
     }
 
-    // Lapisan cahaya aditif: nyala node, pulsa, riak, kursor.
+    // Lapisan aktivitas: pulsa dan riak (garis/titik solid, tanpa sprite cahaya).
     ctx.globalCompositeOperation = 'lighter';
-    for (let i = 0; i < nodes.length; i += 1) {
-      const n = nodes[i];
-      // Halo lembut permanen untuk lapis depan (sprite pra-render, bukan shadowBlur).
-      if (n.z === LAYERS.length - 1 && sprites[n.hb < HUE_BUCKETS / 2 ? 'cyan' : 'violet']) {
-        const hs = n.r * 9;
-        ctx.globalAlpha = ALPHA_CAPS.halo;
-        ctx.drawImage(sprites[n.hb < HUE_BUCKETS / 2 ? 'cyan' : 'violet'], n.x + ox[n.z] - hs / 2, n.y + oy[n.z] - hs / 2, hs, hs);
-      }
-      if (n.glow <= 0.02) continue;
-      const spr = sprites[n.glowKey] || sprites.cyan;
-      if (!spr) continue;
-      const s = n.r * (6 + 9 * n.glow);
-      ctx.globalAlpha = Math.min(ALPHA_CAPS.glow, n.glow * ALPHA_CAPS.glow) * (LAYERS[n.z].alpha / MAX_LAYER_ALPHA);
-      ctx.drawImage(spr, n.x + ox[n.z] - s / 2, n.y + oy[n.z] - s / 2, s, s);
-    }
-    ctx.globalAlpha = 1;
 
     ctx.lineWidth = 1.9;
     for (let k = 0; k < graph.pulses.length; k += 1) {
@@ -897,13 +816,11 @@ export function mountNeuralBackground(canvas, opts = {}) {
         ctx.lineTo(ax + dx * t1, ay + dy * t1);
         ctx.stroke();
       }
-      const spr = sprites[p.key] || sprites.cyan;
-      if (spr) {
-        const s = 16 + B.z * 4;
-        ctx.globalAlpha = ALPHA_CAPS.glow;
-        ctx.drawImage(spr, ax + dx * p.t - s / 2, ay + dy * p.t - s / 2, s, s);
-        ctx.globalAlpha = 1;
-      }
+      // Kepala pulsa: titik solid kecil.
+      ctx.fillStyle = solidStyle[p.key] || solidStyle.cyan;
+      ctx.beginPath();
+      ctx.arc(ax + dx * p.t, ay + dy * p.t, 1.6 + B.z * 0.4, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     ctx.lineWidth = 1;
@@ -918,14 +835,7 @@ export function mountNeuralBackground(canvas, opts = {}) {
     }
     ctx.globalAlpha = 1;
 
-    if (pointerOn && sprites.cyan) {
-      ctx.globalAlpha = ALPHA_CAPS.cursor;
-      ctx.drawImage(sprites.cyan, graph.pointer.x - 36, graph.pointer.y - 36, 72, 72);
-      ctx.globalAlpha = 1;
-    }
-
     ctx.globalCompositeOperation = 'source-over';
-    if (vctx) ctx.drawImage(vignette, 0, 0, W, H);
   }
 
   function markReady() {

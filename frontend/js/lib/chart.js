@@ -21,10 +21,10 @@ const TIMEFRAME_MS = Object.freeze({ '5m': 5 * 60_000, '15m': 15 * 60_000, '1h':
 
 /** Jenis level harga horizontal → label Indonesia + token warna. */
 export const LEVEL_KINDS = Object.freeze({
-  invalidation: { label: 'Invalidasi', token: '--lr-bear', fallback: '#f16b75' },
-  detected: { label: 'Deteksi pertama', token: '--lr-text-2', fallback: '#8b98a8' },
-  support: { label: 'Support', token: '--lr-bull', fallback: '#21c58e' },
-  resistance: { label: 'Resistance', token: '--lr-warn', fallback: '#f4b860' },
+  invalidation: { label: 'Invalidasi', token: '--lr-bear', fallback: '#f0837d' },
+  detected: { label: 'Deteksi pertama', token: '--lr-text-2', fallback: '#a8adb5' },
+  support: { label: 'Support', token: '--lr-bull', fallback: '#74cf91' },
+  resistance: { label: 'Resistance', token: '--lr-warn', fallback: '#e8b85a' },
 });
 
 // Penanda transisi tahap di atas/bawah candle. Kode tak dikenal → lingkaran netral berlabel kode itu sendiri.
@@ -44,7 +44,7 @@ const MARKER_STYLES = Object.freeze({
   HIGHER_LOW: { shape: 'circle', position: 'belowBar', token: '--lr-bull', text: 'HL' },
   SPRING: { shape: 'arrowUp', position: 'belowBar', token: '--lr-accent', text: 'Spring' },
   CHOCH: { shape: 'circle', position: 'aboveBar', token: '--lr-accent', text: 'CHoCH' },
-  DIVERGENCE: { shape: 'circle', position: 'belowBar', token: '--lr-neural-violet', text: 'Divergensi' },
+  DIVERGENCE: { shape: 'circle', position: 'belowBar', token: '--lr-violet', text: 'Divergensi' },
   TRIGGER: { shape: 'square', position: 'aboveBar', token: '--lr-warn', text: 'Trigger' },
   STAGE_UP: { shape: 'arrowUp', position: 'belowBar', token: '--lr-bull', text: 'Naik tahap' },
   CANCELLED: { shape: 'square', position: 'aboveBar', token: '--lr-bear', text: 'Batal' },
@@ -154,23 +154,23 @@ function readTheme(el) {
     return value && CSS.supports('color', value) ? value : fallback;
   };
   return {
-    // Tema "Neural Aurora": latar kanvas transparan agar panel kaca (dan gradien halus .chart__canvas) terlihat.
+    // Tema "Konsol Grafit": latar kanvas transparan; .chart__canvas memberi bidang grafit cekung + seam 1px.
     background: color('--lr-chart-bg', 'transparent'),
-    surface3: color('--lr-surface-3', '#1d2531'),
+    surface3: color('--lr-surface-3', '#282b31'),
     // Teks sumbu memakai --lr-text: library memilih varian logo atribusi gelap/terang dari kecerahan textColor
     // (> 160 = tema gelap); --lr-text-2 (151) membuat logo varian terang yang nyaris tak terlihat di latar gelap.
-    text: color('--lr-text', '#eaf0f6'),
-    grid: color('--lr-chart-grid', 'rgb(148 178 220 / 0.05)'),
-    border: color('--lr-glass-border', 'rgb(148 178 220 / 0.12)'),
-    crosshair: color('--lr-neural-cyan', '#38e1ff'),
-    crosshairLabel: color('--lr-chart-crosshair-label', 'rgb(16 64 84 / 0.96)'),
-    watermark: color('--lr-chart-watermark', 'rgb(56 225 255 / 0.06)'),
-    bull: color('--lr-bull', '#21c58e'),
-    bear: color('--lr-bear', '#f16b75'),
-    bullLine: color('--lr-bull-line', 'rgb(33 197 142 / 0.35)'),
-    bearLine: color('--lr-bear-line', 'rgb(241 107 117 / 0.35)'),
-    ema7: color('--lr-neural-cyan', '#38e1ff'),
-    ema25: color('--lr-neural-violet', '#7c6cff'),
+    text: color('--lr-text', '#e4e6e9'),
+    grid: color('--lr-chart-grid', 'rgb(255 255 255 / 0.045)'),
+    border: color('--lr-border', '#2e3137'),
+    crosshair: color('--lr-text-3', '#8d929b'),
+    crosshairLabel: color('--lr-chart-crosshair-label', '#3d414a'),
+    watermark: color('--lr-chart-watermark', 'rgb(228 230 233 / 0.05)'),
+    bull: color('--lr-bull', '#74cf91'),
+    bear: color('--lr-bear', '#f0837d'),
+    bullLine: color('--lr-bull-line', 'rgb(116 207 145 / 0.4)'),
+    bearLine: color('--lr-bear-line', 'rgb(240 131 125 / 0.4)'),
+    ema7: color('--lr-accent', '#74b9ff'),
+    ema25: color('--lr-violet', '#c69cf0'),
     font: css.getPropertyValue('--lr-font-sans').trim() || 'system-ui, sans-serif',
     token: (name, fallback) => color(name, fallback),
   };

@@ -1,20 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="AlphaLens">
-  <defs>
-    <linearGradient id="al-g" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#38E1FF"/>
-      <stop offset="1" stop-color="#7C6CFF"/>
-    </linearGradient>
-    <radialGradient id="al-r" cx="14" cy="14" r="9" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#38E1FF" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#7C6CFF" stop-opacity="0.04"/>
-    </radialGradient>
-  </defs>
-  <rect x="0.5" y="0.5" width="31" height="31" rx="7.5" fill="#070B14" stroke="url(#al-g)" stroke-opacity="0.55"/>
-  <circle cx="14" cy="14" r="8.5" fill="url(#al-r)" stroke="url(#al-g)" stroke-width="1.6"/>
-  <path d="M20.4 20.4 L25.2 25.2" stroke="url(#al-g)" stroke-width="2.4" stroke-linecap="round"/>
-  <path d="M9.5 16.5 L12.4 11.6 M12.4 11.6 L17 13.2 M9.5 16.5 L14.6 17.4 M14.6 17.4 L17 13.2 M12.4 11.6 L14.6 17.4" stroke="#EAF0F6" stroke-opacity="0.55" stroke-width="0.9" stroke-linecap="round"/>
-  <circle cx="9.5" cy="16.5" r="1.3" fill="#38E1FF"/>
-  <circle cx="12.4" cy="11.6" r="1.2" fill="#EAF0F6"/>
-  <circle cx="17" cy="13.2" r="1.5" fill="#7C6CFF"/>
-  <circle cx="14.6" cy="17.4" r="1.1" fill="#21C58E"/>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="6.5" fill="#1a1c1f" stroke="#3d414a"/>
+  <circle cx="14" cy="14" r="8.25" fill="#101113" stroke="#e4e6e9" stroke-width="1.6"/>
+  <path d="M20.1 20.1 25.2 25.2" stroke="#74b9ff" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M11.25 9v10" stroke="#74cf91" stroke-width="1" stroke-linecap="round"/>
+  <rect x="9.75" y="11" width="3" height="5.5" rx="0.5" fill="#74cf91"/>
+  <path d="M16.75 9.5v10" stroke="#f0837d" stroke-width="1" stroke-linecap="round"/>
+  <rect x="15.25" y="12.5" width="3" height="4.5" rx="0.5" fill="#f0837d"/>
 </svg>

@@ -1,118 +1,129 @@
 /*
- * AlphaLens — design tokens.
+ * AlphaLens — design tokens, dunia "Konsol Grafit".
  * Satu-satunya sumber nilai visual. Komponen hanya boleh merujuk variabel di bawah.
- * Kontras teks utama/sekunder terhadap --lr-bg diverifikasi ≥ AA (lihat docs/04-design-system.md).
- * Gaya "Neural Aurora": latar hampir hitam kebiruan, panel kaca gelap, aksen cyan → violet.
+ * Dasar grafit matte, panel dipisah seam 1px, warna hanya untuk status (aksen turunan sintaks).
+ * Tanpa kaca, glow, atau gradien dekoratif: token lama untuk efek itu sengaja dibuat datar/transparan
+ * agar CSS lama yang masih merujuknya ikut rata.
+ * Kontras teks utama/sekunder/tersier terhadap --lr-bg, --lr-surface, --lr-surface-2 ≥ 4.5:1
+ * (lihat docs/04-design-system.md; dihitung ulang 2026-11-15).
  */
 :root {
   color-scheme: dark;
 
-  /* ---- Warna dasar ---- */
-  --lr-bg: #05070d;
-  --lr-bg-sunken: #03050a;
-  --lr-surface: #0b111b;
-  --lr-surface-2: #111925;
-  --lr-surface-3: #172131;
-  --lr-surface-hover: #142030;
-  --lr-border: #222f42;
-  --lr-border-subtle: #172233;
-  --lr-border-strong: #33445c;
+  /* ---- Permukaan grafit ---- */
+  --lr-bg: #141517;
+  --lr-bg-sunken: #101113;
+  --lr-surface: #1a1c1f;
+  --lr-surface-2: #212328;
+  --lr-surface-3: #282b31;
+  --lr-surface-hover: #25282d;
+  --lr-surface-rail: #17181b;
+  /* Seam 1px antarpanel; kontrol form memakai --lr-border-control (≥ 3:1, WCAG 1.4.11). */
+  --lr-border: #2e3137;
+  --lr-border-subtle: #25282d;
+  --lr-border-strong: #3d414a;
+  --lr-border-control: #666c76;
 
-  --lr-text: #eaf0f6;
-  --lr-text-2: #93a1b4;
-  --lr-text-3: #7d8a9d;
-  --lr-text-inverse: #05070d;
+  --lr-text: #e4e6e9;
+  --lr-text-2: #a8adb5;
+  --lr-text-3: #8d929b;
+  --lr-text-inverse: #101113;
 
-  /* ---- Semantik pasar ---- */
-  --lr-bull: #21c58e;
-  --lr-bull-soft: rgb(33 197 142 / 0.12);
-  --lr-bull-line: rgb(33 197 142 / 0.35);
-  --lr-warn: #f4b860;
-  --lr-warn-soft: rgb(244 184 96 / 0.12);
-  --lr-warn-line: rgb(244 184 96 / 0.35);
-  --lr-bear: #f16b75;
-  --lr-bear-soft: rgb(241 107 117 / 0.12);
-  --lr-bear-line: rgb(241 107 117 / 0.35);
-  --lr-accent: #5cb8ff;
-  --lr-accent-soft: rgb(92 184 255 / 0.12);
-  --lr-accent-line: rgb(92 184 255 / 0.4);
-  --lr-neutral-soft: rgb(139 152 168 / 0.12);
+  /* ---- Aksen status (turunan warna sintaks) ---- */
+  --lr-bull: #74cf91;
+  --lr-bull-soft: rgb(116 207 145 / 0.12);
+  --lr-bull-line: rgb(116 207 145 / 0.4);
+  --lr-warn: #e8b85a;
+  --lr-warn-soft: rgb(232 184 90 / 0.12);
+  --lr-warn-line: rgb(232 184 90 / 0.4);
+  --lr-bear: #f0837d;
+  --lr-bear-soft: rgb(240 131 125 / 0.12);
+  --lr-bear-line: rgb(240 131 125 / 0.4);
+  --lr-accent: #74b9ff;
+  --lr-accent-strong: #8fc7ff;
+  --lr-accent-soft: rgb(116 185 255 / 0.12);
+  --lr-accent-line: rgb(116 185 255 / 0.42);
+  --lr-violet: #c69cf0;
+  --lr-violet-soft: rgb(198 156 240 / 0.12);
+  --lr-violet-line: rgb(198 156 240 / 0.4);
+  --lr-neutral-soft: rgb(168 173 181 / 0.08);
 
-  /* ---- Neural Aurora: aksen jaringan saraf ---- */
-  --lr-neural-cyan: #38e1ff;
-  --lr-neural-violet: #7c6cff;
-  --lr-neural-emerald: #21c58e;
-  --lr-neural-glow: rgb(56 225 255 / 0.35);
-  --lr-neural-glow-violet: rgb(124 108 255 / 0.32);
-  --lr-neural-cyan-soft: rgb(56 225 255 / 0.12);
-  --lr-neural-violet-soft: rgb(124 108 255 / 0.14);
-  --lr-neural-bg: #05070d;
-  --lr-neural-line: rgb(56 225 255 / 0.28);
-  --lr-neural-glow-soft: rgb(56 225 255 / 0.08);
-  --lr-neural-glow-mid: rgb(56 225 255 / 0.16);
-  --lr-neural-scrim: rgb(5 7 13 / 0.78);
+  /* ---- Latar animasi (canvas): rasi baja grafit yang diredam. Hanya untuk canvas. ---- */
+  --lr-neural-cyan: #8a94a3;
+  --lr-neural-violet: #5b6472;
+  --lr-neural-emerald: #74cf91;
+  --lr-neural-glow: rgb(0 0 0 / 0);
+  --lr-neural-glow-violet: rgb(0 0 0 / 0);
+  --lr-neural-cyan-soft: rgb(116 185 255 / 0.12);
+  --lr-neural-violet-soft: rgb(198 156 240 / 0.12);
+  --lr-neural-violet-text: #c69cf0;
+  --lr-neural-bg: #141517;
+  --lr-neural-line: #2e3137;
+  --lr-neural-glow-soft: rgb(0 0 0 / 0);
+  --lr-neural-glow-mid: rgb(0 0 0 / 0);
+  --lr-neural-scrim: rgb(20 21 23 / 0.88);
 
-  /* ---- Kaca (glassmorphism). Alfa ≥ 0.72 agar teks tetap ≥ AA di atas animasi latar. ---- */
-  --lr-glass: rgb(10 15 25 / 0.78);
-  --lr-glass-strong: rgb(8 12 21 / 0.88);
-  --lr-glass-soft: rgb(14 21 34 / 0.8);
-  --lr-glass-border: rgb(148 178 220 / 0.12);
-  --lr-glass-border-strong: rgb(148 178 220 / 0.2);
-  --lr-glass-highlight: rgb(255 255 255 / 0.05);
-  --lr-blur: blur(12px) saturate(140%);
-  --lr-blur-strong: blur(16px) saturate(150%);
-  /* Alias yang dipakai login.css (nilai = fallback di sana). */
-  --lr-glass-bg: rgb(10 14 24 / 0.78);
-  --lr-glass-bg-strong: rgb(9 13 22 / 0.86);
-  --lr-glass-input: rgb(5 7 13 / 0.8);
+  /* ---- Bekas token kaca: kini permukaan solid (tanpa blur). ---- */
+  --lr-glass: #1a1c1f;
+  --lr-glass-strong: #1a1c1f;
+  --lr-glass-soft: #212328;
+  --lr-glass-border: #2e3137;
+  --lr-glass-border-strong: #3d414a;
+  --lr-glass-highlight: rgb(0 0 0 / 0);
+  --lr-glass-highlight-strong: rgb(0 0 0 / 0);
+  --lr-blur: none;
+  --lr-blur-strong: none;
+  --lr-glass-bg: #1a1c1f;
+  --lr-glass-bg-strong: #1a1c1f;
+  --lr-glass-input: #101113;
 
-  /* ---- Gradien ---- */
-  --lr-gradient-brand: linear-gradient(135deg, var(--lr-neural-cyan) 0%, var(--lr-neural-violet) 100%);
-  --lr-gradient-brand-soft: linear-gradient(135deg, rgb(56 225 255 / 0.16) 0%, rgb(124 108 255 / 0.16) 100%);
-  --lr-gradient-bull: linear-gradient(135deg, #4fe0ae 0%, #21c58e 55%, #149e70 100%);
-  --lr-gradient-bear: linear-gradient(135deg, #ff9aa2 0%, #f16b75 55%, #c94450 100%);
-  --lr-gradient-aurora: radial-gradient(60% 50% at 15% 0%, rgb(56 225 255 / 0.10) 0%, transparent 70%),
-    radial-gradient(50% 45% at 85% 10%, rgb(124 108 255 / 0.10) 0%, transparent 70%),
-    radial-gradient(60% 50% at 50% 100%, rgb(33 197 142 / 0.06) 0%, transparent 70%);
-  --lr-gradient-border: linear-gradient(135deg, rgb(56 225 255 / 0.35), rgb(124 108 255 / 0.12) 40%, rgb(148 178 220 / 0.06) 70%, rgb(124 108 255 / 0.25));
+  /* ---- Bekas token gradien: kini datar (satu warna) ---- */
+  --lr-gradient-brand: linear-gradient(#74b9ff, #74b9ff);
+  --lr-gradient-brand-soft: linear-gradient(rgb(116 185 255 / 0.12), rgb(116 185 255 / 0.12));
+  --lr-gradient-bull: linear-gradient(#74cf91, #74cf91);
+  --lr-gradient-bear: linear-gradient(#f0837d, #f0837d);
+  --lr-gradient-aurora: linear-gradient(rgb(0 0 0 / 0), rgb(0 0 0 / 0));
+  --lr-gradient-border: linear-gradient(rgb(0 0 0 / 0), rgb(0 0 0 / 0));
 
-  /* ---- Glow ---- */
-  --lr-glow-accent: 0 0 0 1px rgb(56 225 255 / 0.25), 0 0 18px rgb(56 225 255 / 0.22);
-  --lr-glow-bull: 0 0 0 1px rgb(33 197 142 / 0.3), 0 0 18px rgb(33 197 142 / 0.25);
-  --lr-glow-bear: 0 0 0 1px rgb(241 107 117 / 0.3), 0 0 18px rgb(241 107 117 / 0.25);
-  --lr-glow-violet: 0 0 0 1px rgb(124 108 255 / 0.28), 0 0 18px rgb(124 108 255 / 0.24);
+  /* ---- Bekas token glow: dinonaktifkan (bayangan nol, tetap valid di dalam daftar box-shadow). ---- */
+  --lr-glow-accent: 0 0 0 0 rgb(0 0 0 / 0);
+  --lr-glow-bull: 0 0 0 0 rgb(0 0 0 / 0);
+  --lr-glow-bear: 0 0 0 0 rgb(0 0 0 / 0);
+  --lr-glow-violet: 0 0 0 0 rgb(0 0 0 / 0);
 
   /* ---- Tahapan sinyal (state machine) ---- */
   --lr-stage-quiet: var(--lr-text-2);
   --lr-stage-early: var(--lr-accent);
   --lr-stage-momentum: var(--lr-bull);
-  --lr-stage-breakout: #4fe0ae;
+  --lr-stage-breakout: #a3e8b9;
   --lr-stage-invalid: var(--lr-bear);
   --lr-stage-expired: var(--lr-text-3);
-  /* Cermin bearish untuk SHORT (EARLY_BEARISH ↔ EARLY_BULLISH, BREAKDOWN ↔ BREAKOUT). Kontras ≥ 7:1 vs --lr-surface-2. */
-  --lr-stage-early-bear: #f49ac1;
+  /* Cermin bearish untuk SHORT (EARLY_BEARISH ↔ EARLY_BULLISH, BREAKDOWN ↔ BREAKOUT). ≥ 7:1 vs --lr-surface-2. */
+  --lr-stage-early-bear: #ec9fcf;
   --lr-stage-momentum-bear: var(--lr-bear);
-  --lr-stage-breakdown: #ff8a65;
+  --lr-stage-breakdown: #f2a46f;
 
-  /* ---- Tipografi ---- */
-  --lr-font-sans: "Inter", "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --lr-font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  /* ---- Tipografi: Atkinson Hyperlegible Next untuk UI, Atkinson Hyperlegible Mono untuk setiap angka
+     (self-hosted, frontend/fonts/, OFL; dibedakan untuk karakter yang mudah tertukar) ---- */
+  --lr-font-sans: "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --lr-font-mono: "Atkinson Hyperlegible Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 
-  --lr-text-2xs: 0.6875rem;  /* 11px — label tabel, caption */
+  --lr-text-2xs: 0.6875rem;  /* 11px — caption */
   --lr-text-xs: 0.75rem;     /* 12px — metadata */
   --lr-text-sm: 0.8125rem;   /* 13px — teks dasar terminal */
   --lr-text-md: 0.875rem;    /* 14px — teks penting */
-  --lr-text-lg: 1rem;        /* 16px — judul panel */
-  --lr-text-xl: 1.25rem;     /* 20px — judul halaman */
-  --lr-text-2xl: 1.625rem;   /* 26px — angka utama KPI */
+  --lr-text-lg: 1rem;        /* 16px — judul panel besar */
+  --lr-text-xl: 1.375rem;    /* 22px — judul halaman */
+  --lr-text-2xl: 1.5rem;     /* 24px — angka utama KPI (mono) */
+  --lr-text-display: clamp(2.25rem, 1.2rem + 3.6vw, 4.25rem); /* halaman awal saja */
 
   --lr-weight-regular: 400;
   --lr-weight-medium: 500;
   --lr-weight-semibold: 600;
 
   --lr-leading-tight: 1.2;
-  --lr-leading-normal: 1.45;
-  --lr-tracking-caps: 0.06em;
+  --lr-leading-normal: 1.5;
+  --lr-tracking-caps: 0.05em;
 
   /* ---- Spasi (basis 4px) ---- */
   --lr-space-0: 0;
@@ -126,38 +137,37 @@
   --lr-space-10: 2.5rem;
   --lr-space-12: 3rem;
 
-  /* ---- Radius ---- */
-  --lr-radius-xs: 3px;
-  --lr-radius-sm: 5px;
-  --lr-radius-md: 8px;
-  --lr-radius-lg: 12px;
+  /* ---- Radius: kecil dan konsisten ---- */
+  --lr-radius-xs: 2px;
+  --lr-radius-sm: 4px;
+  --lr-radius-md: 6px;
+  --lr-radius-lg: 8px;
   --lr-radius-pill: 999px;
 
-  /* ---- Elevasi: garis tipis + bayangan halus, bukan glow ---- */
-  --lr-shadow-1: 0 1px 0 rgb(255 255 255 / 0.02) inset, 0 1px 2px rgb(0 0 0 / 0.35);
-  --lr-shadow-2: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 8px 24px rgb(0 0 0 / 0.45);
-  --lr-shadow-3: 0 16px 48px rgb(0 0 0 / 0.55);
-  /* Cincin fokus memakai aksen solid: 8.11:1 vs --lr-bg, 7.54:1 vs --lr-surface (WCAG 1.4.11 mensyaratkan ≥ 3:1).
-     --lr-accent-line (alfa 0.4) hanya ±2.2:1 sehingga tidak dipakai di sini. */
-  --lr-focus-ring: 0 0 0 2px var(--lr-bg), 0 0 0 4px var(--lr-accent);
+  /* ---- Elevasi: satu langkah, bayangan berpusat ke bawah (offset + blur), bukan glow ---- */
+  --lr-shadow-1: 0 1px 2px rgb(0 0 0 / 0.28);
+  --lr-shadow-2: 0 10px 24px -10px rgb(0 0 0 / 0.55);
+  --lr-shadow-3: 0 18px 44px -14px rgb(0 0 0 / 0.65);
+  /* Cincin fokus memakai aksen solid: ≥ 6.8:1 vs semua permukaan (WCAG 1.4.11 mensyaratkan ≥ 3:1). */
+  --lr-focus-ring: 0 0 0 2px var(--lr-bg), 0 0 0 4px #74b9ff;
 
-  /* ---- Gerak ---- */
+  /* ---- Gerak: perubahan status, bukan dekorasi ---- */
   --lr-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --lr-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --lr-ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
   --lr-dur-fast: 120ms;
   --lr-dur: 180ms;
-  --lr-dur-slow: 280ms;
-  --lr-dur-page: 420ms;
+  --lr-dur-slow: 240ms;
+  --lr-dur-page: 320ms;
   --lr-dur-ambient: 2400ms;
-  --lr-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --lr-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* ---- Tata letak ---- */
-  --lr-sidebar-w: 232px;
-  --lr-sidebar-w-collapsed: 60px;
-  --lr-topbar-h: 52px;
+  --lr-sidebar-w: 224px;
+  --lr-sidebar-w-collapsed: 56px;
+  --lr-topbar-h: 48px;
   --lr-content-max: 1600px;
-  --lr-row-h: 34px;
-  --lr-row-h-compact: 28px;
+  --lr-row-h: 32px;
+  --lr-row-h-compact: 26px;
 
   --lr-z-bg: 0;
   --lr-z-app: 1;
@@ -185,33 +195,20 @@
   --lr-dur-ambient: 0ms;
 }
 
-/* Tanpa dukungan backdrop-filter: kaca dibuat lebih pekat agar teks tetap terbaca di atas animasi. */
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root {
-    --lr-glass: rgb(8 12 21 / 0.88);
-    --lr-glass-soft: rgb(8 12 21 / 0.88);
-    --lr-glass-bg: rgb(9 13 22 / 0.86);
-  }
-}
-
-/* Pengguna meminta transparansi dikurangi: panel opak. */
+/* Permukaan sudah opak; transparansi tersisa hanya pada scrim laci navigasi. */
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --lr-glass: #0b111b;
-    --lr-glass-strong: #080d16;
-    --lr-glass-soft: #111925;
-    --lr-glass-bg: #0b111b;
-    --lr-glass-bg-strong: #080d16;
-    --lr-glass-input: #05070d;
-    --lr-neural-scrim: #05070d;
+    --lr-neural-scrim: #141517;
   }
 }
 
 @media (prefers-contrast: more) {
   :root {
-    --lr-text-2: #b3bfcc;
-    --lr-text-3: #97a3b2;
-    --lr-border: #3a4655;
-    --lr-border-subtle: #2c3642;
+    --lr-text-2: #c3c7cd;
+    --lr-text-3: #a7acb4;
+    --lr-border: #4a4f58;
+    --lr-border-subtle: #3a3e46;
+    --lr-border-strong: #5b616b;
+    --lr-border-control: #8a9099;
   }
 }

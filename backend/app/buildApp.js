@@ -198,13 +198,14 @@ export async function buildApp({
     syncRunner: smSync,
   });
 
-  // Frontend statis. index.html hanya disajikan lewat route '/' yang memeriksa sesi.
+  // Frontend statis. index.html (aplikasi) dan landing.html (halaman awal) hanya disajikan lewat route '/' yang
+  // memeriksa sesi, sehingga keduanya punya satu alamat kanonik.
   await app.register(fastifyStatic, {
     root: FRONTEND_ROOT,
     index: false,
     wildcard: true,
     dotfiles: 'deny',
-    allowedPath: (pathName) => pathName !== '/index.html',
+    allowedPath: (pathName) => pathName !== '/index.html' && pathName !== '/landing.html',
   });
 
   // File vendor grafik: publik seperti aset statis lain (kode open-source, tanpa data), header cache & tipe konten
@@ -218,16 +219,18 @@ export async function buildApp({
     return reply.sendFile(CHART_VENDOR_FILE, CHART_VENDOR_DIR);
   });
 
+  // '/': tanpa sesi → halaman awal publik (pintu depan privat, noindex, tanpa data); dengan sesi → aplikasi.
+  // Hash-route lama (/#/overview, dst.) tetap berlaku: fragmen tidak pernah sampai ke server.
+  // cacheControl: false → @fastify/static tidak menimpa header no-store di bawah (sebelumnya menjadi public, max-age=0).
   app.get('/', { config: { public: true } }, async (request, reply) => {
-    if (!request.auth) return reply.redirect('/login.html', 302);
     reply.header('Cache-Control', 'no-store');
-    return reply.sendFile('index.html');
+    return reply.sendFile(request.auth ? 'index.html' : 'landing.html', { cacheControl: false });
   });
 
   app.get('/login.html', { config: { public: true } }, async (request, reply) => {
     if (request.auth) return reply.redirect('/', 302);
     reply.header('Cache-Control', 'no-store');
-    return reply.sendFile('login.html');
+    return reply.sendFile('login.html', { cacheControl: false });
   });
 
   let purgeTimer;

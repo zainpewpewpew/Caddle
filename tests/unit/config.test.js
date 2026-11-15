@@ -124,3 +124,17 @@ describe('konfigurasi WORKER_CONTROL & WORKER_AUTOSTART (tombol scanner di websi
     expect(() => loadConfig({ [name]: value })).toThrow(`${name} harus 'true' atau 'false'`);
   });
 });
+
+describe('konfigurasi BINANCE_DNS (cara me-resolve host Binance)', () => {
+  it('UNIT-CFG-011 BINANCE_DNS default doh (DNS-over-HTTPS); system dihormati', () => {
+    expect(loadConfig({}).binanceDns).toBe('doh');
+    expect(loadConfig({ BINANCE_DNS: '  ' }).binanceDns).toBe('doh');
+    expect(loadConfig({ BINANCE_DNS: 'doh' }).binanceDns).toBe('doh');
+    expect(loadConfig({ BINANCE_DNS: 'system' }).binanceDns).toBe('system');
+  });
+
+  it.each(['DOH', 'warp', 'true', 'dot'])('NEG-CFG-009 BINANCE_DNS=%s tidak valid ditolak', (value) => {
+    expect(() => loadConfig({ BINANCE_DNS: value })).toThrow(ConfigError);
+    expect(() => loadConfig({ BINANCE_DNS: value })).toThrow('BINANCE_DNS harus salah satu dari: doh, system');
+  });
+});

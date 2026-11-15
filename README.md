@@ -47,7 +47,7 @@ npm ci
 cp config/.env.example .env          # sesuaikan bila perlu
 npm run migrate                      # membuat/memperbarui skema database
 npm run user:create -- --username mary --role admin   # opsional (lihat Login prototipe); kata sandi diminta tersembunyi
-npm start                            # http://127.0.0.1:8080
+npm start                            # http://127.0.0.1:8080 → halaman awal; tombol Masuk ke /login.html
 ```
 
 > **Setelah `git pull`:** jalankan `npm ci` lagi bila `package.json`/`package-lock.json` berubah (mis. library grafik `lightweight-charts`). Server tetap start tanpa paket itu, tetapi grafik koin tidak tersedia dan log startup memperingatkan.
@@ -88,8 +88,19 @@ Worker scanner selalu berjalan sebagai **proses terpisah** dari server API, deng
 |---|---|---|
 | `WORKER_CONTROL` | aktif bila `NODE_ENV=development`; nonaktif di `test` & `production` | `true`/`false`: menampilkan & mengizinkan tombol scanner di website. Saat nonaktif, API start/stop menjawab 503 dan System Health menyarankan `npm run worker`. |
 | `WORKER_AUTOSTART` | `false` | `true`: server langsung menjalankan worker saat start (butuh `WORKER_CONTROL` aktif; tercatat di audit). Dibatalkan bila worker di luar website sedang berjalan. |
+| `BINANCE_DNS` | `doh` | Cara me-resolve host Binance. `doh`: DNS-over-HTTPS **khusus** `*.binance.com` / `*.binance.vision` (lihat di bawah). `system`: resolver sistem saja (perilaku lama). Nilai lain membuat server dan worker menolak start. |
 
 Nilai selain `true`/`false` membuat server menolak start (fail fast).
+
+### Jaringan yang memblokir DNS Binance (tanpa WARP/VPN)
+
+Sebagian ISP membajak DNS `*.binance.com`: resolver sistem, dan bahkan DNS biasa ke 1.1.1.1/8.8.8.8, dijawab IP halaman blokir, padahal koneksi ke IP asli Binance tetap lancar. Dulu scanner hanya jalan setelah WARP dinyalakan. Dengan `BINANCE_DNS=doh` (default), worker dan server me-resolve **hanya** host Binance lewat DNS-over-HTTPS ke `1.1.1.1`, `8.8.8.8`, `1.0.0.1`, `8.8.4.4` (dipanggil dengan IP, jadi tidak butuh DNS sistem). Host lain tetap memakai resolver sistem.
+
+- TLS tidak berubah: SNI dan verifikasi sertifikat tetap memakai nama host asli Binance. DoH hanya memilih IP tujuan; jawaban yang menunjuk jaringan lokal/privat ditolak.
+- Jawaban di-cache sesuai TTL (30 detik–10 menit). Bila semua resolver DoH gagal, jawaban lama dipakai hingga 1 jam; tanpa cache, worker jatuh ke resolver sistem dan mencatat peringatan.
+- Log worker saat start: `DNS Binance: DNS-over-HTTPS (khusus host Binance)`.
+- Jaringan yang memblokir koneksi ke Binance di level TLS/IP (bukan hanya DNS) tetap butuh VPN; DoH tidak menolong di situ. Cek cepat: `curl --resolve fapi.binance.com:443:<IP dari DoH> https://fapi.binance.com/fapi/v1/ping` harus menjawab `{}`.
+- Implementasi: `backend/ingestion/binance/doh.js` dan `network.js` (undici); tes UNIT-DOH-*, INT-DOH-*.
 
 ## Grafik koin & detail simbol
 
@@ -132,6 +143,7 @@ Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
 | `npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01` | Backtest walk-forward sebelum (v2) vs sesudah (v3); laporan di `reports/` ([docs/13](docs/13-panduan-akurasi-v3.md)) |
 | `npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01 --ml` | Sama, plus lab meta-labeling ML (bagian "Lab meta-labeling" di laporan; [docs/16](docs/16-riset-machine-learning.md)) |
 | `npm run reversal:replay -- --synthetic --seeds 21-60` / `-- --top 20 --timeframes 5m,15m,1h --from 2025-06-01` | Replay berurutan Reversal Radar (tanpa look-ahead) pada skenario sintetis atau data Binance nyata, pembanding mesin lama SA/PVA, laporan di `reports/` ([docs/21](docs/21-validasi-reversal-radar.md)); `--params '{"minEarlyGroups":1}'` meng-override parameter mesin untuk penyetelan (hanya pada `--seeds 1-20 --tuning`) |
+| `npm run research:bsv -- --window explore` / `-- --window oos` | Riset formulasi LONG 1h BSV-1h: paritas eksplorasi atau uji luar sampel terpraregistrasi (studi kejadian + funding historis), laporan di `reports/research/` ([docs/23](docs/23-riset-formulasi-candle-short15m-long1h.md)). Hasil 2026-11-15: tidak lulus, tidak dipakai scanner |
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |
@@ -150,8 +162,9 @@ backend/
   settings/     skema & aturan pengaturan scanner
   users/        administrasi pengguna (CLI) & akun default prototipe lokal
   database/     koneksi, runner migrasi, migrations/, repositories/
-  ingestion/    klien REST/WebSocket Binance, validasi candle, discovery, backfill
+  ingestion/    klien REST/WebSocket Binance (DNS-over-HTTPS khusus host Binance), validasi candle, discovery, backfill
   indicators/   EMA, ATR, RVOL, swing (fungsi murni)
+  research/     formulasi riset yang diuji luar sampel; tidak dipakai worker/scanner live (docs/23)
   patterns/     detektor SA & PVA (LONG) serta SD & PVD (SHORT, cermin SA/PVA) berversi
   timeframe/    trend & alignment multi-timeframe
   scoring/      skor, risk flag, penjelasan
@@ -161,8 +174,9 @@ backend/
   system/       status worker, supervisor worker (tombol scanner), konteks pasar
 worker/         proses scanner terpisah (dijalankan server lewat tombol, atau npm run worker)
 frontend/
-  index.html, login.html
-  css/          tokens.css (design tokens), base, layout, components, login
+  index.html, login.html, landing.html (halaman awal publik di "/" tanpa sesi)
+  css/          tokens.css (design tokens "Konsol Grafit"), base, layout, components, login, landing
+  fonts/        Atkinson Hyperlegible Next & Mono (self-hosted, SIL OFL 1.1)
   js/lib/       dom (render aman XSS), api, router, format, komponen UI
   js/views/     satu modul per layar
   assets/       logo & sprite ikon SVG

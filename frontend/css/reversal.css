@@ -1,4 +1,4 @@
-/* AlphaLens — LONG Scanner "Reversal Radar" (reversalRadar.js + reversalFormat.js), tema "Neural Aurora".
+/* AlphaLens — LONG Scanner "Reversal Radar" (reversalRadar.js + reversalFormat.js), dunia "Konsol Grafit".
  *
  * - Tiga panel tahap bertumpuk urutan tetap (Early Formation, Developing Reversal, Confirmed Breakout) dengan aksen
  *   warna per tahap; badge jumlah per timeframe di header panel (bukan .badge agar tidak tertukar dengan hitung hasil
@@ -26,14 +26,11 @@
 /* "— Reversal Radar": bagian judul yang tampak, di luar <h1> agar nama heading tetap "LONG Scanner". */
 .rr-title__sub {
   position: relative;
-  padding-left: var(--lr-space-3);
+  padding-left: 1.5em;
   font-size: var(--lr-text-lg);
   font-weight: var(--lr-weight-semibold);
   letter-spacing: -0.01em;
-  background: var(--lr-gradient-brand, linear-gradient(135deg, var(--lr-accent), var(--lr-accent)));
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
+  color: var(--lr-text-2);
   white-space: nowrap;
 }
 
@@ -51,6 +48,8 @@
 
 .rr-toolbar {
   border-bottom: 0;
+  /* Label sejajar di atas: field Sensitivitas berpetunjuk lebih tinggi tidak lagi mendorong field lain ke bawah. */
+  align-items: flex-start;
 }
 
 .rr-toolbar .rr-toolbar__tf {
@@ -80,11 +79,11 @@
 /* ---------- Panel per tahap ---------- */
 .rr-stage {
   --lr-rr-tone: var(--lr-accent);
-  border-left: 2px solid color-mix(in srgb, var(--lr-rr-tone) 70%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--lr-rr-tone) 70%, transparent);
 }
 
 .rr-stage[data-stage="EARLY_FORMATION"] { --lr-rr-tone: var(--lr-accent); }
-.rr-stage[data-stage="DEVELOPING_REVERSAL"] { --lr-rr-tone: var(--lr-neural-cyan, var(--lr-accent)); }
+.rr-stage[data-stage="DEVELOPING_REVERSAL"] { --lr-rr-tone: var(--lr-accent, var(--lr-accent)); }
 .rr-stage[data-stage="CONFIRMED_BREAKOUT"] { --lr-rr-tone: var(--lr-bull); }
 
 .rr-stage .panel__title {
@@ -93,15 +92,27 @@
 
 .rr-stage .panel__title::before {
   background: var(--lr-rr-tone);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--lr-rr-tone) 60%, transparent);
+  box-shadow: none;
+}
+
+/* Deskripsi tahap di baris judul panel (dipindah oleh reversalRadar.js): satu baris, membungkus di layar sempit. */
+.rr-stage .panel__header {
+  flex-wrap: wrap;
 }
 
 .rr-stage__desc {
+  flex: 1 1 18rem;
+  min-width: 0;
   margin: 0;
-  padding: var(--lr-space-2) var(--lr-space-4) var(--lr-space-3);
   color: var(--lr-text-2);
   font-size: var(--lr-text-xs);
-  border-bottom: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
+}
+
+/* Catatan skor di bawah tabel tahap (bukan di panel filter). */
+.rr-footnote {
+  max-width: 44rem;
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-xs);
 }
 
 .rr-stage__unavailable {
@@ -159,7 +170,7 @@
 }
 
 .rr-pill[data-status="NEW"] { --lr-rr-pill: var(--lr-accent); }
-.rr-pill[data-status="DEVELOPING"] { --lr-rr-pill: var(--lr-neural-cyan, var(--lr-accent)); }
+.rr-pill[data-status="DEVELOPING"] { --lr-rr-pill: var(--lr-accent, var(--lr-accent)); }
 .rr-pill[data-status="CONFIRMED"] { --lr-rr-pill: var(--lr-bull); }
 .rr-pill[data-status="CANCELLED"] { --lr-rr-pill: var(--lr-bear); }
 .rr-pill[data-status="EXPIRED"] { --lr-rr-pill: var(--lr-text-3); }
@@ -170,7 +181,7 @@
   height: 6px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 6px currentColor;
+  box-shadow: none;
 }
 
 .rr-pill[data-status="CONFIRMED"] .rr-pill__text {
@@ -237,7 +248,10 @@
 .rr-evidence-cell__labels {
   overflow: hidden;
   color: var(--lr-text-2);
+  /* Prosa bukti dalam sans (hitungan tetap mono lewat .num) — mono untuk prosa adalah kostum. */
+  font-family: var(--lr-font-sans);
   font-size: var(--lr-text-xs);
+  letter-spacing: 0;
   text-overflow: ellipsis;
 }
 
@@ -248,7 +262,7 @@
 }
 
 .page--reversal .table tbody tr.is-provisional > td:first-child {
-  box-shadow: inset 2px 0 0 var(--lr-warn);
+  box-shadow: inset 1px 0 0 var(--lr-warn);
 }
 
 .page--reversal .table tbody tr.is-provisional .mono {
@@ -283,10 +297,10 @@
 .rr-section__title {
   margin: 0;
   color: var(--lr-text-3);
-  font-size: var(--lr-text-2xs);
+  font-size: var(--lr-text-sm);
+  font-variant-caps: all-small-caps;
   font-weight: var(--lr-weight-semibold);
   letter-spacing: var(--lr-tracking-caps);
-  text-transform: uppercase;
 }
 
 .rr-section__text {
@@ -315,7 +329,7 @@
   align-items: baseline;
   gap: 2px var(--lr-space-2);
   padding: var(--lr-space-1) var(--lr-space-2);
-  border-left: 2px solid var(--lr-rr-group);
+  border-left: 1px solid var(--lr-rr-group);
   border-radius: var(--lr-radius-xs);
   background: color-mix(in srgb, var(--lr-rr-group) 7%, transparent);
   font-size: var(--lr-text-xs);
@@ -323,8 +337,8 @@
 }
 
 .rr-evidence__item[data-group="EXHAUSTION"] { --lr-rr-group: var(--lr-accent); }
-.rr-evidence__item[data-group="BASE"] { --lr-rr-group: var(--lr-neural-violet, var(--lr-accent)); }
-.rr-evidence__item[data-group="STRUCTURE"] { --lr-rr-group: var(--lr-neural-cyan, var(--lr-accent)); }
+.rr-evidence__item[data-group="BASE"] { --lr-rr-group: var(--lr-violet, var(--lr-accent)); }
+.rr-evidence__item[data-group="STRUCTURE"] { --lr-rr-group: var(--lr-accent, var(--lr-accent)); }
 .rr-evidence__item[data-group="VOLUME"] { --lr-rr-group: var(--lr-warn); }
 .rr-evidence__item[data-group="TRIGGER"] { --lr-rr-group: var(--lr-bull); }
 
@@ -368,8 +382,8 @@
 }
 
 .rr-bar[data-group="EXHAUSTION"] { --lr-rr-group: var(--lr-accent); }
-.rr-bar[data-group="BASE"] { --lr-rr-group: var(--lr-neural-violet, var(--lr-accent)); }
-.rr-bar[data-group="STRUCTURE"] { --lr-rr-group: var(--lr-neural-cyan, var(--lr-accent)); }
+.rr-bar[data-group="BASE"] { --lr-rr-group: var(--lr-violet, var(--lr-accent)); }
+.rr-bar[data-group="STRUCTURE"] { --lr-rr-group: var(--lr-accent, var(--lr-accent)); }
 .rr-bar[data-group="VOLUME"] { --lr-rr-group: var(--lr-warn); }
 .rr-bar[data-group="TRIGGER"] { --lr-rr-group: var(--lr-bull); }
 
@@ -384,8 +398,8 @@
   display: block;
   height: 6px;
   overflow: hidden;
-  border-radius: var(--lr-radius-pill);
-  background: color-mix(in srgb, var(--lr-glass-border, var(--lr-border)) 80%, transparent);
+  border-radius: 1px;
+  background: var(--lr-surface-3);
 }
 
 .rr-bar__fill {
@@ -393,8 +407,8 @@
   width: 100%;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--lr-rr-group) 40%, transparent), var(--lr-rr-group));
-  box-shadow: 0 0 8px color-mix(in srgb, var(--lr-rr-group) 50%, transparent);
+  background: var(--lr-rr-group);
+  box-shadow: none;
   transform: scaleX(var(--lr-meter, 0));
   transform-origin: left center;
   animation: lr-rr-meter 900ms var(--lr-ease-out-expo, var(--lr-ease)) both;
@@ -424,14 +438,14 @@
 .rr-history .timeline__item[data-type="CANCELLED"] .timeline__dot {
   background: var(--lr-bear);
   border-color: var(--lr-bear);
-  box-shadow: 0 0 8px var(--lr-bear-line);
+  box-shadow: none;
 }
 
 /* ---------- Panel sekunder SA/PVA (mesin lama), terlipat ---------- */
 .rr-legacy {
   min-width: 0;
   border: 1px solid var(--lr-glass-border, var(--lr-border));
-  border-left: 2px solid var(--lr-border-strong);
+  border-left: 1px solid var(--lr-border-strong);
   border-radius: var(--lr-radius-lg);
   background: var(--lr-glass, var(--lr-surface));
 }
@@ -459,7 +473,7 @@
   width: 7px;
   height: 7px;
   margin-right: 2px;
-  border-right: 1.5px solid currentColor;
+  border-right: 1px solid currentColor;
   border-bottom: 1.5px solid currentColor;
   transform: rotate(-45deg);
   transition: transform var(--lr-dur-fast) var(--lr-ease);
@@ -544,6 +558,29 @@
   }
 }
 
+/* Ponsel: .toolbar menjadi baris geser (components.css). Field kembali selebar isinya, bukan 100%, agar field
+   berikutnya terlihat mengintip di tepi kanan dan baris itu terbaca bisa digeser. */
+@media (max-width: 640px) {
+  .rr-toolbar .field {
+    width: 150px;
+  }
+
+  .rr-toolbar .rr-toolbar__tf {
+    width: auto;
+  }
+
+  .rr-toolbar .segmented {
+    flex-wrap: nowrap;
+  }
+
+  .rr-toolbar .rr-toolbar__toggles {
+    width: 16rem;
+    flex-direction: column;
+    align-self: flex-start;
+    gap: var(--lr-space-2);
+  }
+}
+
 /* ---------- Gerak dimatikan ---------- */
 @media (prefers-reduced-motion: reduce) {
   .rr-bar__fill {
@@ -575,15 +612,61 @@
   }
 
   .page--reversal .table tbody tr.is-provisional > td:first-child {
-    border-left: 3px dashed Highlight;
+    border-left: 1px dashed Highlight;
   }
 }
 
-/* Catatan status validasi data nyata (docs/21 §6.6) di bawah judul — transparansi, bukan fitur. */
+/* Catatan status validasi data nyata (docs/21 §6.6) di bawah judul — transparansi, bukan fitur. Ringkasan negatifnya
+   selalu tampil; teks lengkap (apa adanya) di dalam <details>. */
 .rr-validation {
   margin: var(--lr-space-2) 0 0;
-  max-width: 78ch;
+  max-width: 44rem;
   font-size: var(--lr-text-sm);
-  line-height: 1.45;
   color: var(--lr-text-2);
+}
+
+.rr-validation__summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lr-space-2);
+  color: var(--lr-text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.rr-validation__summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Penanda kotak bernada waspada + panah buka/tutup (segitiga CSS). */
+.rr-validation__summary::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--lr-warn);
+}
+
+.rr-validation__summary::after {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--lr-text-3);
+  transition: transform var(--lr-dur) var(--lr-ease);
+}
+
+.rr-validation[open] .rr-validation__summary::after {
+  transform: rotate(180deg);
+}
+
+.rr-validation__text {
+  margin-top: var(--lr-space-2);
+  padding: var(--lr-space-3) var(--lr-space-4);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-sm);
+  background: var(--lr-bg-sunken);
+  line-height: 1.5;
 }

@@ -51,6 +51,9 @@ describe('alur positif autentikasi', () => {
     expect(page.statusCode).toBe(200);
     expect(page.headers['content-type']).toContain('text/html');
     expect(page.body).toContain('AlphaLens');
+    // Dengan sesi "/" adalah aplikasi, bukan halaman awal publik.
+    expect(page.body).toContain('id="app"');
+    expect(page.body).not.toContain('id="lp-main"');
     const loginPage = await ctx.app.inject({ url: '/login.html', headers: { cookie } });
     expect(loginPage.statusCode).toBe(302);
     expect(loginPage.headers.location).toBe('/');

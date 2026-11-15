@@ -1,20 +1,17 @@
 /* AlphaLens — Symbol Intelligence, grafik koin, System Health, Pengaturan "Tampilan", Lab, Backtest, roadmap
-   "segera hadir". Tema "Neural Aurora": kaca gelap, aksen cyan → violet, bull emerald / bear rose.
+   "segera hadir". Dunia "Konsol Grafit": permukaan grafit, seam 1px, warna hanya untuk status (bull/bear/warn/aksen).
    Hanya merujuk token --lr-*; varian transparan dibuat dengan color-mix() dari token (tanpa warna literal).
-   Semua animasi di sini dekoratif dan dimatikan oleh prefers-reduced-motion atau <html data-motion="off|reduced">. */
+   Gerak di sini mengikuti status nyata dan dimatikan oleh prefers-reduced-motion atau <html data-motion="off|reduced">. */
 
 /* ======================================================================
    Grafik koin (panel samping scanner & halaman detail)
    ====================================================================== */
 
-/* Kanvas library transparan → latar kaca + kilau aurora sangat halus terlihat di belakang candle. */
+/* Kanvas library transparan → bidang grafit cekung dengan seam 1px di belakang candle. */
 .chart__canvas {
-  background:
-    radial-gradient(120% 80% at 100% 0%, var(--lr-neural-cyan-soft) 0%, transparent 55%),
-    radial-gradient(90% 70% at 0% 100%, var(--lr-neural-violet-soft) 0%, transparent 60%),
-    color-mix(in srgb, var(--lr-bg-sunken) 55%, transparent);
-  border: 1px solid var(--lr-glass-border);
-  box-shadow: inset 0 1px 0 var(--lr-glass-highlight);
+  background: var(--lr-bg-sunken);
+  border: 1px solid var(--lr-border);
+  box-shadow: none;
 }
 
 .chart-panel .panel__title {
@@ -29,7 +26,7 @@
 .chart__swatch[data-series="ema7"],
 .chart__swatch[data-series="ema25"] {
   height: 3px;
-  box-shadow: 0 0 6px var(--lr-chart-swatch, transparent);
+  box-shadow: none;
 }
 
 /* OHLC candle di bawah crosshair (nilai nyata dari data grafik). */
@@ -67,14 +64,14 @@
   color: var(--lr-bear);
 }
 
-/* Kerangka grafik: shimmer bergaris seperti sinyal yang merambat. */
+/* Kerangka grafik: kisi sumbu tipis + sapuan muat. */
 .chart-skeleton .skeleton {
   position: relative;
   overflow: hidden;
   background:
-    linear-gradient(90deg, transparent 0%, var(--lr-neural-cyan-soft) 50%, transparent 100%) 0 0 / 40% 100% no-repeat,
-    repeating-linear-gradient(0deg, transparent 0 47px, color-mix(in srgb, var(--lr-glass-border) 70%, transparent) 47px 48px),
-    var(--lr-glass-soft);
+    linear-gradient(90deg, transparent 0%, rgb(255 255 255 / 0.04) 50%, transparent 100%) 0 0 / 40% 100% no-repeat,
+    repeating-linear-gradient(0deg, transparent 0 47px, var(--lr-border-subtle) 47px 48px),
+    var(--lr-bg-sunken);
   animation: lr-symbol-shimmer 1.6s var(--lr-ease) infinite;
 }
 
@@ -97,15 +94,9 @@
   align-items: center;
   padding: var(--lr-space-5) var(--lr-space-6);
   overflow: hidden;
-  border: 1px solid var(--lr-glass-border-strong);
-  border-radius: var(--lr-radius-lg);
-  background:
-    radial-gradient(70% 120% at 0% 0%, color-mix(in srgb, var(--lr-hero-tone) 16%, transparent) 0%, transparent 60%),
-    radial-gradient(60% 120% at 100% 100%, var(--lr-neural-violet-soft) 0%, transparent 65%),
-    var(--lr-glass);
-  backdrop-filter: blur(14px) saturate(140%);
-  box-shadow: inset 0 1px 0 var(--lr-glass-highlight), var(--lr-shadow-2);
-  animation: lr-symbol-rise var(--lr-dur-page) var(--lr-ease-out-expo) both;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-surface);
 }
 
 .symbol-hero[data-direction="SHORT"] {
@@ -113,24 +104,18 @@
   --lr-hero-glow: var(--lr-glow-bear);
 }
 
-/* Garis cahaya tipis di tepi atas hero, warna mengikuti arah. */
+/* Pita arah 2px di tepi atas hero: warna = arah sinyal (LONG/SHORT), bukan dekorasi. */
 .symbol-hero::before {
   content: "";
   position: absolute;
   inset: 0 0 auto;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--lr-hero-tone), var(--lr-neural-cyan), transparent);
-  opacity: 0.7;
+  height: 2px;
+  background: var(--lr-hero-tone);
 }
 
+/* Ilustrasi jaringan lama tidak lagi digambar di belakang hero. */
 .symbol-hero__art {
-  position: absolute;
-  inset: 0 0 0 auto;
-  z-index: -1;
-  width: min(520px, 60%);
-  opacity: 0.5;
-  pointer-events: none;
-  mask-image: linear-gradient(90deg, transparent 0%, black 45%);
+  display: none;
 }
 
 .symbol-hero__art .synapse-art {
@@ -145,12 +130,10 @@
   min-width: 0;
 }
 
-.symbol-hero__eyebrow {
+/* Konteks data di BAWAH ticker (bukan eyebrow di atas judul). */
+.symbol-hero__meta {
   color: var(--lr-text-3);
-  font-size: var(--lr-text-2xs);
-  font-weight: var(--lr-weight-semibold);
-  letter-spacing: var(--lr-tracking-caps);
-  text-transform: uppercase;
+  font-size: var(--lr-text-xs);
 }
 
 .symbol-hero__ticker {
@@ -170,10 +153,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: linear-gradient(120deg, var(--lr-text) 10%, var(--lr-neural-cyan) 55%, var(--lr-neural-violet) 100%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
+  color: var(--lr-text);
 }
 
 .symbol-hero__quote {
@@ -195,7 +175,7 @@
 
 /* Kartu metrik kaca. */
 .hero-stat {
-  --lr-stat-tone: var(--lr-neural-cyan);
+  --lr-stat-tone: var(--lr-accent);
   position: relative;
   overflow: hidden;
   background: var(--lr-glass-strong);
@@ -212,12 +192,12 @@
 
 .hero-stat[data-tone="bull"] { --lr-stat-tone: var(--lr-bull); }
 .hero-stat[data-tone="bear"] { --lr-stat-tone: var(--lr-bear); }
-.hero-stat[data-tone="accent"] { --lr-stat-tone: var(--lr-neural-cyan); }
+.hero-stat[data-tone="accent"] { --lr-stat-tone: var(--lr-accent); }
 
 .hero-stat:hover {
   border-color: color-mix(in srgb, var(--lr-stat-tone) 45%, transparent);
   background: var(--lr-glass-strong);
-  box-shadow: inset 0 1px 0 var(--lr-glass-highlight), 0 0 18px color-mix(in srgb, var(--lr-stat-tone) 20%, transparent);
+  box-shadow: inset 0 1px 0 var(--lr-glass-highlight);
   transform: translateY(-1px);
 }
 
@@ -239,8 +219,8 @@
   width: 100%;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--lr-neural-violet), var(--lr-stat-tone));
-  box-shadow: 0 0 8px var(--lr-stat-tone);
+  background: var(--lr-stat-tone);
+  box-shadow: none;
   transform: scaleX(var(--lr-meter, 0));
   transform-origin: left center;
   animation: lr-symbol-meter 900ms var(--lr-ease-out-expo) both;
@@ -255,10 +235,6 @@
   to { opacity: 1; transform: none; }
 }
 
-.symbol-layout > * {
-  animation: lr-symbol-rise var(--lr-dur-page) var(--lr-ease-out-expo) both;
-  animation-delay: 80ms;
-}
 
 .symbol-empty-art {
   display: grid;
@@ -279,11 +255,11 @@
 }
 
 .factor-list .factor:hover {
-  background: var(--lr-neural-cyan-soft);
+  background: var(--lr-accent-soft);
 }
 
 .timeline__item[data-state="active"] .timeline__dot {
-  box-shadow: 0 0 0 3px var(--lr-neural-cyan-soft), 0 0 12px var(--lr-neural-glow);
+  box-shadow: 0 0 0 3px var(--lr-accent-soft);
 }
 
 @media (max-width: 1100px) {
@@ -302,17 +278,17 @@
    Ilustrasi sinaps SVG (roadmap.js synapseArt) — dekoratif
    ====================================================================== */
 .synapse-art {
-  --lr-synapse-tone: var(--lr-neural-cyan);
+  --lr-synapse-tone: var(--lr-accent);
   display: block;
   overflow: visible;
 }
 
 .synapse-art[data-tone="bull"] { --lr-synapse-tone: var(--lr-bull); }
 .synapse-art[data-tone="bear"] { --lr-synapse-tone: var(--lr-bear); }
-.synapse-art[data-tone="violet"] { --lr-synapse-tone: var(--lr-neural-violet); }
+.synapse-art[data-tone="violet"] { --lr-synapse-tone: var(--lr-violet); }
 
 .synapse-art__edge {
-  stroke: color-mix(in srgb, var(--lr-synapse-tone) 22%, transparent);
+  stroke: var(--lr-border-strong);
   stroke-width: 1;
 }
 
@@ -322,7 +298,6 @@
   stroke-linecap: round;
   stroke-dasharray: 14 86;
   stroke-dashoffset: 100;
-  filter: drop-shadow(0 0 3px var(--lr-synapse-tone));
   animation: lr-synapse-travel 3.2s linear infinite;
   animation-delay: var(--lr-synapse-delay, 0s);
 }
@@ -340,33 +315,18 @@
   stroke-width: 1.4;
   transform-box: fill-box;
   transform-origin: center;
-  animation: lr-synapse-node 2.4s var(--lr-ease) infinite;
-  animation-delay: var(--lr-synapse-delay, 0s);
-}
-
-@keyframes lr-synapse-node {
-  0%, 100% { fill: var(--lr-bg); transform: scale(1); }
-  50% { fill: color-mix(in srgb, var(--lr-synapse-tone) 55%, var(--lr-bg)); transform: scale(1.18); }
 }
 
 .synapse-art__core {
-  fill: color-mix(in srgb, var(--lr-synapse-tone) 14%, transparent);
-  stroke: color-mix(in srgb, var(--lr-synapse-tone) 40%, transparent);
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: lr-synapse-core 3s var(--lr-ease) infinite;
-}
-
-@keyframes lr-synapse-core {
-  0%, 100% { transform: scale(0.9); opacity: 0.6; }
-  50% { transform: scale(1.25); opacity: 1; }
+  fill: var(--lr-bg-sunken);
+  stroke: var(--lr-synapse-tone);
 }
 
 /* ======================================================================
    "Segera hadir" (Lab, Backtest)
    ====================================================================== */
 .soon {
-  --lr-soon-tone: var(--lr-neural-cyan);
+  --lr-soon-tone: var(--lr-accent);
   position: relative;
   display: grid;
   grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.4fr);
@@ -374,35 +334,15 @@
   align-items: center;
   padding: var(--lr-space-6);
   overflow: hidden;
-  border: 1px solid var(--lr-glass-border-strong);
-  border-radius: var(--lr-radius-lg);
-  background:
-    radial-gradient(80% 120% at 0% 50%, color-mix(in srgb, var(--lr-soon-tone) 14%, transparent) 0%, transparent 60%),
-    var(--lr-glass);
-  backdrop-filter: blur(14px) saturate(140%);
-  box-shadow: inset 0 1px 0 var(--lr-glass-highlight), var(--lr-shadow-2);
-  animation: lr-symbol-rise var(--lr-dur-page) var(--lr-ease-out-expo) both;
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-surface);
 }
 
-.soon[data-tone="violet"] { --lr-soon-tone: var(--lr-neural-violet); }
+.soon[data-tone="violet"] { --lr-soon-tone: var(--lr-violet); }
 .soon[data-tone="bull"] { --lr-soon-tone: var(--lr-bull); }
 .soon[data-tone="bear"] { --lr-soon-tone: var(--lr-bear); }
 
-/* Garis pindai halus yang menyapu kartu. */
-.soon::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(100deg, transparent 40%, color-mix(in srgb, var(--lr-soon-tone) 8%, transparent) 50%, transparent 60%);
-  background-size: 250% 100%;
-  pointer-events: none;
-  animation: lr-soon-sweep 6s var(--lr-ease) infinite;
-}
-
-@keyframes lr-soon-sweep {
-  from { background-position: 120% 0; }
-  to { background-position: -120% 0; }
-}
 
 .soon__art .synapse-art {
   width: 100%;
@@ -442,10 +382,7 @@
   font-size: var(--lr-text-xl);
   font-weight: var(--lr-weight-semibold);
   letter-spacing: -0.02em;
-  background: linear-gradient(120deg, var(--lr-text) 20%, var(--lr-soon-tone) 100%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
+  color: var(--lr-text);
 }
 
 .soon__text {
@@ -481,7 +418,7 @@
   height: 7px;
   border-radius: 50%;
   background: var(--lr-soon-tone);
-  box-shadow: 0 0 8px var(--lr-soon-tone);
+  box-shadow: none;
 }
 
 /* Rantai alur kerja Lab: node bernomor tersambung garis berpulsa. */
@@ -503,9 +440,7 @@
   padding: var(--lr-space-2) var(--lr-space-3);
   border: 1px solid var(--lr-glass-border);
   border-radius: var(--lr-radius-sm);
-  background: var(--lr-glass-soft);
-  animation: lr-symbol-rise var(--lr-dur-page) var(--lr-ease-out-expo) both;
-  animation-delay: calc(var(--lr-step, 0) * 40ms);
+  background: var(--lr-surface-2);
 }
 
 .synapse-chain__node {
@@ -514,19 +449,12 @@
   place-items: center;
   width: 24px;
   height: 24px;
-  border: 1px solid var(--lr-neural-violet);
+  border: 1px solid var(--lr-violet);
   border-radius: 50%;
-  background: var(--lr-neural-violet-soft);
+  background: var(--lr-violet-soft);
   color: var(--lr-text);
   font-family: var(--lr-font-mono);
   font-size: var(--lr-text-2xs);
-  animation: lr-chain-glow 4s var(--lr-ease) infinite;
-  animation-delay: calc(var(--lr-step, 0) * 400ms);
-}
-
-@keyframes lr-chain-glow {
-  0%, 20%, 100% { box-shadow: none; }
-  10% { box-shadow: 0 0 0 3px var(--lr-neural-violet-soft), 0 0 14px var(--lr-neural-glow-violet); }
 }
 
 .synapse-chain__label {
@@ -567,9 +495,9 @@
 .metric-plan__state {
   margin-top: auto;
   color: var(--lr-text-3);
-  font-size: var(--lr-text-2xs);
+  font-size: var(--lr-text-sm);
+  font-variant-caps: all-small-caps;
   letter-spacing: var(--lr-tracking-caps);
-  text-transform: uppercase;
 }
 
 @media (max-width: 820px) {
@@ -604,8 +532,7 @@
   right: 12.5%;
   left: 12.5%;
   height: 1px;
-  background: linear-gradient(90deg, var(--lr-neural-cyan-soft), var(--lr-neural-violet), var(--lr-neural-cyan-soft));
-  opacity: 0.6;
+  background: var(--lr-border-strong);
 }
 
 .service-node {
@@ -617,8 +544,6 @@
   gap: var(--lr-space-2);
   min-width: 0;
   text-align: center;
-  animation: lr-symbol-rise var(--lr-dur-page) var(--lr-ease-out-expo) both;
-  animation-delay: calc(var(--lr-step, 0) * 60ms);
 }
 
 .service-node[data-state="ok"] { --lr-node-tone: var(--lr-bull); }
@@ -642,8 +567,8 @@
   height: 40px;
   border: 1px solid color-mix(in srgb, var(--lr-node-tone) 60%, transparent);
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--lr-node-tone) 28%, transparent), var(--lr-glass-strong) 70%);
-  box-shadow: 0 0 16px color-mix(in srgb, var(--lr-node-tone) 30%, transparent);
+  background: color-mix(in srgb, var(--lr-node-tone) 10%, var(--lr-surface));
+  box-shadow: none;
   color: var(--lr-node-tone);
 }
 
@@ -738,12 +663,9 @@
   width: 160px;
   height: 72px;
   overflow: hidden;
-  border: 1px solid var(--lr-glass-border);
+  border: 1px solid var(--lr-border);
   border-radius: var(--lr-radius-sm);
-  background:
-    radial-gradient(80% 100% at 20% 0%, var(--lr-neural-cyan-soft), transparent 70%),
-    radial-gradient(80% 100% at 90% 100%, var(--lr-neural-violet-soft), transparent 70%),
-    var(--lr-bg-sunken);
+  background: var(--lr-bg-sunken);
 }
 
 .appearance__dot {
@@ -752,13 +674,13 @@
   height: 8px;
   border-radius: 50%;
   background: var(--lr-neural-cyan);
-  box-shadow: 0 0 10px var(--lr-neural-glow);
+  box-shadow: none;
   animation: lr-preview-float 5s var(--lr-ease) infinite alternate;
 }
 
 .appearance__dot:nth-child(1) { top: 18px; left: 22px; }
 .appearance__dot:nth-child(2) { top: 44px; left: 78px; background: var(--lr-neural-violet); animation-delay: -1.6s; }
-.appearance__dot:nth-child(3) { top: 16px; left: 128px; background: var(--lr-neural-emerald); animation-delay: -3.1s; }
+.appearance__dot:nth-child(3) { top: 16px; left: 128px; background: var(--lr-neural-cyan); animation-delay: -3.1s; }
 
 .appearance__link {
   position: absolute;
@@ -766,8 +688,8 @@
   left: 26px;
   width: 62px;
   height: 1px;
-  background: linear-gradient(90deg, var(--lr-neural-cyan), var(--lr-neural-violet));
-  opacity: 0.6;
+  background: var(--lr-neural-violet);
+  opacity: 0.8;
   transform: rotate(22deg);
   transform-origin: left center;
 }
@@ -775,7 +697,7 @@
 .appearance__link--2 {
   left: 82px;
   width: 58px;
-  background: linear-gradient(90deg, var(--lr-neural-violet), var(--lr-neural-emerald));
+  background: var(--lr-neural-violet);
   transform: rotate(-26deg);
 }
 
@@ -922,8 +844,8 @@
   display: block;
   height: 6px;
   overflow: hidden;
-  border-radius: var(--lr-radius-pill);
-  background: color-mix(in srgb, var(--lr-glass-border) 80%, transparent);
+  border-radius: 1px;
+  background: var(--lr-surface-3);
 }
 
 .confluence__fill {
@@ -931,8 +853,8 @@
   width: 100%;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--lr-bar-tone) 40%, transparent), var(--lr-bar-tone));
-  box-shadow: 0 0 8px color-mix(in srgb, var(--lr-bar-tone) 50%, transparent);
+  background: var(--lr-bar-tone);
+  box-shadow: none;
   transform: scaleX(var(--lr-meter, 0));
   transform-origin: left center;
   animation: lr-symbol-meter 900ms var(--lr-ease-out-expo) both;
@@ -963,10 +885,10 @@
 .confluence__heading {
   margin: 0;
   color: var(--lr-note-tone);
-  font-size: var(--lr-text-2xs);
+  font-size: var(--lr-text-sm);
+  font-variant-caps: all-small-caps;
   font-weight: var(--lr-weight-semibold);
   letter-spacing: var(--lr-tracking-caps);
-  text-transform: uppercase;
 }
 
 .confluence__notes {
@@ -983,7 +905,7 @@
   align-items: baseline;
   gap: var(--lr-space-2);
   padding: var(--lr-space-1) var(--lr-space-2);
-  border-left: 2px solid var(--lr-note-tone);
+  border-left: 1px solid var(--lr-note-tone);
   border-radius: var(--lr-radius-xs);
   background: color-mix(in srgb, var(--lr-note-tone) 8%, transparent);
   font-size: var(--lr-text-xs);

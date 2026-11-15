@@ -39,7 +39,7 @@ function createManualTimers(start = T0) {
 describe('pembatas bobot Binance', () => {
   it('UNIT-BNL-001 bobot klines mengikuti tabel limit Binance; bobot endpoint lain', () => {
     expect([1, 99, 100, 499, 500, 1000, 1001, 1500].map(klinesWeight)).toEqual([1, 1, 2, 2, 5, 5, 10, 10]);
-    expect(ENDPOINT_WEIGHTS).toEqual({ time: 1, exchangeInfo: 1, ticker24hAll: 40, bookTickerAll: 5 });
+    expect(ENDPOINT_WEIGHTS).toEqual({ time: 1, exchangeInfo: 1, ticker24hAll: 40, bookTickerAll: 5, fundingRate: 1 });
     expect(() => klinesWeight(0)).toThrow(RangeError);
     expect(() => klinesWeight(1501)).toThrow(RangeError);
     expect(() => klinesWeight(2.5)).toThrow(RangeError);

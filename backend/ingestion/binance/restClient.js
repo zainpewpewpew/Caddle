@@ -2,17 +2,21 @@
 // Keamanan: host dibatasi allowlist (default hanya fapi.binance.com), https wajib, redirect
 // ditolak, dan URL TIDAK PERNAH berasal dari input pengguna — path endpoint adalah konstanta
 // di modul ini dan parameter query divalidasi ketat. Semua dependensi I/O diinjeksi.
+// DNS: fetch default = binanceFetch (network.js) — host Binance di-resolve lewat DoH bila BINANCE_DNS=doh (default),
+// sehingga ISP yang membajak DNS *.binance.com tidak memutus scanner. TLS tetap diverifikasi ke nama host asli.
 
 import { TIMEFRAMES } from '../../market/contracts.js';
 import { CLOSE_MARGIN_MS } from '../backfill.js';
 import { BinanceApiError, ERROR_CODES, sanitizeText } from './errors.js';
-import { parseBookTickers, parseExchangeInfo, parseKlines, parseServerTime, parseTickers24h } from './parse.js';
+import { binanceFetch } from './network.js';
+import { parseBookTickers, parseExchangeInfo, parseFundingRates, parseKlines, parseServerTime, parseTickers24h } from './parse.js';
 import { ENDPOINT_WEIGHTS, USED_WEIGHT_HEADER, createWeightLimiter, klinesWeight, parseUsedWeightHeader } from './rateLimiter.js';
 
 export const DEFAULT_BASE_URL = 'https://fapi.binance.com';
 export const DEFAULT_ALLOWED_HOSTS = Object.freeze(['fapi.binance.com']);
 export const MAX_KLINES_LIMIT = 1500;
 export const DEFAULT_KLINES_LIMIT = 500;
+export const MAX_FUNDING_LIMIT = 1000;
 
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 30_000;
@@ -30,6 +34,7 @@ const PATHS = Object.freeze({
   klines: '/fapi/v1/klines',
   ticker24h: '/fapi/v1/ticker/24hr',
   bookTicker: '/fapi/v1/ticker/bookTicker',
+  fundingRate: '/fapi/v1/fundingRate',
 });
 
 const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {} });
@@ -86,6 +91,15 @@ function validateKlinesQuery({ symbol, timeframe, startTime, endTime, limit = DE
   return { symbol, timeframe, startTime, endTime, limit };
 }
 
+function validateFundingQuery({ symbol, startTime, endTime, limit = MAX_FUNDING_LIMIT } = {}) {
+  if (typeof symbol !== 'string' || !SYMBOL_RE.test(symbol)) throw new TypeError('Simbol tidak valid');
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_FUNDING_LIMIT) throw new RangeError(`limit harus bilangan bulat 1..${MAX_FUNDING_LIMIT}`);
+  if (startTime !== undefined && !isEpochMs(startTime)) throw new RangeError('startTime harus epoch ms bilangan bulat ≥ 0');
+  if (endTime !== undefined && !isEpochMs(endTime)) throw new RangeError('endTime harus epoch ms bilangan bulat ≥ 0');
+  if (startTime !== undefined && endTime !== undefined && startTime > endTime) throw new RangeError('startTime tidak boleh melewati endTime');
+  return { symbol, startTime, endTime, limit };
+}
+
 /**
  * Buat klien REST Binance USDT-M Futures.
  * @param {{
@@ -94,6 +108,7 @@ function validateKlinesQuery({ symbol, timeframe, startTime, endTime, limit = DE
  *   maxWeightPerMinute?: number, timeoutMs?: number, maxRetries?: number,
  *   allowedHosts?: readonly string[], random?: () => number, closeMarginMs?: number, closureClock?: () => number,
  * }} [options]
+ *   - `fetch`: default binanceFetch (DNS sesuai BINANCE_DNS); tes selalu menginjeksi fetch palsu.
  *   - `clock`: jam (sebaiknya tersinkron dengan waktu server) untuk isClosed & jendela bobot.
  *   - `closureClock`: acuan isClosed kline (default `clock`; worker: serverClock.closureNow — tidak pernah di
  *     depan waktu server saat jam host diketahui salah).
@@ -102,7 +117,7 @@ function validateKlinesQuery({ symbol, timeframe, startTime, endTime, limit = DE
  *   - `random`: sumber jitter backoff (default Math.random); injeksi agar tes deterministik.
  */
 export function createBinanceRestClient({
-  fetch: fetchImpl = globalThis.fetch,
+  fetch: fetchImpl = binanceFetch,
   baseUrl = DEFAULT_BASE_URL,
   clock = Date.now,
   sleep = defaultSleep,
@@ -309,6 +324,20 @@ export function createBinanceRestClient({
     /** @returns {Promise<import('./parse.js').BookTicker[]>} semua simbol, dengan spreadBps */
     async getBookTickers() {
       return parseBookTickers(await request(PATHS.bookTicker, {}, ENDPOINT_WEIGHTS.bookTickerAll));
+    },
+
+    /**
+     * Riwayat funding rate satu simbol (GET /fapi/v1/fundingRate), urut naik, maks 1000 per panggilan — pemanggil
+     * memaginasi lewat startTime. Untuk riset/backtest (biaya funding posisi), bukan scanner live.
+     * @param {{ symbol: string, startTime?: number, endTime?: number, limit?: number }} query
+     * @returns {Promise<import('./parse.js').FundingRate[]>}
+     */
+    async getFundingRates(query) {
+      const q = validateFundingQuery(query);
+      const body = await request(PATHS.fundingRate, {
+        symbol: q.symbol, startTime: q.startTime, endTime: q.endTime, limit: q.limit,
+      }, ENDPOINT_WEIGHTS.fundingRate);
+      return parseFundingRates(body, { symbol: q.symbol });
     },
 
     /** Bobot terpakai di jendela menit berjalan (perkiraan lokal ∨ header Binance). */

@@ -3,6 +3,21 @@
 AlphaLens menyertakan dan menyajikan ke browser komponen pihak ketiga berikut. Berkas ini memenuhi kewajiban
 atribusi lisensinya. Kode AlphaLens sendiri berlisensi `UNLICENSED` (privat), lihat `package.json`.
 
+## Atkinson Hyperlegible Next & Atkinson Hyperlegible Mono (font)
+
+- Sumber: paket npm `@fontsource-variable/atkinson-hyperlegible-next@5.3.0` dan
+  `@fontsource-variable/atkinson-hyperlegible-mono@5.3.0` (upstream: Braille Institute,
+  <https://github.com/googlefonts/atkinson-hyperlegible-next>). Hanya berkas woff2 variabel (bobot 200–800) subset
+  latin dan latin-ext yang disalin ke `frontend/fonts/`; paket npm-nya tidak menjadi dependensi.
+- Berkas yang disajikan: `frontend/fonts/AtkinsonHyperlegibleNext-latin.woff2`,
+  `AtkinsonHyperlegibleNext-latin-ext.woff2`, `AtkinsonHyperlegibleMono-latin.woff2`,
+  `AtkinsonHyperlegibleMono-latin-ext.woff2` (dimuat oleh `frontend/css/base.css`, dari `'self'`).
+- Lisensi: SIL Open Font License 1.1. Teks lisensi lengkap beserta pemberitahuan hak cipta disertakan di samping
+  berkas font: `frontend/fonts/OFL-AtkinsonHyperlegibleNext.txt` dan `frontend/fonts/OFL-AtkinsonHyperlegibleMono.txt`.
+- Hak cipta: Copyright 2020-2024 The Atkinson Hyperlegible Next Project Authors (dan The Atkinson Hyperlegible Mono
+  Project Authors untuk varian mono).
+- Font tidak dimodifikasi dan tidak dijual terpisah; dipakai sebagai font antarmuka (UI dan angka).
+
 ## TradingView Lightweight Charts™ 5.2.1
 
 - Paket npm: `lightweight-charts@5.2.1` (dipin eksak di `package.json` / `package-lock.json`).

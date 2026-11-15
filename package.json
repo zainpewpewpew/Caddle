@@ -27,17 +27,19 @@
     "test:e2e": "playwright test",
     "test:live": "LIVE_BINANCE=1 vitest run --config vitest.live.config.js",
     "audit": "npm audit --omit=dev",
-    "report:tests": "vitest run --reporter=default --reporter=json --outputFile.json=reports/vitest-results.json && playwright test && node scripts/test-report.js"
+    "report:tests": "vitest run --reporter=default --reporter=json --outputFile.json=reports/vitest-results.json && playwright test && node scripts/test-report.js",
+    "research:bsv": "node --env-file-if-exists=.env scripts/research-bsv-1h.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",
     "@fastify/helmet": "13.2.0",
     "@fastify/rate-limit": "11.2.1",
-    "@fastify/static": "10.1.7",
+    "@fastify/static": "10.1.10",
     "argon2": "0.45.1",
     "better-sqlite3": "13.0.3",
     "fastify": "5.12.7",
-    "lightweight-charts": "5.2.1"
+    "lightweight-charts": "5.2.1",
+    "undici": "7.30.1"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

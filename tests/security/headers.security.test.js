@@ -94,4 +94,23 @@ describe('rate limit aset statis', () => {
     expect(html).toMatch(/id="login-submit" disabled/);
     await ctx.app.close();
   });
+
+  it('SEC-UI-002 halaman awal publik: noindex, header keamanan, hanya sumber self, tanpa skrip/gaya inline, tautan Masuk', async () => {
+    const ctx = await createTestApp({ users: [] });
+    const res = await ctx.app.inject({ url: '/' });
+    const html = res.body;
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-security-policy']).toContain("default-src 'self'");
+    expect(res.headers['content-security-policy']).toContain("script-src 'self'");
+    expect(html).toMatch(/<meta name="robots" content="noindex, nofollow">/);
+    // Tanpa sumber pihak ketiga (font, skrip, gambar, stylesheet semuanya dari 'self').
+    expect(html).not.toMatch(/(src|href)="(https?:)?\/\//);
+    // Tanpa skrip inline dan tanpa atribut style (CSP style-src 'self').
+    expect(html).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/);
+    expect(html).not.toMatch(/\sstyle="/);
+    expect(html).toMatch(/href="\/login\.html"/);
+    // Pintu depan privat: tidak ada ajakan mendaftar.
+    expect(html).not.toMatch(/daftar sekarang|sign up|register/i);
+    await ctx.app.close();
+  });
 });

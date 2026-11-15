@@ -1,0 +1,661 @@
+/* AlphaLens — halaman awal (pintu depan privat), dunia "Konsol Grafit".
+ * Konsol yang memperkenalkan dirinya: judul, strip pipeline sync (ilustrasi, digerakkan landing.js), modul bergaris
+ * seam, jalur tahap LONG/SHORT, batasan, akses. Tanpa gradien, kaca, atau glow.
+ * Gerak mati pada prefers-reduced-motion dan :root[data-motion="off"|"reduced"]. */
+
+.lp-body {
+  background: var(--lr-bg);
+}
+
+.lp {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.lp-main {
+  flex: 1;
+  width: min(1200px, 100%);
+  margin: 0 auto;
+  padding: 0 var(--lr-space-6);
+}
+
+.lp-main:focus,
+.lp-main:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+
+/* ---- Bilah atas ---- */
+.lp-bar {
+  position: sticky;
+  top: 0;
+  z-index: var(--lr-z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--lr-space-6);
+  height: var(--lr-topbar-h);
+  padding: 0 var(--lr-space-6);
+  border-bottom: 1px solid var(--lr-border);
+  background: var(--lr-bg);
+}
+
+.lp-bar__brand {
+  height: auto;
+  padding: 0;
+}
+
+.lp-bar__nav {
+  display: flex;
+  gap: var(--lr-space-5);
+}
+
+.lp-bar__nav a {
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-sm);
+}
+
+.lp-bar__nav a:hover {
+  color: var(--lr-text);
+}
+
+.lp-bar__login {
+  margin-left: auto;
+}
+
+/* ---- Hero ---- */
+.lp-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--lr-space-5);
+  padding: clamp(3rem, 2rem + 4vw, 6rem) 0 var(--lr-space-10);
+}
+
+.lp-hero__title {
+  max-width: 14ch;
+  font-size: var(--lr-text-display);
+  font-weight: var(--lr-weight-semibold);
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+
+.lp-hero__lead {
+  max-width: 33rem;
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-lg);
+  line-height: 1.55;
+}
+
+.lp-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lr-space-3);
+}
+
+.lp-cta {
+  height: 40px;
+  padding: 0 var(--lr-space-5);
+  font-size: var(--lr-text-md);
+}
+
+.lp-cta:hover {
+  text-decoration: none;
+}
+
+.lp-hero__note {
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-xs);
+}
+
+/* ---- Strip pipeline sync (ilustrasi) ---- */
+.lp-pipe {
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-surface);
+}
+
+.lp-pipe__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lr-space-2) var(--lr-space-4);
+  min-height: 44px;
+  padding: var(--lr-space-2) var(--lr-space-5);
+  border-bottom: 1px solid var(--lr-border);
+}
+
+.lp-pipe__title {
+  font-size: var(--lr-text-md);
+  font-variant-caps: all-small-caps;
+  letter-spacing: var(--lr-tracking-caps);
+  color: var(--lr-text-2);
+}
+
+.lp-pipe__steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--lr-space-3);
+  margin: 0;
+  padding: var(--lr-space-5);
+  list-style: none;
+}
+
+/* Tiap langkah satu sel bergaris seam; sel aktif bergaris aksen; garis 1px menyambung sel ke sel. */
+.lp-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-content: start;
+  column-gap: var(--lr-space-3);
+  row-gap: var(--lr-space-1);
+  min-width: 0;
+  padding: var(--lr-space-3);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-sm);
+  background: var(--lr-bg-sunken);
+  transition: border-color var(--lr-dur) var(--lr-ease);
+}
+
+.lp-step[data-state="active"] {
+  border-color: var(--lr-accent);
+}
+
+.lp-step__label,
+.lp-step__detail,
+.lp-step__bar {
+  grid-column: 2;
+}
+
+.lp-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 21px;
+  right: calc(-1 * var(--lr-space-3) - 1px);
+  width: var(--lr-space-3);
+  height: 1px;
+  background: var(--lr-border-strong);
+  transition: background-color var(--lr-dur-slow) var(--lr-ease);
+}
+
+.lp-step[data-state="done"]:not(:last-child)::after {
+  background: var(--lr-bull-line);
+}
+
+.lp-step__marker {
+  position: relative;
+  grid-row: 1 / span 3;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--lr-border-control);
+  border-radius: 50%;
+  background: var(--lr-surface);
+  transition: background-color var(--lr-dur) var(--lr-ease), border-color var(--lr-dur) var(--lr-ease);
+}
+
+.lp-step__label {
+  color: var(--lr-text-3);
+  font-weight: var(--lr-weight-medium);
+  transition: color var(--lr-dur) var(--lr-ease);
+}
+
+.lp-step__detail {
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-xs);
+}
+
+.lp-step[data-state="active"] .lp-step__label,
+.lp-step[data-state="done"] .lp-step__label,
+.lp-step[data-state="live"] .lp-step__label {
+  color: var(--lr-text);
+}
+
+.lp-step[data-state="active"] .lp-step__detail,
+.lp-step[data-state="done"] .lp-step__detail,
+.lp-step[data-state="live"] .lp-step__detail {
+  color: var(--lr-text-2);
+}
+
+/* Selesai: bercentang. */
+.lp-step[data-state="done"] .lp-step__marker {
+  border-color: var(--lr-bull);
+  background: var(--lr-bull);
+}
+
+.lp-step[data-state="done"] .lp-step__marker::after {
+  content: "";
+  position: absolute;
+  left: 4.5px;
+  top: 1.5px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--lr-text-inverse);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Aktif: cincin aksen berputar. */
+.lp-step[data-state="active"] .lp-step__marker {
+  border-color: var(--lr-accent-soft);
+}
+
+.lp-step[data-state="active"] .lp-step__marker::after {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  border: 1.5px solid transparent;
+  border-top-color: var(--lr-accent);
+  border-right-color: var(--lr-accent);
+  border-radius: 50%;
+  animation: lr-spin 0.9s linear infinite;
+}
+
+/* Live: titik hijau dengan cincin yang mengembang. */
+.lp-step[data-state="live"] .lp-step__marker {
+  border-color: var(--lr-bull);
+  background: var(--lr-bull-soft);
+}
+
+.lp-step[data-state="live"] .lp-step__marker::after {
+  content: "";
+  position: absolute;
+  inset: 3.5px;
+  border-radius: 50%;
+  background: var(--lr-bull);
+}
+
+.lp-step[data-state="live"] .lp-step__marker::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 1px solid var(--lr-bull);
+  border-radius: 50%;
+  opacity: 0;
+  animation: lr-pulse 2.4s var(--lr-ease-out-expo) infinite;
+}
+
+.lp-step__bar {
+  display: block;
+  height: 4px;
+  margin-top: var(--lr-space-2);
+  overflow: hidden;
+  border-radius: 1px;
+  background: var(--lr-surface-3);
+}
+
+.lp-step__fill {
+  display: block;
+  width: calc(var(--lp-progress, 0) * 1%);
+  height: 100%;
+  background: var(--lr-accent);
+  transition: width 420ms var(--lr-ease-out-expo);
+}
+
+.lp-step[data-state="done"] .lp-step__fill {
+  background: var(--lr-bull);
+}
+
+/* ---- Bagian ---- */
+.lp-section {
+  padding: var(--lr-space-12) 0 0;
+  scroll-margin-top: calc(var(--lr-topbar-h) + var(--lr-space-4));
+}
+
+.lp-section__title {
+  font-size: var(--lr-text-2xl);
+  letter-spacing: -0.025em;
+  margin-bottom: var(--lr-space-4);
+}
+
+.lp-section__lead {
+  max-width: 33rem;
+  margin-bottom: var(--lr-space-6);
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-md);
+}
+
+/* Modul: daftar bergaris seam, bukan kartu berukuran sama. */
+.lp-modules {
+  margin: 0;
+  border-top: 1px solid var(--lr-border);
+}
+
+.lp-module {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--lr-space-2) var(--lr-space-6);
+  padding: var(--lr-space-4) 0;
+  border-bottom: 1px solid var(--lr-border);
+}
+
+.lp-module__name {
+  font-weight: var(--lr-weight-semibold);
+  font-size: var(--lr-text-md);
+}
+
+.lp-module__text {
+  margin: 0;
+  max-width: 31rem;
+  font-size: var(--lr-text-md);
+  color: var(--lr-text-2);
+}
+
+.lp-module__state {
+  margin: 0;
+}
+
+/* Jalur tahap: penanda berjalan dari Quiet ke tahap puncak, lalu mengulang. */
+.lp-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lr-space-4);
+  padding: var(--lr-space-5);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-surface);
+}
+
+.lp-line {
+  --lp-line: var(--lr-bull);
+  --lp-line-soft: var(--lr-bull-line);
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: start;
+  margin: 0;
+}
+
+.lp-line[data-direction="SHORT"] {
+  --lp-line: var(--lr-bear);
+  --lp-line-soft: var(--lr-bear-line);
+}
+
+.lp-line__name {
+  padding-top: 1px;
+  color: var(--lp-line);
+  font-weight: var(--lr-weight-semibold);
+  font-size: var(--lr-text-xs);
+  letter-spacing: 0.04em;
+}
+
+.lp-line__stops {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Rel jalur di bawah stasiun. */
+.lp-line__stops::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  right: calc(25% - 7px);
+  height: 2px;
+  background: var(--lp-line-soft);
+}
+
+.lp-stop {
+  position: relative;
+  padding-top: var(--lr-space-6);
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+}
+
+.lp-stop::before {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--lp-line);
+  border-radius: 50%;
+  background: var(--lr-surface);
+}
+
+.lp-stop--end {
+  color: var(--lr-text);
+  font-weight: var(--lr-weight-semibold);
+}
+
+.lp-stop--end::before {
+  background: var(--lp-line);
+}
+
+/* Penanda kandidat yang berjalan sepanjang rel (posisi = tahap). */
+.lp-line__train {
+  position: absolute;
+  top: 3px;
+  left: calc(64px + 3px);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--lr-text);
+  box-shadow: 0 0 0 3px var(--lr-surface);
+  animation: lp-train 9s var(--lr-ease-out-expo) infinite;
+}
+
+.lp-line[data-direction="SHORT"] .lp-line__train {
+  animation-delay: -4.5s;
+}
+
+/* Jarak antarstasiun dihitung dari lebar rel memakai container query unit. */
+.lp-line {
+  container-type: inline-size;
+}
+
+@keyframes lp-train {
+  0%, 10% { transform: translateX(0); }
+  25%, 35% { transform: translateX(calc((100cqw - 64px) * 0.25)); }
+  50%, 60% { transform: translateX(calc((100cqw - 64px) * 0.5)); }
+  75%, 92% { transform: translateX(calc((100cqw - 64px) * 0.75)); }
+  100% { transform: translateX(0); }
+}
+
+/* Fakta metode: daftar bergaris seam seperti Modul (bukan tiga kartu sejajar). */
+.lp-facts {
+  margin-top: var(--lr-space-6);
+  border-top: 1px solid var(--lr-border);
+}
+
+.lp-fact {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--lr-space-2) var(--lr-space-6);
+  padding: var(--lr-space-4) 0;
+  border-bottom: 1px solid var(--lr-border);
+}
+
+.lp-fact__text {
+  max-width: 31rem;
+  font-size: var(--lr-text-md);
+}
+
+.lp-fact__title {
+  margin: 0;
+  font-size: var(--lr-text-md);
+}
+
+.lp-fact__text {
+  color: var(--lr-text-2);
+}
+
+/* Batasan. */
+.lp-limits {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--lr-border);
+}
+
+.lp-limits li {
+  position: relative;
+  max-width: 34rem;
+  font-size: var(--lr-text-md);
+  padding: var(--lr-space-3) 0 var(--lr-space-3) var(--lr-space-6);
+  border-bottom: 1px solid var(--lr-border-subtle);
+  color: var(--lr-text);
+}
+
+.lp-limits li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: calc(var(--lr-space-3) + 0.55em);
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--lr-warn);
+}
+
+/* Akses. */
+.lp-access {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lr-space-4) var(--lr-space-8);
+  margin: var(--lr-space-12) 0;
+  padding: var(--lr-space-6);
+  border: 1px solid var(--lr-border);
+  border-radius: var(--lr-radius-md);
+  background: var(--lr-surface);
+}
+
+.lp-access__text {
+  max-width: 33rem;
+}
+
+.lp-access__text .lp-section__title {
+  margin-bottom: var(--lr-space-2);
+}
+
+.lp-access__text p {
+  color: var(--lr-text-2);
+}
+
+.lp-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--lr-space-2) var(--lr-space-6);
+  padding: var(--lr-space-4) var(--lr-space-6);
+  border-top: 1px solid var(--lr-border);
+  color: var(--lr-text-3);
+  font-size: var(--lr-text-xs);
+}
+
+/* ---- Responsif ---- */
+@media (max-width: 960px) {
+  .lp-pipe__steps {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--lr-space-2);
+  }
+
+  /* Pipeline menjadi vertikal: garis 1px turun dari sel ke sel. */
+  .lp-step:not(:last-child)::after {
+    top: 100%;
+    right: auto;
+    left: calc(var(--lr-space-3) + 8.5px);
+    width: 1px;
+    height: calc(var(--lr-space-2) + 2px);
+  }
+
+  .lp-step__bar {
+    max-width: 16rem;
+  }
+
+  .lp-fact {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lp-module {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .lp-module__text {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 640px) {
+  .lp-main {
+    padding: 0 var(--lr-space-4);
+  }
+
+  .lp-bar {
+    gap: var(--lr-space-3);
+    padding: 0 var(--lr-space-4);
+  }
+
+  .lp-bar__nav {
+    display: none;
+  }
+
+  .lp-hero__lead {
+    font-size: var(--lr-text-md);
+  }
+
+  .lp-line {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: var(--lr-space-2);
+  }
+
+  .lp-line__train {
+    top: calc(var(--lr-text-xs) * 1.5 + var(--lr-space-2) + 3px);
+    left: 3px;
+  }
+
+  @keyframes lp-train {
+    0%, 10% { transform: translateX(0); }
+    25%, 35% { transform: translateX(calc(100cqw * 0.25)); }
+    50%, 60% { transform: translateX(calc(100cqw * 0.5)); }
+    75%, 92% { transform: translateX(calc(100cqw * 0.75)); }
+    100% { transform: translateX(0); }
+  }
+
+  .lp-stop {
+    font-size: var(--lr-text-2xs);
+  }
+
+  .lp-access {
+    padding: var(--lr-space-5) var(--lr-space-4);
+  }
+
+  .lp-foot {
+    padding: var(--lr-space-4);
+  }
+}
+
+/* ---- Gerak dimatikan ---- */
+:root[data-motion="off"] .lp-line__train,
+:root[data-motion="reduced"] .lp-line__train,
+:root[data-motion="off"] .lp-step[data-state="live"] .lp-step__marker::before,
+:root[data-motion="reduced"] .lp-step[data-state="live"] .lp-step__marker::before {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-line__train,
+  .lp-step[data-state="live"] .lp-step__marker::before,
+  .lp-step[data-state="active"] .lp-step__marker::after {
+    animation: none;
+  }
+
+  .lp-step__fill {
+    transition: none;
+  }
+}

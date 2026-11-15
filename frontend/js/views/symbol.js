@@ -6,7 +6,6 @@ import { badge, callout, dataTable, emptyState, page, panel, stat } from '../lib
 import { h } from '../lib/dom.js';
 import { formatPrice, formatTime } from '../lib/format.js';
 import { hashQuery } from '../lib/router.js';
-import { synapseArt } from './roadmap.js';
 import {
   confluenceBreakdown, confluenceValue, formatWinProbability, patternBadge, tierBadge,
 } from './signalFormat.js';
@@ -107,7 +106,7 @@ function heroStat({ label, value, hint, meter, tone, testId }) {
 
 /**
  * Hero simbol: nama pasangan bergradien + badge arah/pola/tahap + kartu metrik dari sinyal fokus. Semua angka berasal
- * dari riwayat sinyal API; tanpa sinyal, kartu menampilkan '—'. Ilustrasi jaringan di belakang murni dekoratif.
+ * dari riwayat sinyal API; tanpa sinyal, kartu menampilkan '—'.
  */
 function symbolHero({ symbol, focused, signals, direction, timeframe, historyError }) {
   const [base, quote] = splitPair(symbol);
@@ -115,12 +114,11 @@ function symbolHero({ symbol, focused, signals, direction, timeframe, historyErr
   const tone = dir === 'SHORT' ? 'bear' : 'bull';
   const roundScore = (v) => (isNum(v) ? String(Math.round(Math.max(0, Math.min(100, v)))) : null);
   return h('section', { class: 'symbol-hero', 'data-direction': dir, 'aria-label': `Ringkasan ${symbol}`, 'data-testid': 'symbol-hero' },
-    h('div', { class: 'symbol-hero__art', 'aria-hidden': 'true' }, synapseArt(tone)),
     h('div', { class: 'symbol-hero__id' },
-      h('span', { class: 'symbol-hero__eyebrow' }, 'Binance USDT-M · candle tertutup'),
       h('h2', { class: 'symbol-hero__ticker' },
         h('span', { class: 'symbol-hero__base' }, base),
         quote ? h('span', { class: 'symbol-hero__quote' }, `/${quote}`) : null),
+      h('span', { class: 'symbol-hero__meta' }, 'Binance USDT-M · candle tertutup'),
       h('div', { class: 'cluster symbol-hero__badges' },
         directionBadge(dir),
         focused ? patternBadge(focused.classification, dir) : null,
@@ -151,7 +149,6 @@ function noSymbolState(invalid) {
   return [
     invalid ? callout('Simbol di URL tidak valid. Gunakan 2–30 huruf kapital/angka, mis. BTCUSDT.', 'warn') : null,
     panel({ title: 'Grafik simbol' },
-      h('div', { class: 'symbol-empty-art', 'aria-hidden': 'true' }, synapseArt('accent')),
       emptyState({
         iconName: 'symbol',
         title: 'Pilih koin terlebih dahulu',

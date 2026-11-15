@@ -16,7 +16,10 @@ function watchErrors(page) {
 }
 
 async function signIn(page, user = E2E_USERS.admin) {
+  // Tanpa sesi "/" adalah halaman awal publik; tombol Masuk membawa ke halaman login.
   await page.goto('/');
+  await expect(page.getByRole('heading', { level: 1, name: /Baca struktur pasar/ })).toBeVisible();
+  await page.getByRole('link', { name: 'Masuk', exact: true }).click();
   await expect(page).toHaveURL(/\/login\.html$/);
   await page.getByLabel('Username').fill(user.username);
   await page.getByLabel('Kata sandi').fill(user.password);
@@ -78,7 +81,9 @@ test('E2E-UI-001 overview menampilkan angka nyata dari database (nol) dan status
   await signIn(page);
   await expect(page.getByTestId('kpi-monitored').locator('.stat__value')).toHaveText('0');
   await expect(page.getByTestId('kpi-active').locator('.stat__value')).toHaveText('0');
-  await expect(page.getByText('Belum berjalan').first()).toBeVisible();
+  // Status jujur tampil sebagai pill "Belum berjalan" (panel Status pemindaian); pesan kontrol scanner di header
+  // dirangkum statusnya di topbar saat berhenti, sehingga pencarian substring tidak lagi diarahkan ke sana.
+  await expect(page.getByText('Belum berjalan', { exact: true }).first()).toBeVisible();
 });
 
 test('E2E-UI-002 tidak ada horizontal overflow halaman di setiap layar', async ({ page }) => {
@@ -129,14 +134,16 @@ test('E2E-SEC-001 data yang ditampilkan di-escape (tidak dieksekusi sebagai HTML
   expect(injected.html).toContain('&lt;img');
 });
 
-test('E2E-AUTH-003 logout mengakhiri sesi; kembali ke dashboard diarahkan ke login', async ({ page }) => {
+test('E2E-AUTH-003 logout mengakhiri sesi; kembali ke dashboard menampilkan halaman awal, bukan aplikasi', async ({ page }) => {
   await signIn(page);
   await openNavIfNeeded(page);
   await page.getByRole('button', { name: 'Keluar' }).click();
   await expect(page).toHaveURL(/login\.html$/);
   await page.goto('/#/settings');
-  // Browser mempertahankan fragmen (#/settings) saat mengikuti redirect 302.
-  await expect(page).toHaveURL(/login\.html(#.*)?$/);
+  // Tanpa sesi "/" menyajikan halaman awal; tautan Masuk membawa hash-route yang diminta.
+  await expect(page.getByRole('heading', { level: 1, name: /Baca struktur pasar/ })).toBeVisible();
+  await expect(page.locator('#app')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Masuk', exact: true })).toHaveAttribute('href', '/login.html#/settings');
 });
 
 // Server E2E membatasi login 20 kali per 15 menit per IP; tes di atas sudah memakai 18 (9 per proyek).
@@ -341,8 +348,9 @@ test.describe('sesi bersama', () => {
     await page.getByRole('button', { name: 'Keluar' }).click();
     await expect(page).toHaveURL(/login\.html$/);
     expect(logoutStatuses).toEqual([403, 204]);
-    // Sesi benar-benar berakhir: dashboard kembali diarahkan ke login.
+    // Sesi benar-benar berakhir: "/" kembali menjadi halaman awal publik, aplikasi tidak dikirim.
     await page.goto('/');
-    await expect(page).toHaveURL(/login\.html$/);
+    await expect(page.getByRole('heading', { level: 1, name: /Baca struktur pasar/ })).toBeVisible();
+    await expect(page.locator('#app')).toHaveCount(0);
   });
 });

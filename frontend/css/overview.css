@@ -1,23 +1,13 @@
-/* AlphaLens — Overview "Neural Aurora": KPI hidup, Konstelasi Sinyal (canvas), distribusi tahap.
-   Hanya variabel --lr-*; animasi dekoratif dimatikan saat data-motion="off"/"reduced" atau prefers-reduced-motion. */
+/* AlphaLens — Overview "Konsol Grafit": KPI, Konstelasi Sinyal (canvas), keseimbangan & distribusi tahap.
+   Hanya variabel --lr-*; gerak dimatikan saat data-motion="off"/"reduced" atau prefers-reduced-motion. */
 
 /* ---- KPI ---- */
 .ov-kpis {
   position: relative;
 }
 
-/* Tampilan kaca, garis nada (data-tone) dan hover tile berasal dari .stat di components.css; Overview hanya
-   menambah masuk bertahap dan warna angka sesuai arah. */
-.ov-kpi {
-  animation: ov-rise var(--lr-dur-slow) var(--lr-ease) both;
-}
-
-.ov-kpis > .ov-kpi:nth-child(2) { animation-delay: 40ms; }
-.ov-kpis > .ov-kpi:nth-child(3) { animation-delay: 80ms; }
-.ov-kpis > .ov-kpi:nth-child(4) { animation-delay: 120ms; }
-.ov-kpis > .ov-kpi:nth-child(5) { animation-delay: 160ms; }
-.ov-kpis > .ov-kpi:nth-child(6) { animation-delay: 200ms; }
-
+/* Permukaan, penanda nada (data-tone) dan angka mono berasal dari .stat di components.css; Overview hanya
+   mewarnai angka sesuai arah. Angka dihitung naik ke nilai NYATA oleh animateNumber(). */
 .ov-kpi[data-tone="bull"] .stat__value:not(.stat__value--muted) { color: var(--lr-bull); }
 .ov-kpi[data-tone="bear"] .stat__value:not(.stat__value--muted) { color: var(--lr-bear); }
 
@@ -35,19 +25,17 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--lr-neural-cyan, var(--lr-accent));
-  box-shadow: 0 0 0 0 var(--lr-neural-glow, var(--lr-accent-line));
-  animation: ov-beacon 2.4s var(--lr-ease) infinite;
+  background: var(--lr-accent);
 }
 
 .ov-live__time {
   color: var(--lr-text-3);
+  font-family: var(--lr-font-mono);
 }
 
-/* ---- Konstelasi (panel hero) ---- */
+/* ---- Konstelasi (panel utama) ---- */
 .ov-hero-panel {
   overflow: hidden;
-  animation: ov-rise var(--lr-dur-slow) var(--lr-ease) 120ms both;
 }
 
 .ov-hero-panel .panel__actions {
@@ -73,12 +61,9 @@
 .constellation__stage {
   position: relative;
   height: clamp(280px, 34vw, 440px);
-  border-radius: var(--lr-radius-md);
-  border: 1px solid var(--lr-glass-border, var(--lr-border-subtle));
-  background:
-    radial-gradient(60% 80% at 25% 50%, color-mix(in srgb, var(--lr-bull) 7%, transparent), transparent 70%),
-    radial-gradient(60% 80% at 75% 50%, color-mix(in srgb, var(--lr-bear) 7%, transparent), transparent 70%),
-    var(--lr-glass-strong, var(--lr-bg-sunken));
+  border-radius: var(--lr-radius-sm);
+  border: 1px solid var(--lr-border);
+  background: var(--lr-bg-sunken);
   overflow: hidden;
 }
 
@@ -112,13 +97,12 @@
 .constellation__label {
   position: absolute;
   top: var(--lr-space-2);
-  padding: 2px var(--lr-space-2);
-  border-radius: var(--lr-radius-pill);
-  font-family: var(--lr-font-mono);
+  padding: 1px var(--lr-space-2);
+  border-radius: var(--lr-radius-xs);
   font-size: var(--lr-text-2xs);
   font-weight: var(--lr-weight-semibold);
-  letter-spacing: var(--lr-tracking-caps);
-  background: var(--lr-glass, var(--lr-surface));
+  letter-spacing: 0.04em;
+  background: var(--lr-surface);
 }
 
 .constellation__label--long {
@@ -150,10 +134,8 @@
   max-width: 186px;
   padding: var(--lr-space-2) var(--lr-space-3);
   border-radius: var(--lr-radius-sm);
-  border: 1px solid var(--lr-glass-border-strong, var(--lr-border));
-  background: var(--lr-glass-strong, var(--lr-surface-2));
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
+  border: 1px solid var(--lr-border-strong);
+  background: var(--lr-surface-2);
   box-shadow: var(--lr-shadow-2);
   color: var(--lr-text);
   font-size: var(--lr-text-xs);
@@ -165,11 +147,11 @@
   display: none;
 }
 
-.constellation__tooltip[data-direction="LONG"] { border-left: 3px solid var(--lr-bull); }
-.constellation__tooltip[data-direction="SHORT"] { border-left: 3px solid var(--lr-bear); }
+.constellation__tooltip[data-direction="LONG"] { border-color: var(--lr-bull-line); }
+.constellation__tooltip[data-direction="SHORT"] { border-color: var(--lr-bear-line); }
 
 .constellation__tip-symbol {
-  font-family: var(--lr-font-mono);
+  font-weight: var(--lr-weight-semibold);
   font-size: var(--lr-text-sm);
 }
 
@@ -178,9 +160,9 @@
 }
 
 .constellation__empty {
-  border-radius: var(--lr-radius-md);
-  border: 1px dashed var(--lr-glass-border-strong, var(--lr-border));
-  background: var(--lr-glass, var(--lr-surface));
+  border-radius: var(--lr-radius-sm);
+  border: 1px dashed var(--lr-border-strong);
+  background: var(--lr-bg-sunken);
 }
 
 /* ---- Panel samping: keseimbangan & distribusi tahap ---- */
@@ -197,7 +179,7 @@
   margin-bottom: var(--lr-space-1);
   font-family: var(--lr-font-mono);
   font-size: var(--lr-text-xs);
-  font-weight: var(--lr-weight-semibold);
+  font-weight: var(--lr-weight-medium);
 }
 
 .ov-balance__long { color: var(--lr-bull); }
@@ -206,7 +188,7 @@
 .ov-balance__track {
   position: relative;
   height: 6px;
-  border-radius: var(--lr-radius-pill);
+  border-radius: 1px;
   background: var(--lr-bear);
   overflow: hidden;
 }
@@ -224,8 +206,8 @@
   inset: 0 auto 0 0;
   width: var(--ov-share, 50%);
   background: var(--lr-bull);
-  box-shadow: 2px 0 0 var(--lr-bg);
-  transition: width var(--lr-dur-slow) var(--lr-ease);
+  box-shadow: 2px 0 0 var(--lr-surface);
+  transition: width var(--lr-dur-slow) var(--lr-ease-out-expo);
 }
 
 .ov-dist__title {
@@ -234,10 +216,10 @@
   gap: var(--lr-space-2);
   margin: 0 0 var(--lr-space-2);
   color: var(--lr-text-2);
-  font-size: var(--lr-text-2xs);
+  font-size: var(--lr-text-sm);
+  font-variant-caps: all-small-caps;
   font-weight: var(--lr-weight-semibold);
   letter-spacing: var(--lr-tracking-caps);
-  text-transform: uppercase;
 }
 
 .ov-dist__list {
@@ -264,12 +246,13 @@
 .ov-dist__count {
   text-align: right;
   color: var(--lr-text);
+  font-family: var(--lr-font-mono);
 }
 
 .ov-dist__bar {
   height: 4px;
-  border-radius: var(--lr-radius-pill);
-  background: var(--lr-border-subtle);
+  border-radius: 1px;
+  background: var(--lr-surface-3);
   overflow: hidden;
 }
 
@@ -280,7 +263,7 @@
   border-radius: inherit;
   background: var(--ov-dist-color, var(--lr-text-3));
   transform-origin: left center;
-  animation: ov-grow var(--lr-dur-slow) var(--lr-ease) both;
+  animation: ov-grow 600ms var(--lr-ease-out-expo) both;
 }
 
 .ov-dist[data-direction="LONG"] { --ov-dist-color: var(--lr-bull); }
@@ -295,18 +278,10 @@
 .ov-delta--up { color: var(--lr-bull); }
 .ov-delta--down { color: var(--lr-bear); }
 
+/* Deteksi terbaru masuk sekali, tanpa koreografi bertahap. */
 .ov-detections tbody tr {
-  animation: ov-row-in var(--lr-dur-slow) var(--lr-ease) both;
+  animation: ov-row-in 320ms var(--lr-ease-out-expo) both;
 }
-
-.ov-detections tbody tr:nth-child(2) { animation-delay: 30ms; }
-.ov-detections tbody tr:nth-child(3) { animation-delay: 60ms; }
-.ov-detections tbody tr:nth-child(4) { animation-delay: 90ms; }
-.ov-detections tbody tr:nth-child(5) { animation-delay: 120ms; }
-.ov-detections tbody tr:nth-child(6) { animation-delay: 150ms; }
-.ov-detections tbody tr:nth-child(7) { animation-delay: 180ms; }
-.ov-detections tbody tr:nth-child(8) { animation-delay: 210ms; }
-.ov-detections tbody tr:nth-child(n + 9) { animation-delay: 240ms; }
 
 /* ---- Responsif ---- */
 @media (max-width: 1100px) {
@@ -335,13 +310,8 @@
 }
 
 /* ---- Animasi ---- */
-@keyframes ov-rise {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
-
 @keyframes ov-row-in {
-  from { opacity: 0; transform: translateX(-4px); }
+  from { opacity: 0; transform: translateX(-6px); }
   to { opacity: 1; transform: none; }
 }
 
@@ -350,20 +320,12 @@
   to { transform: scaleX(1); }
 }
 
-@keyframes ov-beacon {
-  0% { box-shadow: 0 0 0 0 var(--lr-neural-glow, var(--lr-accent-line)); }
-  70% { box-shadow: 0 0 0 7px transparent; }
-  100% { box-shadow: 0 0 0 0 transparent; }
-}
-
-:root[data-motion="off"] :is(.ov-kpi, .ov-hero-panel, .ov-detections tbody tr, .ov-dist__fill, .ov-live__dot),
-:root[data-motion="reduced"] :is(.ov-kpi, .ov-hero-panel, .ov-detections tbody tr, .ov-dist__fill, .ov-live__dot) {
+:root[data-motion="off"] :is(.ov-detections tbody tr, .ov-dist__fill, .ov-live__dot),
+:root[data-motion="reduced"] :is(.ov-detections tbody tr, .ov-dist__fill, .ov-live__dot) {
   animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ov-kpi,
-  .ov-hero-panel,
   .ov-detections tbody tr,
   .ov-dist__fill,
   .ov-live__dot {

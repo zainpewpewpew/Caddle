@@ -14,6 +14,9 @@ export const ENDPOINT_WEIGHTS = Object.freeze({
   exchangeInfo: 1,
   ticker24hAll: 40,
   bookTickerAll: 5,
+  // GET /fapi/v1/fundingRate punya kuota terpisah 500 request / 5 menit / IP (bersama fundingInfo); bobot 1 di sini
+  // hanya cadangan konservatif pada jendela per menit. Dipakai riset/backtest, bukan scanner live.
+  fundingRate: 1,
 });
 
 /**

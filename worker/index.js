@@ -16,6 +16,7 @@ import { ConfigError, loadConfig } from '../backend/app/config.js';
 import { openDatabase } from '../backend/database/connection.js';
 import { migrate } from '../backend/database/migrate.js';
 import { parseCalibrationFile } from '../backend/backtest/calibration.js';
+import { configureBinanceNetwork } from '../backend/ingestion/binance/network.js';
 import { createNativePriceResolver, enrichNativeUsd } from '../backend/smartmoney/nativePrices.js';
 import { createLiveProviderRegistry } from '../backend/smartmoney/providers/live.js';
 import { assembleWorker } from './assemble.js';
@@ -104,6 +105,12 @@ async function main() {
     logger.fatal({}, 'WebSocket global tidak tersedia (butuh Node 22)');
     process.exit(1);
   }
+  // DNS host Binance (BINANCE_DNS, default doh): di jaringan yang membajak DNS *.binance.com, REST & WebSocket tetap
+  // tersambung tanpa WARP/VPN. Dipasang sebelum klien REST/WS pertama dibuat.
+  const network = configureBinanceNetwork({ mode: config.binanceDns, logger });
+  logger.info({ binanceDns: network.mode, resolvers: network.resolvers }, network.mode === 'doh'
+    ? 'DNS Binance: DNS-over-HTTPS (khusus host Binance)'
+    : 'DNS Binance: resolver sistem');
 
   const db = openDatabase(config.databasePath);
   const { applied, current } = migrate(db);

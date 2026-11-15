@@ -1,5 +1,5 @@
-/* AlphaLens — kerangka aplikasi "Neural Aurora": sidebar & topbar kaca, area konten.
- * .app duduk di atas canvas latar (#neural-bg, z-index 0, lihat neural.css). */
+/* AlphaLens — kerangka aplikasi "Konsol Grafit": rail navigasi, topbar, area konten.
+ * Panel dipisah seam 1px; tidak ada kaca, glow, atau gradien. .app duduk di atas canvas latar (#neural-bg). */
 .app {
   position: relative;
   z-index: 1;
@@ -10,14 +10,14 @@
     "sidebar topbar"
     "sidebar main";
   min-height: 100vh;
-  transition: grid-template-columns var(--lr-dur-slow) var(--lr-ease);
+  transition: grid-template-columns var(--lr-dur-slow) var(--lr-ease-out-expo);
 }
 
 .app[data-nav="collapsed"] {
   grid-template-columns: var(--lr-sidebar-w-collapsed) minmax(0, 1fr);
 }
 
-/* ---- Sidebar ---- */
+/* ---- Rail navigasi ---- */
 .sidebar {
   grid-area: sidebar;
   position: sticky;
@@ -26,72 +26,35 @@
   display: flex;
   flex-direction: column;
   gap: var(--lr-space-2);
-  padding: var(--lr-space-3) var(--lr-space-2);
-  background:
-    linear-gradient(180deg, var(--lr-glass-highlight) 0%, transparent 18%),
-    var(--lr-glass-strong);
-  border-right: 1px solid var(--lr-glass-border);
-  box-shadow: inset -1px 0 0 var(--lr-glass-highlight);
+  padding: var(--lr-space-2) var(--lr-space-2) var(--lr-space-3);
+  background: var(--lr-surface-rail);
+  border-right: 1px solid var(--lr-border);
   z-index: var(--lr-z-nav);
   overflow: hidden;
 }
 
-/* Garis tepi kanan bergradien cyan → violet yang sangat tipis. */
-.sidebar::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: -1px;
-  bottom: 0;
-  width: 1px;
-  background: linear-gradient(180deg, transparent 0%, var(--lr-neural-glow) 30%, var(--lr-neural-glow-violet) 70%, transparent 100%);
-  pointer-events: none;
-}
-
-/* ---- Brand ---- */
+/* ---- Merek ---- */
 .sidebar .brand {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--lr-space-3);
-  padding: var(--lr-space-1) var(--lr-space-2) var(--lr-space-2);
+  height: calc(var(--lr-topbar-h) - var(--lr-space-2));
+  padding: 0 var(--lr-space-2);
   color: var(--lr-text);
-  border-radius: var(--lr-radius-md);
+  border-radius: var(--lr-radius-sm);
+  border-bottom: 0;
 }
 
 .sidebar .brand:hover {
   text-decoration: none;
+  background: var(--lr-surface-2);
 }
 
 .sidebar .brand__mark {
   flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--lr-radius-md);
-  box-shadow: 0 0 14px var(--lr-neural-glow);
-  transition: transform var(--lr-dur) var(--lr-ease-spring);
-}
-
-/* Halo brand: hanya opacity/transform pada pseudo-element (murah untuk compositor). */
-.sidebar .brand {
-  position: relative;
-}
-
-.sidebar .brand::before {
-  content: "";
-  position: absolute;
-  left: var(--lr-space-2);
-  top: var(--lr-space-1);
-  width: 32px;
-  height: 32px;
-  border-radius: var(--lr-radius-md);
-  box-shadow: 0 0 22px var(--lr-neural-glow), 0 0 34px var(--lr-neural-violet-soft);
-  opacity: 0.35;
-  pointer-events: none;
-  animation: lr-brand-breathe 6s var(--lr-ease) infinite;
-}
-
-.sidebar .brand:hover .brand__mark {
-  transform: rotate(-6deg) scale(1.06);
+  width: 28px;
+  height: 28px;
 }
 
 .sidebar .brand__text {
@@ -105,59 +68,33 @@
   font-weight: var(--lr-weight-semibold);
   font-size: var(--lr-text-md);
   letter-spacing: -0.01em;
-  background: linear-gradient(90deg, var(--lr-text) 0%, var(--lr-text) 45%, var(--lr-neural-cyan) 75%, var(--lr-neural-violet) 100%);
-  background-size: 200% 100%;
-  background-position: 0% 50%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  /* Kilau sekali saat muat, lalu diam. */
-  animation: lr-hue-drift 2.4s var(--lr-ease-out-expo) 1 both;
+  color: var(--lr-text);
 }
 
 .sidebar .brand__tag {
   font-size: var(--lr-text-2xs);
   color: var(--lr-text-3);
-  text-transform: uppercase;
-  letter-spacing: var(--lr-tracking-caps);
   white-space: nowrap;
-}
-
-@keyframes lr-brand-breathe {
-  0%,
-  100% { opacity: 0.25; transform: scale(0.96); }
-  50% { opacity: 0.8; transform: scale(1.04); }
-}
-
-:root[data-motion="off"] .sidebar .brand::before,
-:root[data-motion="reduced"] .sidebar .brand::before,
-:root[data-motion="off"] .sidebar .brand__name,
-:root[data-motion="reduced"] .sidebar .brand__name {
-  animation: none;
-}
-
-@media (forced-colors: active) {
-  .sidebar .brand__name {
-    color: CanvasText;
-    background: none;
-  }
 }
 
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   overflow-y: auto;
   overflow-x: hidden;
+  padding-top: var(--lr-space-1);
+  border-top: 1px solid var(--lr-border-subtle);
 }
 
+/* Judul kelompok: small caps, bukan label mono. */
 .nav__section {
   padding: var(--lr-space-4) var(--lr-space-3) var(--lr-space-1);
-  font-size: var(--lr-text-2xs);
-  color: var(--lr-text-3);
-  text-transform: uppercase;
+  font-size: var(--lr-text-sm);
+  font-variant-caps: all-small-caps;
   letter-spacing: var(--lr-tracking-caps);
-  font-weight: var(--lr-weight-medium);
+  color: var(--lr-text-3);
+  font-weight: var(--lr-weight-semibold);
   white-space: nowrap;
 }
 
@@ -166,7 +103,7 @@
   display: flex;
   align-items: center;
   gap: var(--lr-space-3);
-  height: 34px;
+  height: 32px;
   padding: 0 var(--lr-space-3);
   border-radius: var(--lr-radius-sm);
   color: var(--lr-text-2);
@@ -177,55 +114,25 @@
   text-align: left;
   width: 100%;
   transition:
-    background-color var(--lr-dur) var(--lr-ease),
+    background-color var(--lr-dur-fast) var(--lr-ease),
     color var(--lr-dur-fast) var(--lr-ease),
-    border-color var(--lr-dur) var(--lr-ease),
-    box-shadow var(--lr-dur) var(--lr-ease);
+    border-color var(--lr-dur-fast) var(--lr-ease);
 }
 
 .nav__link:hover {
-  background: var(--lr-glass-soft);
-  border-color: var(--lr-glass-border);
+  background: var(--lr-surface-2);
   color: var(--lr-text);
   text-decoration: none;
 }
 
-.nav__link:hover .nav__icon {
-  color: var(--lr-neural-cyan);
-  transform: translateX(1px);
-}
-
 .nav__link[aria-current="page"] {
-  background:
-    linear-gradient(90deg, var(--lr-neural-cyan-soft) 0%, var(--lr-neural-violet-soft) 60%, transparent 100%),
-    var(--lr-surface-2);
-  border-color: var(--lr-glass-border-strong);
+  background: var(--lr-surface-2);
+  border-color: var(--lr-border);
   color: var(--lr-text);
-  box-shadow: inset 0 1px 0 var(--lr-glass-highlight);
 }
 
 .nav__link[aria-current="page"] .nav__icon {
-  color: var(--lr-neural-cyan);
-  filter: drop-shadow(0 0 4px var(--lr-neural-glow));
-}
-
-/* Indikator aktif: batang gradien cyan → violet dengan glow. */
-.nav__link[aria-current="page"]::before {
-  content: "";
-  position: absolute;
-  left: -9px;
-  top: 7px;
-  bottom: 7px;
-  width: 3px;
-  border-radius: 3px;
-  background: linear-gradient(180deg, var(--lr-neural-cyan), var(--lr-neural-violet));
-  box-shadow: 0 0 10px var(--lr-neural-glow), 0 0 4px var(--lr-neural-glow-violet);
-  animation: lr-nav-indicator var(--lr-dur-slow) var(--lr-ease-spring) both;
-}
-
-@keyframes lr-nav-indicator {
-  from { transform: scaleY(0.2); opacity: 0; }
-  to { transform: none; opacity: 1; }
+  color: var(--lr-accent);
 }
 
 .nav__icon {
@@ -233,7 +140,7 @@
   width: 18px;
   height: 18px;
   color: currentColor;
-  transition: color var(--lr-dur-fast) var(--lr-ease), transform var(--lr-dur) var(--lr-ease);
+  transition: color var(--lr-dur-fast) var(--lr-ease);
 }
 
 @media (forced-colors: active) {
@@ -244,18 +151,18 @@
 
 .nav__badge {
   margin-left: auto;
+  font-family: var(--lr-font-mono);
   font-size: var(--lr-text-2xs);
   color: var(--lr-text-3);
-  font-weight: var(--lr-weight-medium);
 }
 
 .sidebar__footer {
   margin-top: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   padding-top: var(--lr-space-2);
-  border-top: 1px solid var(--lr-glass-border);
+  border-top: 1px solid var(--lr-border-subtle);
 }
 
 .app[data-nav="collapsed"] .brand__text,
@@ -281,30 +188,38 @@
   align-items: center;
   gap: var(--lr-space-4);
   padding: 0 var(--lr-space-5);
-  background: var(--lr-glass-strong);
-  -webkit-backdrop-filter: var(--lr-blur);
-  backdrop-filter: var(--lr-blur);
-  border-bottom: 1px solid var(--lr-glass-border);
-  box-shadow: inset 0 1px 0 var(--lr-glass-highlight);
+  background: var(--lr-bg);
+  border-bottom: 1px solid var(--lr-border);
 }
 
-/* Garis cahaya tipis di bawah topbar. */
+/* Garis sync: hanya bergerak saat scanner benar-benar berjalan (app.js menulis data-scanner dari
+   peristiwa lr:activity yang dipancarkan kontrol scanner berdasarkan status API). */
 .topbar::after {
   content: "";
   position: absolute;
   left: 0;
-  right: 0;
   bottom: -1px;
+  width: 32%;
   height: 1px;
-  background: linear-gradient(90deg, transparent 0%, var(--lr-neural-glow) 25%, var(--lr-neural-glow-violet) 60%, transparent 100%);
-  opacity: 0.6;
+  background: var(--lr-accent);
+  opacity: 0;
   pointer-events: none;
+}
+
+:root[data-scanner="active"] .topbar::after {
+  opacity: 1;
+  animation: lr-topbar-sync 2.8s var(--lr-ease) infinite;
+}
+
+@keyframes lr-topbar-sync {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
 }
 
 .topbar__title {
   display: flex;
   align-items: baseline;
-  gap: var(--lr-space-3);
+  gap: var(--lr-space-2);
   min-width: 0;
 }
 
@@ -312,6 +227,12 @@
   color: var(--lr-text-3);
   font-size: var(--lr-text-xs);
   white-space: nowrap;
+}
+
+.topbar__crumb::after {
+  content: "/";
+  margin-left: var(--lr-space-2);
+  color: var(--lr-border-strong);
 }
 
 .topbar__heading {
@@ -344,18 +265,19 @@
   gap: var(--lr-space-2);
   height: 28px;
   padding: 0 var(--lr-space-3);
-  border-radius: var(--lr-radius-pill);
-  border: 1px solid var(--lr-glass-border);
-  background: var(--lr-glass-soft);
+  border-radius: var(--lr-radius-sm);
+  border: 1px solid var(--lr-border);
+  background: transparent;
   color: var(--lr-text-2);
   font-size: var(--lr-text-xs);
   white-space: nowrap;
-  transition: color var(--lr-dur-fast) var(--lr-ease), border-color var(--lr-dur) var(--lr-ease), box-shadow var(--lr-dur) var(--lr-ease);
+  transition: color var(--lr-dur-fast) var(--lr-ease), border-color var(--lr-dur-fast) var(--lr-ease), background-color var(--lr-dur-fast) var(--lr-ease);
 }
 
 .motion-toggle:hover {
   color: var(--lr-text);
-  border-color: var(--lr-glass-border-strong);
+  border-color: var(--lr-border-strong);
+  background: var(--lr-surface-2);
 }
 
 .motion-toggle__icon {
@@ -366,38 +288,37 @@
 
 .motion-toggle[aria-pressed="true"] {
   color: var(--lr-text);
-  border-color: var(--lr-accent-line);
-  box-shadow: var(--lr-glow-accent);
+  border-color: var(--lr-border-strong);
 }
 
 .motion-toggle[aria-pressed="true"] .motion-toggle__icon {
-  color: var(--lr-neural-cyan);
+  color: var(--lr-accent);
 }
 
 .topbar .user-chip {
-  background: var(--lr-glass-soft);
-  border-color: var(--lr-glass-border);
+  background: transparent;
+  border-color: var(--lr-border);
 }
 
 .topbar .user-chip .avatar {
   display: inline-grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--lr-radius-pill);
-  background: var(--lr-gradient-brand);
-  color: var(--lr-text-inverse);
+  width: 24px;
+  height: 24px;
+  border-radius: var(--lr-radius-sm);
+  background: var(--lr-surface-3);
+  box-shadow: inset 0 0 0 1px var(--lr-border-strong);
+  color: var(--lr-text);
   font-weight: var(--lr-weight-semibold);
-  font-size: var(--lr-text-xs);
+  font-size: var(--lr-text-2xs);
   text-transform: uppercase;
-  box-shadow: 0 0 10px var(--lr-neural-glow);
 }
 
 /* ---- Konten ---- */
 .main {
   grid-area: main;
   min-width: 0;
-  padding: var(--lr-space-5);
+  padding: var(--lr-space-5) var(--lr-space-6) var(--lr-space-8);
 }
 
 /* Fokus programatik setelah navigasi tidak perlu ring visual (termasuk outline mode warna paksa). */
@@ -415,44 +336,78 @@
   gap: var(--lr-space-4);
 }
 
-/* Transisi masuk halaman: anak langsung .main dan .page muncul bertahap (fade + naik 6px). */
+/* Pergantian layar: satu fade singkat (kontinuitas), tanpa koreografi bertahap. */
 .main > * {
   animation: lr-page-in var(--lr-dur-page) var(--lr-ease-out-expo) both;
 }
 
-.page > * {
-  animation: lr-page-in var(--lr-dur-page) var(--lr-ease-out-expo) both;
-}
-
-.page > :nth-child(2) { animation-delay: 40ms; }
-.page > :nth-child(3) { animation-delay: 80ms; }
-.page > :nth-child(4) { animation-delay: 120ms; }
-.page > :nth-child(5) { animation-delay: 160ms; }
-.page > :nth-child(n + 6) { animation-delay: 200ms; }
-
 :root[data-motion="off"] .main > *,
-:root[data-motion="off"] .page > *,
-:root[data-motion="reduced"] .main > *,
-:root[data-motion="reduced"] .page > * {
+:root[data-motion="reduced"] .main > * {
   animation: none;
 }
 
 .page__header {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: var(--lr-space-4);
+  gap: var(--lr-space-4) var(--lr-space-6);
   flex-wrap: wrap;
+  padding-bottom: var(--lr-space-4);
+  border-bottom: 1px solid var(--lr-border-subtle);
+}
+
+/* Aksi header (chip status, kontrol scanner) rata kanan, terisolasi dari judul. */
+.page__header > .cluster {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+  max-width: min(100%, 560px);
+}
+
+/* Kontrol scanner ringkas di header: status + pesan pendek + satu tombol. Chip status ganda disembunyikan
+   (atributnya tetap diperbarui). */
+.page__header .cluster:has(.worker-bar) .scan-radar {
+  display: none;
+}
+
+.page__header .worker-bar {
+  flex: 1 1 380px;
+  gap: var(--lr-space-2) var(--lr-space-4);
+  padding: var(--lr-space-2) var(--lr-space-3);
+}
+
+.page__header .worker-bar .callout__content {
+  flex: 1 1 12rem;
+  gap: 2px;
+}
+
+.page__header .worker-bar #worker-bar-message {
+  color: var(--lr-text-2);
+  font-size: var(--lr-text-xs);
+}
+
+/* Scanner berhenti (statusnya sudah di topbar): kontrol header menyusut menjadi tombolnya saja. Galat, perintah yang
+   sedang diproses (bar progres), dan state lain (berjalan, memulai, gagal, di luar website) tetap menampilkan isi lengkap. */
+.page__header .worker-bar[data-worker-state="stopped"]:has(.btn):not(:has(.field__error:not([hidden]))):not(:has(.progress-indeterminate:not([hidden]))) {
+  flex: 0 0 auto;
+  padding: 0;
+  border-color: transparent;
+  background: none;
+}
+
+.page__header .worker-bar[data-worker-state="stopped"]:has(.btn):not(:has(.field__error:not([hidden]))):not(:has(.progress-indeterminate:not([hidden]))) .callout__content {
+  display: none;
 }
 
 .page__title {
   font-size: var(--lr-text-xl);
+  letter-spacing: -0.02em;
 }
 
 .page__subtitle {
   margin-top: var(--lr-space-1);
   color: var(--lr-text-2);
-  max-width: 72ch;
+  /* ±70 karakter per baris pada ukuran teks dasar. */
+  max-width: 28rem;
 }
 
 .grid {
@@ -461,7 +416,7 @@
 }
 
 .grid--kpi {
-  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(168px, 100%), 1fr));
   gap: var(--lr-space-3);
 }
 
@@ -493,7 +448,7 @@
 @keyframes lr-page-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
@@ -524,15 +479,14 @@
     width: min(280px, 86vw);
     transform: translateX(-100%);
     visibility: hidden;
-    transition: transform var(--lr-dur-slow) var(--lr-ease), visibility 0s linear var(--lr-dur-slow);
+    transition: transform var(--lr-dur-slow) var(--lr-ease-out-expo), visibility 0s linear var(--lr-dur-slow);
     box-shadow: var(--lr-shadow-3);
-    background: var(--lr-glass-strong);
   }
 
   .app[data-nav="open"] .sidebar {
     transform: none;
     visibility: visible;
-    transition: transform var(--lr-dur-slow) var(--lr-ease), visibility 0s;
+    transition: transform var(--lr-dur-slow) var(--lr-ease-out-expo), visibility 0s;
   }
 
   .app[data-nav="collapsed"] .brand__text,
@@ -543,12 +497,16 @@
     pointer-events: auto;
   }
 
-  .main { padding: var(--lr-space-4); }
+  .main { padding: var(--lr-space-4) var(--lr-space-4) var(--lr-space-6); }
+  .page__header > .cluster { max-width: 100%; width: 100%; justify-content: flex-start; }
   .topbar { padding: 0 var(--lr-space-3); gap: var(--lr-space-2); }
   .topbar__crumb,
   .topbar__clock,
   .topbar__meta .status > span:last-child,
   #user-name { display: none; }
+  /* Status scanner tetap berlabel di ponsel ("Berhenti", "Berjalan"); hanya awalan "Scanner ·" yang disembunyikan. */
+  .topbar__meta .status.topbar__scanner > .topbar__scanner-label { display: inline; }
+  .topbar__scanner-prefix { display: none; }
   .topbar__meta { gap: var(--lr-space-3); }
   .motion-toggle__label { display: none; }
   .motion-toggle { padding: 0 var(--lr-space-2); }
@@ -561,8 +519,6 @@
   position: fixed;
   inset: 0;
   z-index: calc(var(--lr-z-nav) - 1);
-  background: rgb(3 5 10 / 0.6);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
+  background: var(--lr-neural-scrim);
   animation: lr-fade-in var(--lr-dur) var(--lr-ease) both;
 }

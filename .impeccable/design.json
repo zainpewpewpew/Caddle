@@ -1,0 +1,853 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-15T08:12:42+00:00",
+  "title": "Design System: AlphaLens",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Biru Sintaks",
+        "canonical": "#74b9ff",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 250.0)",
+          "oklch(26.4% 0.058 250.0)",
+          "oklch(37.9% 0.098 250.0)",
+          "oklch(49.3% 0.123 250.0)",
+          "oklch(60.7% 0.123 250.0)",
+          "oklch(72.1% 0.098 250.0)",
+          "oklch(83.6% 0.058 250.0)",
+          "oklch(95.0% 0.031 250.0)"
+        ]
+      },
+      "accent-strong": {
+        "role": "primary",
+        "displayName": "Biru Sintaks Terang",
+        "canonical": "#8fc7ff",
+        "tonalRamp": [
+          "oklch(15.0% 0.025 249.1)",
+          "oklch(26.4% 0.046 249.1)",
+          "oklch(37.9% 0.079 249.1)",
+          "oklch(49.3% 0.099 249.1)",
+          "oklch(60.7% 0.099 249.1)",
+          "oklch(72.1% 0.079 249.1)",
+          "oklch(83.6% 0.046 249.1)",
+          "oklch(95.0% 0.025 249.1)"
+        ]
+      },
+      "accent-soft": {
+        "role": "primary",
+        "displayName": "Kabut Biru",
+        "canonical": "rgb(116 185 255 / 0.12)",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 250.0)",
+          "oklch(26.4% 0.058 250.0)",
+          "oklch(37.9% 0.098 250.0)",
+          "oklch(49.3% 0.123 250.0)",
+          "oklch(60.7% 0.123 250.0)",
+          "oklch(72.1% 0.098 250.0)",
+          "oklch(83.6% 0.058 250.0)",
+          "oklch(95.0% 0.031 250.0)"
+        ],
+        "note": "Lapisan 12% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "accent-line": {
+        "role": "primary",
+        "displayName": "Garis Biru",
+        "canonical": "rgb(116 185 255 / 0.42)",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 250.0)",
+          "oklch(26.4% 0.058 250.0)",
+          "oklch(37.9% 0.098 250.0)",
+          "oklch(49.3% 0.123 250.0)",
+          "oklch(60.7% 0.123 250.0)",
+          "oklch(72.1% 0.098 250.0)",
+          "oklch(83.6% 0.058 250.0)",
+          "oklch(95.0% 0.031 250.0)"
+        ],
+        "note": "Lapisan 42% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "bull": {
+        "role": "secondary",
+        "displayName": "Hijau Konfirmasi",
+        "canonical": "#74cf91",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 152.9)",
+          "oklch(26.4% 0.059 152.9)",
+          "oklch(37.9% 0.100 152.9)",
+          "oklch(49.3% 0.125 152.9)",
+          "oklch(60.7% 0.125 152.9)",
+          "oklch(72.1% 0.100 152.9)",
+          "oklch(83.6% 0.059 152.9)",
+          "oklch(95.0% 0.031 152.9)"
+        ]
+      },
+      "bull-soft": {
+        "role": "secondary",
+        "displayName": "Kabut Hijau",
+        "canonical": "rgb(116 207 145 / 0.12)",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 152.9)",
+          "oklch(26.4% 0.059 152.9)",
+          "oklch(37.9% 0.100 152.9)",
+          "oklch(49.3% 0.125 152.9)",
+          "oklch(60.7% 0.125 152.9)",
+          "oklch(72.1% 0.100 152.9)",
+          "oklch(83.6% 0.059 152.9)",
+          "oklch(95.0% 0.031 152.9)"
+        ],
+        "note": "Lapisan 12% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "bull-line": {
+        "role": "secondary",
+        "displayName": "Garis Hijau",
+        "canonical": "rgb(116 207 145 / 0.4)",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 152.9)",
+          "oklch(26.4% 0.059 152.9)",
+          "oklch(37.9% 0.100 152.9)",
+          "oklch(49.3% 0.125 152.9)",
+          "oklch(60.7% 0.125 152.9)",
+          "oklch(72.1% 0.100 152.9)",
+          "oklch(83.6% 0.059 152.9)",
+          "oklch(95.0% 0.031 152.9)"
+        ],
+        "note": "Lapisan 40% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "bear": {
+        "role": "secondary",
+        "displayName": "Merah Pembatalan",
+        "canonical": "#f0837d",
+        "tonalRamp": [
+          "oklch(15.0% 0.034 24.2)",
+          "oklch(26.4% 0.063 24.2)",
+          "oklch(37.9% 0.107 24.2)",
+          "oklch(49.3% 0.135 24.2)",
+          "oklch(60.7% 0.135 24.2)",
+          "oklch(72.1% 0.107 24.2)",
+          "oklch(83.6% 0.063 24.2)",
+          "oklch(95.0% 0.034 24.2)"
+        ]
+      },
+      "bear-soft": {
+        "role": "secondary",
+        "displayName": "Kabut Merah",
+        "canonical": "rgb(240 131 125 / 0.12)",
+        "tonalRamp": [
+          "oklch(15.0% 0.034 24.2)",
+          "oklch(26.4% 0.063 24.2)",
+          "oklch(37.9% 0.107 24.2)",
+          "oklch(49.3% 0.135 24.2)",
+          "oklch(60.7% 0.135 24.2)",
+          "oklch(72.1% 0.107 24.2)",
+          "oklch(83.6% 0.063 24.2)",
+          "oklch(95.0% 0.034 24.2)"
+        ],
+        "note": "Lapisan 12% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "bear-line": {
+        "role": "secondary",
+        "displayName": "Garis Merah",
+        "canonical": "rgb(240 131 125 / 0.4)",
+        "tonalRamp": [
+          "oklch(15.0% 0.034 24.2)",
+          "oklch(26.4% 0.063 24.2)",
+          "oklch(37.9% 0.107 24.2)",
+          "oklch(49.3% 0.135 24.2)",
+          "oklch(60.7% 0.135 24.2)",
+          "oklch(72.1% 0.107 24.2)",
+          "oklch(83.6% 0.063 24.2)",
+          "oklch(95.0% 0.034 24.2)"
+        ],
+        "note": "Lapisan 40% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "warn": {
+        "role": "secondary",
+        "displayName": "Amber Waspada",
+        "canonical": "#e8b85a",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 82.1)",
+          "oklch(26.4% 0.058 82.1)",
+          "oklch(37.9% 0.099 82.1)",
+          "oklch(49.3% 0.125 82.1)",
+          "oklch(60.7% 0.125 82.1)",
+          "oklch(72.1% 0.099 82.1)",
+          "oklch(83.6% 0.058 82.1)",
+          "oklch(95.0% 0.031 82.1)"
+        ]
+      },
+      "warn-soft": {
+        "role": "secondary",
+        "displayName": "Kabut Amber",
+        "canonical": "rgb(232 184 90 / 0.12)",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 82.1)",
+          "oklch(26.4% 0.058 82.1)",
+          "oklch(37.9% 0.099 82.1)",
+          "oklch(49.3% 0.125 82.1)",
+          "oklch(60.7% 0.125 82.1)",
+          "oklch(72.1% 0.099 82.1)",
+          "oklch(83.6% 0.058 82.1)",
+          "oklch(95.0% 0.031 82.1)"
+        ],
+        "note": "Lapisan 12% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "warn-line": {
+        "role": "secondary",
+        "displayName": "Garis Amber",
+        "canonical": "rgb(232 184 90 / 0.4)",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 82.1)",
+          "oklch(26.4% 0.058 82.1)",
+          "oklch(37.9% 0.099 82.1)",
+          "oklch(49.3% 0.125 82.1)",
+          "oklch(60.7% 0.125 82.1)",
+          "oklch(72.1% 0.099 82.1)",
+          "oklch(83.6% 0.058 82.1)",
+          "oklch(95.0% 0.031 82.1)"
+        ],
+        "note": "Lapisan 40% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "violet": {
+        "role": "tertiary",
+        "displayName": "Violet Metadata",
+        "canonical": "#c69cf0",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 306.6)",
+          "oklch(26.4% 0.059 306.6)",
+          "oklch(37.9% 0.099 306.6)",
+          "oklch(49.3% 0.125 306.6)",
+          "oklch(60.7% 0.125 306.6)",
+          "oklch(72.1% 0.099 306.6)",
+          "oklch(83.6% 0.059 306.6)",
+          "oklch(95.0% 0.031 306.6)"
+        ]
+      },
+      "violet-soft": {
+        "role": "tertiary",
+        "displayName": "Kabut Violet",
+        "canonical": "rgb(198 156 240 / 0.12)",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 306.6)",
+          "oklch(26.4% 0.059 306.6)",
+          "oklch(37.9% 0.099 306.6)",
+          "oklch(49.3% 0.125 306.6)",
+          "oklch(60.7% 0.125 306.6)",
+          "oklch(72.1% 0.099 306.6)",
+          "oklch(83.6% 0.059 306.6)",
+          "oklch(95.0% 0.031 306.6)"
+        ],
+        "note": "Lapisan 12% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "violet-line": {
+        "role": "tertiary",
+        "displayName": "Garis Violet",
+        "canonical": "rgb(198 156 240 / 0.4)",
+        "tonalRamp": [
+          "oklch(15.0% 0.031 306.6)",
+          "oklch(26.4% 0.059 306.6)",
+          "oklch(37.9% 0.099 306.6)",
+          "oklch(49.3% 0.125 306.6)",
+          "oklch(60.7% 0.125 306.6)",
+          "oklch(72.1% 0.099 306.6)",
+          "oklch(83.6% 0.059 306.6)",
+          "oklch(95.0% 0.031 306.6)"
+        ],
+        "note": "Lapisan 40% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "stage-breakout": {
+        "role": "tertiary",
+        "displayName": "Hijau Mint Puncak",
+        "canonical": "#a3e8b9",
+        "tonalRamp": [
+          "oklch(15.0% 0.024 154.3)",
+          "oklch(26.4% 0.045 154.3)",
+          "oklch(37.9% 0.076 154.3)",
+          "oklch(49.3% 0.095 154.3)",
+          "oklch(60.7% 0.095 154.3)",
+          "oklch(72.1% 0.076 154.3)",
+          "oklch(83.6% 0.045 154.3)",
+          "oklch(95.0% 0.024 154.3)"
+        ]
+      },
+      "stage-early-bear": {
+        "role": "tertiary",
+        "displayName": "Merah Muda Dini",
+        "canonical": "#ec9fcf",
+        "tonalRamp": [
+          "oklch(15.0% 0.027 342.0)",
+          "oklch(26.4% 0.051 342.0)",
+          "oklch(37.9% 0.087 342.0)",
+          "oklch(49.3% 0.109 342.0)",
+          "oklch(60.7% 0.109 342.0)",
+          "oklch(72.1% 0.087 342.0)",
+          "oklch(83.6% 0.051 342.0)",
+          "oklch(95.0% 0.027 342.0)"
+        ]
+      },
+      "stage-breakdown": {
+        "role": "tertiary",
+        "displayName": "Jingga Patahan",
+        "canonical": "#f2a46f",
+        "tonalRamp": [
+          "oklch(15.0% 0.029 54.4)",
+          "oklch(26.4% 0.054 54.4)",
+          "oklch(37.9% 0.092 54.4)",
+          "oklch(49.3% 0.115 54.4)",
+          "oklch(60.7% 0.115 54.4)",
+          "oklch(72.1% 0.092 54.4)",
+          "oklch(83.6% 0.054 54.4)",
+          "oklch(95.0% 0.029 54.4)"
+        ]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Grafit Dasar",
+        "canonical": "#141517",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "bg-sunken": {
+        "role": "neutral",
+        "displayName": "Grafit Cekung",
+        "canonical": "#101113",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Panel Grafit",
+        "canonical": "#1a1c1f",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "surface-2": {
+        "role": "neutral",
+        "displayName": "Grafit Terangkat",
+        "canonical": "#212328",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "surface-3": {
+        "role": "neutral",
+        "displayName": "Grafit Puncak",
+        "canonical": "#282b31",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "surface-hover": {
+        "role": "neutral",
+        "displayName": "Grafit Hover",
+        "canonical": "#25282d",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "surface-rail": {
+        "role": "neutral",
+        "displayName": "Grafit Rail",
+        "canonical": "#17181b",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Seam",
+        "canonical": "#2e3137",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "border-subtle": {
+        "role": "neutral",
+        "displayName": "Seam Halus",
+        "canonical": "#25282d",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "border-strong": {
+        "role": "neutral",
+        "displayName": "Seam Tegas",
+        "canonical": "#3d414a",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "border-control": {
+        "role": "neutral",
+        "displayName": "Garis Kontrol",
+        "canonical": "#666c76",
+        "tonalRamp": [
+          "#101113",
+          "#141517",
+          "#17181b",
+          "#1a1c1f",
+          "#212328",
+          "#282b31",
+          "#3d414a",
+          "#666c76"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Teks Utama",
+        "canonical": "#e4e6e9",
+        "tonalRamp": [
+          "oklch(15.0% 0.001 258.3)",
+          "oklch(26.4% 0.002 258.3)",
+          "oklch(37.9% 0.004 258.3)",
+          "oklch(49.3% 0.005 258.3)",
+          "oklch(60.7% 0.005 258.3)",
+          "oklch(72.1% 0.004 258.3)",
+          "oklch(83.6% 0.002 258.3)",
+          "oklch(95.0% 0.001 258.3)"
+        ]
+      },
+      "text-2": {
+        "role": "neutral",
+        "displayName": "Teks Sekunder",
+        "canonical": "#a8adb5",
+        "tonalRamp": [
+          "oklch(15.0% 0.003 259.8)",
+          "oklch(26.4% 0.006 259.8)",
+          "oklch(37.9% 0.010 259.8)",
+          "oklch(49.3% 0.013 259.8)",
+          "oklch(60.7% 0.013 259.8)",
+          "oklch(72.1% 0.010 259.8)",
+          "oklch(83.6% 0.006 259.8)",
+          "oklch(95.0% 0.003 259.8)"
+        ]
+      },
+      "text-3": {
+        "role": "neutral",
+        "displayName": "Teks Tersier",
+        "canonical": "#8d929b",
+        "tonalRamp": [
+          "oklch(15.0% 0.004 262.4)",
+          "oklch(26.4% 0.007 262.4)",
+          "oklch(37.9% 0.012 262.4)",
+          "oklch(49.3% 0.015 262.4)",
+          "oklch(60.7% 0.015 262.4)",
+          "oklch(72.1% 0.012 262.4)",
+          "oklch(83.6% 0.007 262.4)",
+          "oklch(95.0% 0.004 262.4)"
+        ]
+      },
+      "text-inverse": {
+        "role": "neutral",
+        "displayName": "Teks Terbalik",
+        "canonical": "#101113",
+        "tonalRamp": [
+          "oklch(15.0% 0.001 264.5)",
+          "oklch(26.4% 0.002 264.5)",
+          "oklch(37.9% 0.004 264.5)",
+          "oklch(49.3% 0.004 264.5)",
+          "oklch(60.7% 0.004 264.5)",
+          "oklch(72.1% 0.004 264.5)",
+          "oklch(83.6% 0.002 264.5)",
+          "oklch(95.0% 0.001 264.5)"
+        ]
+      },
+      "neutral-soft": {
+        "role": "neutral",
+        "displayName": "Kabut Netral",
+        "canonical": "rgb(168 173 181 / 0.08)",
+        "tonalRamp": [
+          "oklch(15.0% 0.003 259.8)",
+          "oklch(26.4% 0.006 259.8)",
+          "oklch(37.9% 0.010 259.8)",
+          "oklch(49.3% 0.013 259.8)",
+          "oklch(60.7% 0.013 259.8)",
+          "oklch(72.1% 0.010 259.8)",
+          "oklch(83.6% 0.006 259.8)",
+          "oklch(95.0% 0.003 259.8)"
+        ],
+        "note": "Lapisan 8% di atas grafit; ramp mengikuti warna dasarnya."
+      },
+      "constellation-steel": {
+        "role": "neutral",
+        "displayName": "Baja Rasi",
+        "canonical": "#8a94a3",
+        "tonalRamp": [
+          "oklch(15.0% 0.006 258.4)",
+          "oklch(26.4% 0.012 258.4)",
+          "oklch(37.9% 0.020 258.4)",
+          "oklch(49.3% 0.025 258.4)",
+          "oklch(60.7% 0.025 258.4)",
+          "oklch(72.1% 0.020 258.4)",
+          "oklch(83.6% 0.012 258.4)",
+          "oklch(95.0% 0.006 258.4)"
+        ]
+      },
+      "constellation-slate": {
+        "role": "neutral",
+        "displayName": "Batu Tulis Rasi",
+        "canonical": "#5b6472",
+        "tonalRamp": [
+          "oklch(15.0% 0.006 259.2)",
+          "oklch(26.4% 0.012 259.2)",
+          "oklch(37.9% 0.020 259.2)",
+          "oklch(49.3% 0.025 259.2)",
+          "oklch(60.7% 0.025 259.2)",
+          "oklch(72.1% 0.020 259.2)",
+          "oklch(83.6% 0.012 259.2)",
+          "oklch(95.0% 0.006 259.2)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Judul besar halaman awal saja."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Judul halaman di header halaman."
+      },
+      "title": {
+        "displayName": "Title (small caps)",
+        "purpose": "Judul panel, judul kelompok rail, judul kolom tabel."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Teks dasar terminal, sel tabel, input, tombol."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Label field, label KPI, status, tahap."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Petunjuk, badge, hint."
+      },
+      "figure-kpi": {
+        "displayName": "Figure KPI",
+        "purpose": "Nilai utama kartu statistik (mono tabular)."
+      },
+      "figure": {
+        "displayName": "Figure",
+        "purpose": "Setiap angka lain: harga, skor, delta, jam, hitungan."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-2",
+        "value": "0 10px 24px -10px rgb(0 0 0 / 0.55)",
+        "purpose": "Lapisan melayang: toast dan tooltip grafik Overview."
+      },
+      {
+        "name": "shadow-3",
+        "value": "0 18px 44px -14px rgb(0 0 0 / 0.65)",
+        "purpose": "Lapisan modal: laci navigasi mobile dan kartu login."
+      },
+      {
+        "name": "focus-ring",
+        "value": "0 0 0 2px #141517, 0 0 0 4px #74b9ff",
+        "purpose": "Setiap fokus keyboard; forced-colors memakai outline Highlight."
+      },
+      {
+        "name": "input-focus",
+        "value": "0 0 0 3px rgb(116 185 255 / 0.12)",
+        "purpose": "Cincin lembut input fokus bersama garis accent."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.2, 0.7, 0.2, 1)",
+        "purpose": "Transisi warna dan garis status."
+      },
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Masuk baris, toast, laci, meter skor."
+      },
+      {
+        "name": "dur-fast",
+        "value": "120ms",
+        "purpose": "Hover dan perubahan warna kontrol."
+      },
+      {
+        "name": "dur",
+        "value": "180ms",
+        "purpose": "Switch, panah sort, garis langkah."
+      },
+      {
+        "name": "dur-slow",
+        "value": "240ms",
+        "purpose": "Lebar rail dan laci navigasi."
+      },
+      {
+        "name": "dur-page",
+        "value": "320ms",
+        "purpose": "Fade pergantian layar, baris baru, toast."
+      },
+      {
+        "name": "topbar-sync-line",
+        "value": "2.8s ease infinite, hanya :root[data-scanner=\"active\"]",
+        "purpose": "Satu-satunya garis bergerak; terikat status scanner nyata."
+      },
+      {
+        "name": "indeterminate",
+        "value": "1.3s infinite",
+        "purpose": "Bar progres perintah scanner (3 tempat); fungsional, statis di reduced motion."
+      },
+      {
+        "name": "row-enter",
+        "value": "320ms, stagger 18ms (maks 16 baris)",
+        "purpose": "Baris baru meluncur sekali."
+      },
+      {
+        "name": "reduced",
+        "value": "prefers-reduced-motion atau :root[data-motion=\"off\"|\"reduced\"]",
+        "purpose": "Semua gerak dekoratif padam; canvas rasi 0.3 dan statis."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "lg",
+        "value": "1100px"
+      },
+      {
+        "name": "md",
+        "value": "820px"
+      },
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "xs",
+        "value": "480px"
+      }
+    ],
+    "deprecatedAliases": [
+      "--lr-glass-*",
+      "--lr-blur*",
+      "--lr-glow-*",
+      "--lr-gradient-*",
+      ".glass",
+      ".gradient-text",
+      ".btn--neural",
+      "lr-float",
+      "lr-hue-drift"
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Aksi utama: satu-satunya isian biru solid per layar.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Jalankan scanner</button>",
+      "css": ".ds-btn { font-family: var(--lr-font-sans, 'Atkinson Hyperlegible Next', system-ui, sans-serif); display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border: 1px solid var(--lr-border-strong, #3d414a); border-radius: var(--lr-radius-sm, 4px); background: var(--lr-surface-2, #212328); color: var(--lr-text, #e4e6e9); font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color 120ms cubic-bezier(0.2,0.7,0.2,1), border-color 120ms cubic-bezier(0.2,0.7,0.2,1); } .ds-btn:active { transform: translateY(0.5px); } .ds-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px #141517, 0 0 0 4px #74b9ff; } .ds-btn-primary { background: var(--lr-accent, #74b9ff); border-color: var(--lr-accent, #74b9ff); color: var(--lr-text-inverse, #101113); font-weight: 600; } .ds-btn-primary:hover { background: var(--lr-accent-strong, #8fc7ff); border-color: var(--lr-accent-strong, #8fc7ff); }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Tombol konsol default: grafit terangkat bergaris tegas.",
+      "html": "<button class=\"ds-btn-default\">Muat ulang</button>",
+      "css": ".ds-btn-default { font-family: var(--lr-font-sans, 'Atkinson Hyperlegible Next', system-ui, sans-serif); display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border: 1px solid var(--lr-border-strong, #3d414a); border-radius: var(--lr-radius-sm, 4px); background: var(--lr-surface-2, #212328); color: var(--lr-text, #e4e6e9); font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease; } .ds-btn-default:hover { background: var(--lr-surface-3, #282b31); border-color: var(--lr-border-control, #666c76); } .ds-btn-default:focus-visible { outline: none; box-shadow: 0 0 0 2px #141517, 0 0 0 4px #74b9ff; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Aksi destruktif: garis putus-putus merah, terisolasi, menjadi solid saat hover/fokus.",
+      "html": "<button class=\"ds-btn-danger\">Hentikan scanner</button>",
+      "css": ".ds-btn-danger { font-family: var(--lr-font-sans, 'Atkinson Hyperlegible Next', system-ui, sans-serif); display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border: 1px dashed var(--lr-bear-line, rgb(240 131 125 / 0.4)); border-radius: var(--lr-radius-sm, 4px); background: transparent; color: var(--lr-bear, #f0837d); font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease; } .ds-btn-danger:hover, .ds-btn-danger:focus-visible { outline: none; background: var(--lr-bear-soft, rgb(240 131 125 / 0.12)); border-style: solid; border-color: var(--lr-bear, #f0837d); } .ds-btn-danger:focus-visible { box-shadow: 0 0 0 2px #141517, 0 0 0 4px #74b9ff; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Field cekung bergaris kontrol; fokus menjadi garis biru dengan cincin lembut.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field__label\">Simbol</span><input class=\"ds-input\" placeholder=\"BTCUSDT\"></label>",
+      "css": ".ds-field { font-family: var(--lr-font-sans, 'Atkinson Hyperlegible Next', system-ui, sans-serif); display: flex; flex-direction: column; gap: 6px; } .ds-field__label { font-size: 12px; font-weight: 500; color: var(--lr-text-2, #a8adb5); } .ds-input { font: inherit; height: 32px; padding: 0 12px; border: 1px solid var(--lr-border-control, #666c76); border-radius: var(--lr-radius-sm, 4px); background: var(--lr-bg-sunken, #101113); color: var(--lr-text, #e4e6e9); font-size: 13px; transition: border-color 120ms ease, box-shadow 120ms ease; } .ds-input::placeholder { color: var(--lr-text-3, #8d929b); } .ds-input:hover { border-color: var(--lr-text-3, #8d929b); } .ds-input:focus-visible { outline: none; border-color: var(--lr-accent, #74b9ff); box-shadow: 0 0 0 3px var(--lr-accent-soft, rgb(116 185 255 / 0.12)); }"
+    },
+    {
+      "name": "Rail Navigation",
+      "kind": "nav",
+      "refersTo": "nav-link",
+      "description": "Rail berkelompok: judul small caps, tautan 32px, halaman aktif terangkat dengan ikon biru.",
+      "html": "<nav class=\"ds-nav\"><div class=\"ds-nav__section\">Pasar</div><a class=\"ds-nav__link\" href=\"#\"><svg class=\"ds-nav__icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"><rect x=\"4\" y=\"4\" width=\"7\" height=\"7\"/><rect x=\"13\" y=\"4\" width=\"7\" height=\"7\"/><rect x=\"4\" y=\"13\" width=\"7\" height=\"7\"/><rect x=\"13\" y=\"13\" width=\"7\" height=\"7\"/></svg>Overview</a><a class=\"ds-nav__link\" aria-current=\"page\" href=\"#\"><svg class=\"ds-nav__icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"><path d=\"M4 7h16M4 12h10M4 17h7\"/></svg>LONG Scanner</a></nav>",
+      "css": ".ds-nav { font-family: var(--lr-font-sans, 'Atkinson Hyperlegible Next', system-ui, sans-serif); display: flex; flex-direction: column; gap: 1px; width: 224px; padding: 8px; background: var(--lr-surface-rail, #17181b); border-right: 1px solid var(--lr-border, #2e3137); } .ds-nav__section { padding: 16px 12px 4px; font-size: 13px; font-variant-caps: all-small-caps; letter-spacing: 0.05em; font-weight: 600; color: var(--lr-text-3, #8d929b); } .ds-nav__link { display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--lr-radius-sm, 4px); color: var(--lr-text-2, #a8adb5); font-size: 13px; font-weight: 500; text-decoration: none; transition: background-color 120ms ease, color 120ms ease; } .ds-nav__link:hover { background: var(--lr-surface-2, #212328); color: var(--lr-text, #e4e6e9); } .ds-nav__link:focus-visible { outline: none; box-shadow: 0 0 0 2px #141517, 0 0 0 4px #74b9ff; } .ds-nav__link[aria-current=\"page\"] { background: var(--lr-surface-2, #212328); border-color: var(--lr-border, #2e3137); color: var(--lr-text, #e4e6e9); } .ds-nav__link[aria-current=\"page\"] .ds-nav__icon { color: var(--lr-accent, #74b9ff); } .ds-nav__icon { width: 18px; height: 18px; flex: none; }"
+    },
+    {
+      "name": "Status Badges",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Badge 20px radius 2px; nada bull/bear/warn/violet memakai pasangan -soft dan -line.",
+      "html": "<div class=\"ds-badges\"><span class=\"ds-badge\">Tutup</span><span class=\"ds-badge ds-badge--bull\">Likuid</span><span class=\"ds-badge ds-badge--warn\">Berjalan</span><span class=\"ds-badge ds-badge--bear\">Invalid</span><span class=\"ds-badge ds-badge--violet\">Model v2</span></div>",
+      "css": ".ds-badges { font-family: var(--lr-font-sans, 'Atkinson Hyperlegible Next', system-ui, sans-serif); display: flex; gap: 8px; flex-wrap: wrap; } .ds-badge { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid var(--lr-border-strong, #3d414a); border-radius: var(--lr-radius-xs, 2px); background: var(--lr-neutral-soft, rgb(168 173 181 / 0.08)); color: var(--lr-text-2, #a8adb5); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; } .ds-badge--bull { color: #74cf91; background: rgb(116 207 145 / 0.12); border-color: rgb(116 207 145 / 0.4); } .ds-badge--warn { color: #e8b85a; background: rgb(232 184 90 / 0.12); border-color: rgb(232 184 90 / 0.4); } .ds-badge--bear { color: #f0837d; background: rgb(240 131 125 / 0.12); border-color: rgb(240 131 125 / 0.4); } .ds-badge--violet { color: #c69cf0; background: rgb(198 156 240 / 0.12); border-color: rgb(198 156 240 / 0.4); }"
+    },
+    {
+      "name": "Panel with KPI",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Panel grafit bergaris seam, judul small caps dengan kotak nada 7px, nilai KPI mono tabular.",
+      "html": "<section class=\"ds-panel\"><header class=\"ds-panel__header\"><h3 class=\"ds-panel__title\">Kandidat LONG</h3></header><div class=\"ds-panel__body\"><div class=\"ds-stat\"><span class=\"ds-stat__label\">Sinyal aktif</span><span class=\"ds-stat__value\">12<span class=\"ds-stat__unit\"> kandidat</span></span><span class=\"ds-stat__hint\">diperbarui 14:58:24</span></div></div></section>",
+      "css": ".ds-panel { font-family: var(--lr-font-sans, 'Atkinson Hyperlegible Next', system-ui, sans-serif); background: var(--lr-surface, #1a1c1f); border: 1px solid var(--lr-border, #2e3137); border-radius: var(--lr-radius-md, 6px); color: var(--lr-text, #e4e6e9); max-width: 320px; } .ds-panel__header { display: flex; align-items: center; min-height: 40px; padding: 8px 16px; border-bottom: 1px solid var(--lr-border, #2e3137); } .ds-panel__title { margin: 0; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-variant-caps: all-small-caps; font-weight: 600; letter-spacing: 0.05em; color: var(--lr-text-2, #a8adb5); } .ds-panel__title::before { content: ''; width: 7px; height: 7px; border-radius: 1px; background: var(--lr-bull, #74cf91); } .ds-panel__body { padding: 16px; } .ds-stat { display: flex; flex-direction: column; gap: 8px; } .ds-stat__label { font-size: 12px; font-weight: 500; color: var(--lr-text-2, #a8adb5); } .ds-stat__value { font-family: var(--lr-font-mono, 'Atkinson Hyperlegible Mono', ui-monospace, monospace); font-size: 24px; font-weight: 500; line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums slashed-zero; } .ds-stat__unit { font-family: var(--lr-font-sans, 'Atkinson Hyperlegible Next', system-ui, sans-serif); font-size: 13px; letter-spacing: 0; color: var(--lr-text-2, #a8adb5); } .ds-stat__hint { font-size: 11px; color: var(--lr-text-3, #8d929b); }"
+    },
+    {
+      "name": "Data Table",
+      "kind": "custom",
+      "refersTo": "table-row",
+      "description": "Tabel padat: baris 32px, header small caps sticky, angka mono rata kanan, baris terpilih bergaris 1px biru.",
+      "html": "<table class=\"ds-table\"><thead><tr><th>Pair</th><th>Tahap</th><th class=\"ds-num\">Skor</th><th class=\"ds-num\">Harga</th></tr></thead><tbody><tr><td>AAAUSDT</td><td><span class=\"ds-stage\" style=\"--c:#74b9ff\">Early bullish</span></td><td class=\"ds-num\">54</td><td class=\"ds-num\">99,0793</td></tr><tr data-selected><td>BBBUSDT</td><td><span class=\"ds-stage\" style=\"--c:#74cf91\">Momentum</span></td><td class=\"ds-num\">70</td><td class=\"ds-num\">2,4719</td></tr></tbody></table>",
+      "css": ".ds-table { font-family: var(--lr-font-sans, 'Atkinson Hyperlegible Next', system-ui, sans-serif); border-collapse: collapse; width: 100%; font-size: 13px; color: var(--lr-text, #e4e6e9); background: var(--lr-surface, #1a1c1f); } .ds-table th, .ds-table td { height: 32px; padding: 0 12px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--lr-border-subtle, #25282d); } .ds-table thead th { color: var(--lr-text-3, #8d929b); font-variant-caps: all-small-caps; font-weight: 600; letter-spacing: 0.03em; border-bottom-color: var(--lr-border-strong, #3d414a); } .ds-table .ds-num { text-align: right; } .ds-table td.ds-num { font-family: var(--lr-font-mono, 'Atkinson Hyperlegible Mono', ui-monospace, monospace); font-variant-numeric: tabular-nums slashed-zero; font-size: 0.94em; } .ds-table tbody tr:hover { background: var(--lr-surface-hover, #25282d); } .ds-table tbody tr[data-selected] { background: var(--lr-accent-soft, rgb(116 185 255 / 0.12)); } .ds-table tbody tr[data-selected] > td:first-child { box-shadow: inset 1px 0 0 var(--lr-accent, #74b9ff); } .ds-stage { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--c); } .ds-stage::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }"
+    },
+    {
+      "name": "Sync Pipeline",
+      "kind": "custom",
+      "refersTo": "sync-step",
+      "description": "Gerak khas: langkah sync tersambung; selesai bercentang, aktif bercincin berputar, berikutnya kosong.",
+      "html": "<ol class=\"ds-steps\"><li class=\"ds-step\" data-state=\"done\"><span class=\"ds-step__marker\"></span><span>Sinkron jam</span></li><li class=\"ds-step\" data-state=\"active\"><span class=\"ds-step__marker\"></span><span>Backfill candle</span></li><li class=\"ds-step\"><span class=\"ds-step__marker\"></span><span>Stream live</span></li></ol>",
+      "css": ".ds-steps { font-family: var(--lr-font-sans, 'Atkinson Hyperlegible Next', system-ui, sans-serif); list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; color: var(--lr-text, #e4e6e9); font-size: 13px; max-width: 320px; } .ds-step { position: relative; display: grid; grid-template-columns: 18px 1fr; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--lr-border, #2e3137); border-radius: var(--lr-radius-sm, 4px); background: var(--lr-bg-sunken, #101113); } .ds-step:not(:last-child)::before { content: ''; position: absolute; left: 20px; top: 100%; width: 1px; height: 10px; background: var(--lr-border-strong, #3d414a); } .ds-step[data-state=done]:not(:last-child)::before { background: rgb(116 207 145 / 0.4); } .ds-step[data-state=active] { border-color: var(--lr-accent, #74b9ff); } .ds-step__marker { position: relative; width: 18px; height: 18px; box-sizing: border-box; border: 1.5px solid var(--lr-border-control, #666c76); border-radius: 50%; background: var(--lr-surface, #1a1c1f); } .ds-step[data-state=done] .ds-step__marker { border-color: #74cf91; background: #74cf91; } .ds-step[data-state=done] .ds-step__marker::after { content: ''; position: absolute; left: 4.5px; top: 1.5px; width: 4px; height: 8px; border: solid #101113; border-width: 0 2px 2px 0; transform: rotate(45deg); } .ds-step[data-state=active] .ds-step__marker { border-color: rgb(116 185 255 / 0.12); } .ds-step[data-state=active] .ds-step__marker::after { content: ''; position: absolute; inset: -1.5px; border: 1.5px solid transparent; border-top-color: #74b9ff; border-right-color: #74b9ff; border-radius: 50%; animation: ds-spin 0.9s linear infinite; } @keyframes ds-spin { to { transform: rotate(360deg); } } @media (prefers-reduced-motion: reduce) { .ds-step[data-state=active] .ds-step__marker::after { animation: none; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Konsol Grafit",
+    "overview": "AlphaLens adalah permukaan kerja, bukan etalase. Dasar grafit matte, panel yang dipisah seam 1px, dan warna yang hanya muncul ketika ada status untuk dilaporkan: biru untuk info, fokus, dan aksi utama; hijau untuk LONG/bullish; merah untuk SHORT/bearish dan aksi destruktif; amber untuk waspada, basi, atau simulasi; violet untuk metadata. Peneliti memercayai angka karena tidak ada yang dihias. Kepadatannya kepadatan konsol pengembang: baris tabel 32px, teks dasar 13px, angka mono tabular yang sejajar di setiap kolom.\n\nDunia ini menggantikan \"Neural Aurora\" lama sepenuhnya. Kaca, blur, glow, gradien dekoratif, dan neon tidak lagi ada di sistem. Nama token lama masih ada di `tokens.css` hanya sebagai alias kompatibilitas yang nilainya sudah diratakan (lihat Do's and Don'ts). Kedalaman datang dari tangga nada permukaan grafit, bukan dari cahaya.\n\nGerak menandai perubahan status, bukan dekorasi. Hanya satu garis yang benar-benar berjalan: garis sync di tepi bawah topbar, dan itu pun hanya saat scanner nyata aktif. Selebihnya, panel membuka sepanjang satu sumbu, baris baru meluncur masuk sekali, meter skor tumbuh ke nilai nyata, dan rasi grafit di latar bergerak pelan dengan opasitas rendah. Semua gerak padam di `prefers-reduced-motion` dan ketika pengguna mematikan \"Animasi latar\".",
+    "keyCharacteristics": [
+      "Dark-first, matte. Lima anak tangga permukaan grafit dengan seam 1px sebagai satu-satunya pemisah struktural.",
+      "Warna adalah sinyal status, tidak pernah ornamen. Satu isian biru solid per layar: aksi utama.",
+      "Atkinson Hyperlegible Next untuk UI, Atkinson Hyperlegible Mono tabular untuk setiap angka.",
+      "Judul panel, judul kolom, dan judul kelompok navigasi dalam small caps.",
+      "Radius kecil (2–6px), bayangan hanya untuk lapisan yang benar-benar melayang.",
+      "Pipeline tahap (langkah sync bersambung) sebagai gerak khas."
+    ],
+    "rules": [
+      {
+        "name": "The Status-Only Rule",
+        "body": "Warna hanya dipakai bila ada status yang dilaporkan. Panel, judul, dan latar tetap grafit; sebuah elemen tanpa makna status tidak mendapat aksen.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Fill Rule",
+        "body": "Isian biru solid hanya untuk aksi utama, satu per layar. Tombol lain bergaris atau transparan.",
+        "section": "colors"
+      },
+      {
+        "name": "The Small Marker Rule",
+        "body": "Nada panel, KPI, dan toast ditandai dengan kotak 7px (radius 1px) di depan judul atau label, bukan dengan border atau latar berwarna.",
+        "section": "colors"
+      },
+      {
+        "name": "The Mono Figure Rule",
+        "body": "Setiap angka dirender dalam Atkinson Hyperlegible Mono dengan `tabular-nums slashed-zero`. Bila nilai KPI mencampur angka dan kata (\"12 menit lalu\"), kata satuannya kembali ke sans 13px sekunder; hanya angkanya yang mono. Prosa tidak pernah mono.",
+        "section": "typography"
+      },
+      {
+        "name": "The Small Caps Rule",
+        "body": "Judul struktural (panel, kolom, kelompok navigasi) memakai small caps sungguhan, bukan kapital penuh dan bukan label mono.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Panel Rule",
+        "body": "Panel, kartu statistik, dan tabel tidak pernah berbayang. Bila sesuatu perlu menonjol, naikkan satu anak tangga permukaan atau pertegas seamnya.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Muted Constellation Rule",
+        "body": "Canvas rasi grafit di latar tetap ada sebagai satu-satunya atmosfer, pada opasitas 0.55 (0.3 bila animasi dimatikan), tanpa halo atau glow, dan disembunyikan saat dicetak.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** rujuk hanya variabel `--lr-*` dari `tokens.css`; komponen tidak menulis warna mentah.",
+      "**Do** render setiap angka dengan Atkinson Hyperlegible Mono `tabular-nums slashed-zero`, dan biarkan kata satuan di nilai KPI tetap sans.",
+      "**Do** pisahkan panel dengan seam 1px dan naikkan anak tangga grafit untuk hierarki, bukan bayangan.",
+      "**Do** tandai nada dengan kotak 7px, titik status, badge -soft/-line, atau garis 1px di tepi sel, sesuai pola yang sudah ada.",
+      "**Do** isolasi aksi destruktif dengan garis putus-putus merah dan pisahkan dari aksi utama.",
+      "**Do** ikat setiap gerak berulang ke keadaan nyata (scanner aktif, data live, perintah diproses), dan tambahkan aturan `:root[data-motion=\"off\"|\"reduced\"]` untuk setiap animasi dekoratif baru.",
+      "**Do** pakai garis-garis diagonal amber hanya untuk data simulasi atau candle berjalan."
+    ],
+    "donts": [
+      "**Don't** pakai kaca, backdrop blur, glow, neon, atau gradien dekoratif; dunia Neural Aurora sudah pensiun.",
+      "**Don't** pakai alias lama `--lr-glass-*`, `--lr-blur-*`, `--lr-glow-*`, `--lr-gradient-*`, `.glass`, `.gradient-text`, `.btn--neural`, atau keyframes `lr-float` / `lr-hue-drift` di kode baru. Nilainya sudah diratakan hanya agar CSS lama tetap terbaca; token `--lr-neural-*` hanya untuk canvas latar.",
+      "**Don't** menambah garis bergerak kedua; garis sync topbar adalah satu-satunya, dan hanya saat scanner nyata berjalan.",
+      "**Don't** beri panel, kartu statistik, atau tabel bayangan atau border berwarna penuh.",
+      "**Don't** pakai isian aksen solid untuk apa pun selain aksi utama.",
+      "**Don't** pakai warna untuk dekorasi: biru, hijau, merah, amber, dan violet masing-masing hanya membawa makna statusnya.",
+      "**Don't** set prosa dalam mono, dan jangan ganti judul small caps dengan kapital penuh."
+    ]
+  }
+}

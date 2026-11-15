@@ -81,7 +81,10 @@ form.addEventListener('submit', async (event) => {
     pulse('bull', 10);
     // Jeda singkat agar pulsa sukses terlihat; dilewati bila gerak dimatikan/dikurangi.
     if (!prefersReducedMotion()) await new Promise((resolve) => setTimeout(resolve, 320));
-    window.location.replace('/');
+    // Kembali ke layar yang diminta sebelum login (mis. /#/settings dari halaman awal). Path selalu '/', dan fragmen
+    // hanya diterima bila berbentuk hash-route aplikasi — tidak pernah URL lain (tanpa open redirect).
+    const next = /^#\/[\w-]+(\?[\w=&%.-]*)?$/.test(window.location.hash) ? window.location.hash : '';
+    window.location.replace(`/${next}`);
   } catch (err) {
     form.password.value = '';
     setCardState('is-error');

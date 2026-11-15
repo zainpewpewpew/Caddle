@@ -5,9 +5,11 @@
 // - Binance memutus koneksi setiap 24 jam → rotasi terjadwal sebelum batas itu.
 // - Pesan rusak dilaporkan lewat onState({ event: 'error' }) dan diabaikan, tidak pernah crash.
 // Semua timer lewat setTimer/clearTimer injeksi dan jitter lewat `random` injeksi.
+// - WebSocketImpl default = BinanceWebSocket (network.js): DNS fstream.binance.com lewat DoH bila BINANCE_DNS=doh.
 
 import { randomInt } from 'node:crypto';
 import { TIMEFRAMES, expectedCloseTime, isAlignedOpenTime } from '../../market/contracts.js';
+import { BinanceWebSocket } from './network.js';
 
 // Sejak upgrade WebSocket USDⓈ-M (pemberitahuan Binance 2026-03-06; URL lama `/ws` & `/stream` dimatikan
 // setelah 2026-04-23) stream dibagi per kategori: `/public`, `/market`, `/private`. Kline termasuk kategori
@@ -194,7 +196,7 @@ const errorMessage = (err) => String(err?.message ?? err).slice(0, 300);
  * @returns {{ start(): void, stop(): void, state(): object }}
  */
 export function createKlineStream({
-  WebSocketImpl = globalThis.WebSocket,
+  WebSocketImpl = BinanceWebSocket,
   baseUrl = BINANCE_WS_BASE_URL,
   streams,
   onCandle,

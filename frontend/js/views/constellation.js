@@ -318,11 +318,11 @@ function readPalette(el) {
   const css = getComputedStyle(el);
   const v = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
   return {
-    bull: v('--lr-bull', '#21c58e'),
-    bear: v('--lr-bear', '#f16b75'),
-    cyan: v('--lr-neural-cyan', '#38e1ff'),
-    violet: v('--lr-neural-violet', '#7c6cff'),
-    text: v('--lr-text-2', '#8b98a8'),
+    bull: v('--lr-bull', '#74cf91'),
+    bear: v('--lr-bear', '#f0837d'),
+    cyan: v('--lr-accent', '#74b9ff'),
+    violet: v('--lr-violet', '#c69cf0'),
+    text: v('--lr-text-2', '#a8adb5'),
   };
 }
 
@@ -426,19 +426,11 @@ export function mountConstellation({ signals: initial = [], error: initialError 
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, width, height);
 
-    // Halo klaster.
+    // Kisi orbit klaster (cincin putus-putus tipis, tanpa halo/gradien — dunia "Konsol Grafit").
     for (const dir of ['LONG', 'SHORT']) {
       const c = layout.clusters[dir];
       const color = dir === 'LONG' ? palette.bull : palette.bear;
-      const grad = g.createRadialGradient(c.cx, c.cy, 0, c.cx, c.cy, c.r * 1.25);
-      grad.addColorStop(0, color);
-      grad.addColorStop(1, 'transparent');
-      g.globalAlpha = 0.07;
-      g.fillStyle = grad;
-      g.beginPath();
-      g.arc(c.cx, c.cy, c.r * 1.25, 0, Math.PI * 2);
-      g.fill();
-      g.globalAlpha = 0.12;
+      g.globalAlpha = 0.16;
       g.strokeStyle = color;
       g.lineWidth = 1;
       g.setLineDash([2, 6]);
@@ -499,14 +491,7 @@ export function mountConstellation({ signals: initial = [], error: initialError 
         g.arc(x, y, r * (1.2 + ph * 2.2), 0, Math.PI * 2);
         g.stroke();
       }
-      const glow = g.createRadialGradient(x, y, 0, x, y, r * 2.6);
-      glow.addColorStop(0, color);
-      glow.addColorStop(1, 'transparent');
-      g.globalAlpha = (n.pulse ? 0.45 : 0.25) * k;
-      g.fillStyle = glow;
-      g.beginPath();
-      g.arc(x, y, r * 2.6, 0, Math.PI * 2);
-      g.fill();
+      // Node datar: kecerahan mengikuti Early Score NYATA (tanpa halo cahaya).
       g.globalAlpha = (0.55 + 0.45 * ((n.earlyScore ?? 0) / 100)) * k;
       g.fillStyle = color;
       g.beginPath();

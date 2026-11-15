@@ -326,3 +326,34 @@ export function parseBookTickers(body) {
   ]);
   return rows.map((r) => ({ ...r, spreadBps: computeSpreadBps(r.bidPrice, r.askPrice) }));
 }
+
+/**
+ * @typedef {{ symbol: string, fundingTime: number, fundingRate: number }} FundingRate
+ *   fundingRate bertanda per periode funding: positif = posisi long membayar short, negatif = sebaliknya.
+ */
+
+/**
+ * Parse GET /fapi/v1/fundingRate → FundingRate[] urut naik menurut fundingTime. Bila `symbol` diberikan, setiap entri
+ * wajib simbol itu (respons untuk simbol lain ditolak, tidak dibuang diam-diam). markPrice tidak dipakai (kosong pada
+ * data lama).
+ * @param {unknown} body
+ * @param {{ symbol?: string }} [ctx]
+ * @returns {FundingRate[]}
+ * @throws {BinanceDataError}
+ */
+export function parseFundingRates(body, { symbol } = {}) {
+  const path = '/fapi/v1/fundingRate';
+  const rows = parseObjectArray(body, 'fundingRate', path, [
+    ['symbol', readSymbol, 'wajib string tidak kosong'],
+    ['fundingTime', readEpoch, 'harus bilangan bulat epoch ms'],
+    ['fundingRate', readSigned, 'bukan desimal valid'],
+  ]);
+  if (symbol !== undefined) {
+    const issues = createIssues();
+    rows.forEach((r, index) => {
+      if (r.symbol !== symbol) issues.add(index, 'symbol', 'simbol tidak sesuai permintaan', r.symbol);
+    });
+    throwIfIssues(issues, 'fundingRate', path);
+  }
+  return rows.sort((a, b) => a.fundingTime - b.fundingTime);
+}

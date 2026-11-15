@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { animateNumber, badge, dataTable, emptyState, page, panel, stat } from '../lib/components.js';
+import { animateNumber, badge, dataTable, emptyState, figureValue, page, panel, stat } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { formatInteger, formatPercent, formatPrice, formatRelative, formatTime } from '../lib/format.js';
 import { diffNewSignals, mountConstellation, normalizeSignals, stageLabel } from './constellation.js';
@@ -197,7 +197,7 @@ export async function overviewView(ctx) {
   ]);
 
   const k = {
-    monitored: kpi({ label: 'Simbol dipantau', hint: 'USDT-M perpetual', testId: 'kpi-monitored', tone: 'accent' }),
+    monitored: kpi({ label: 'Simbol dipantau', hint: 'USDT-M perpetual', testId: 'kpi-monitored' }),
     long: kpi({ label: 'Kandidat LONG aktif', hint: 'QUIET → BREAKOUT', testId: 'kpi-active', tone: 'bull' }),
     short: kpi({ label: 'Kandidat SHORT aktif', hint: 'QUIET → BREAKDOWN', testId: 'kpi-active-short', tone: 'bear' }),
     // earlySignals & alignedSignals dari server tetap hitungan LONG (rincian per arah: earlyByDirection/alignedByDirection).
@@ -230,7 +230,9 @@ export async function overviewView(ctx) {
     k.early.set(d.earlySignals);
     k.aligned.set(d.alignedSignals);
     const ingestValue = ingestEl.querySelector('.stat__value');
-    ingestValue.textContent = d.lastIngestionAt ? formatRelative(d.lastIngestionAt) : '—';
+    // Angka mono, kata satuan sans (figureValue) — aturan angka yang sama dengan tile KPI lain.
+    const ingestText = figureValue(d.lastIngestionAt ? formatRelative(d.lastIngestionAt) : '—');
+    ingestValue.replaceChildren(...(Array.isArray(ingestText) ? ingestText : [ingestText]));
     ingestValue.classList.toggle('stat__value--muted', !d.lastIngestionAt);
     ingestEl.querySelector('.stat__hint').textContent = d.lastIngestionAt ? formatTime(d.lastIngestionAt) : 'Belum ada candle tersimpan';
     marketSlot.replaceChildren(marketBody(d));
@@ -263,8 +265,9 @@ export async function overviewView(ctx) {
   const el = page({
     title: 'Overview',
     subtitle: 'Ringkasan kondisi pemindaian. Semua angka berasal dari database; nilai nol berarti memang belum ada data.',
+    // Kontrol scanner di kanan header, terpisah dari angka.
+    actions: workerControlBar({ user: ctx?.user, status: worker }),
   },
-  workerControlBar({ user: ctx?.user, status: worker }),
   kpis,
   hero,
   h('div', { class: 'grid grid--main-side ov-grid' },

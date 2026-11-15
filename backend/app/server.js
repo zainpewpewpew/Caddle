@@ -1,6 +1,7 @@
 import { buildApp } from './buildApp.js';
 import { ConfigError, loadConfig } from './config.js';
 import { openDatabase } from '../database/connection.js';
+import { configureBinanceNetwork } from '../ingestion/binance/network.js';
 import { STOP_TIMEOUT_MS } from '../system/workerSupervisor.js';
 import { DefaultUserError, ensureDefaultUser } from '../users/defaultUser.js';
 
@@ -22,6 +23,9 @@ async function main() {
   const db = openDatabase(config.databasePath);
   const app = await buildApp({ config, db });
   app.addHook('onClose', async () => db.close());
+  // Server juga memanggil Binance (sinkron Smart Money dari website): DNS sama dengan worker (BINANCE_DNS).
+  const binanceNetwork = configureBinanceNetwork({ mode: config.binanceDns, logger: app.log });
+  app.log.info({ binanceDns: binanceNetwork.mode }, 'DNS Binance dikonfigurasi');
 
   // Akun default prototipe lokal — setelah buildApp, karena migrasi berjalan di sana.
   // Hanya di development + server lokal (HOST/APP_ORIGIN loopback, tanpa proxy) + tabel users kosong;

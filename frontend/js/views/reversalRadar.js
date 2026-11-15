@@ -23,7 +23,7 @@ import { createSymbolChartPanel, isValidSymbol, normalizeTimeframe } from './sym
 import { workerControlBar } from './workerControl.js';
 import { isWorkerActive } from './workerFormat.js';
 
-const SUBTITLE = 'Pelabel struktur proses dasar pada 5m/15m/1h: di tahap mana chart berada (Early Formation → Developing Reversal → Confirmed Breakout), bukti yang terpenuhi, level kunci, dan kapan setup batal. Deskriptif, bukan prediksi — lihat status validasi di bawah. Skor = kecocokan aturan, bukan probabilitas; bukan perintah transaksi.';
+const SUBTITLE = 'Pelabel struktur 5m/15m/1h, deskriptif dan bukan prediksi: validasi data nyata belum menunjukkan keunggulan. Skor = kecocokan aturan, bukan probabilitas.';
 /** Penyegaran latar (hanya saat scanner benar-benar berjalan & halaman terlihat), pola screener.js. */
 const REFRESH_MS = 30_000;
 /** Teks relatif kolom "Update" dihitung ulang tiap interval ini. */
@@ -31,7 +31,7 @@ const CLOCK_TICK_MS = 15_000;
 /** Preferensi lipatan panel sekunder SA/PVA ('1' terbuka, '0' terlipat). */
 const LEGACY_OPEN_KEY = 'lr.reversal.legacyOpen';
 const STAGE_TEST_IDS = Object.freeze({ EARLY_FORMATION: 'reversal-early', DEVELOPING_REVERSAL: 'reversal-developing', CONFIRMED_BREAKOUT: 'reversal-confirmed' });
-const NOTE = 'Skor = jumlah poin aturan yang terpenuhi (0–100), bukan probabilitas; tidak ada perintah transaksi. Riset saja.';
+const NOTE = 'Skor = jumlah poin aturan yang terpenuhi (0–100), bukan probabilitas; tidak ada perintah transaksi. Sensitivitas hanya menyaring tampilan (skor & bukti minimum), bukan parameter mesin. Riset saja.';
 /** Status validasi data nyata (docs/21 §6.6–§6.10: run 1–3 Jun–Okt 2025 + uji luar sampel run 4 Jun–Okt 2026): ditampilkan apa adanya di kepala panel. */
 const VALIDATION_NOTE = 'Status validasi (data Binance: tiga run replay Jun–Okt 2025 pada 16–17 simbol plus satu uji luar sampel Jun–Okt 2026 pada 20 simbol — docs/21 §6.6–§6.10): rasio keberhasilan kandidat setara entri acak pada penghalang yang sama — juga per tahap, per status terlambat, dan per bin skor dengan basis per subset — dan kandidat tidak lebih awal dari scanner SA/PVA lama; belum ada bukti keunggulan. Dua sel sensitivitas Rendah yang menonjol pada data 2025 gagal pada uji luar sampel 2026. Tidak ada tahap, sensitivitas, atau ambang skor yang terbukti lebih baik dari kebetulan, termasuk Early Formation; validasi ditutup tanpa uji lanjutan.';
 
@@ -102,7 +102,6 @@ function filterForm(filters) {
     rrSelect({
       label: 'Sensitivitas', name: 'sensitivity', value: filters.sensitivity,
       options: [{ value: 'LOW', label: 'Rendah' }, { value: 'MEDIUM', label: 'Sedang' }, { value: 'HIGH', label: 'Tinggi' }],
-      hint: 'Filter tampilan (skor & bukti minimum), bukan parameter mesin',
     }),
     h('div', { class: 'field rr-toolbar__toggles' },
       toggle({ name: 'hideExtended', label: 'Sembunyikan yang sudah extended', checked: filters.hideExtended }),
@@ -146,9 +145,10 @@ function stagePanel(stage) {
   const info = STAGE_LABELS[stage];
   const counts = h('span', { class: 'rr-counts', 'data-testid': `${STAGE_TEST_IDS[stage]}-counts` });
   const host = h('div', { class: 'rr-stage__host', 'data-testid': STAGE_TEST_IDS[stage] });
-  const el = panel({ title: info.title, actions: counts, flush: true },
-    h('p', { class: 'rr-stage__desc' }, info.text),
-    host);
+  const el = panel({ title: info.title, actions: counts, flush: true }, host);
+  // Deskripsi tahap duduk di baris judul panel (bukan baris sendiri) agar tabel kandidat naik.
+  const header = el.querySelector('.panel__header');
+  header.insertBefore(h('p', { class: 'rr-stage__desc' }, info.text), header.querySelector('.panel__actions'));
   el.classList.add('rr-stage');
   el.dataset.stage = stage;
   return { stage, el, host, counts };
@@ -535,17 +535,21 @@ export async function reversalRadarView(ctx) {
     },
   });
 
-  const filterPanel = panel({ flush: true, footer: NOTE }, form);
+  const filterPanel = panel({ flush: true }, form);
   filterPanel.classList.add('rr-filter-panel');
-  const el = page({ title: 'LONG Scanner', subtitle: SUBTITLE, actions: radar.el },
-    control, filterPanel, summary, statusHost, detail.el, details);
+  // Kontrol scanner di kanan header (bukan bilah selebar halaman) agar tabel kandidat naik ke viewport pertama.
+  const el = page({ title: 'LONG Scanner', subtitle: SUBTITLE, actions: [radar.el, control] },
+    filterPanel, summary, statusHost, detail.el, h('p', { class: 'rr-footnote' }, NOTE), details);
   // Nama heading tetap "LONG Scanner" (sama dengan nav & topbar); "Reversal Radar" menjadi bagian judul yang tampak.
   const heading = el.querySelector('.page__title');
   const titleWrap = h('div', { class: 'rr-title' });
   heading.before(titleWrap);
   titleWrap.append(heading, h('span', { class: 'rr-title__sub', 'data-testid': 'reversal-title' }, 'Reversal Radar'));
-  // Catatan status validasi data nyata (docs/21 §6.6–§6.10) tepat di bawah subjudul — selalu tampil, statis.
-  const validation = h('p', { class: 'rr-validation', 'data-testid': 'reversal-validation' }, VALIDATION_NOTE);
+  // Catatan status validasi data nyata (docs/21 §6.6–§6.10) tepat di bawah subjudul: ringkasan negatifnya selalu
+  // tampil; teks lengkapnya (apa adanya) dapat dibuka.
+  const validation = h('details', { class: 'rr-validation', 'data-testid': 'reversal-validation' },
+    h('summary', { class: 'rr-validation__summary' }, 'Status validasi: belum ada bukti keunggulan; validasi ditutup. Lihat rincian'),
+    h('p', { class: 'rr-validation__text' }, VALIDATION_NOTE));
   (el.querySelector('.page__subtitle') ?? titleWrap).after(validation);
   el.classList.add('page--scanner', 'page--reversal');
   el.dataset.direction = 'LONG';

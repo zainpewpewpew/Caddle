@@ -1,5 +1,7 @@
 # 11 — Riset desain "Neural Aurora": terminal premium, latar jaringan saraf, kaca, gerak
 
+> **Catatan 2026-11-15:** dunia visual "Neural Aurora" yang diriset di dokumen ini telah diganti "Konsol Grafit" (lihat [04 — Design system](04-design-system.md)). Dokumen ini dipertahankan sebagai catatan riset.
+
 Status: riset (Oktober 2026). Penulis: Agent RISET-DESAIN. Dokumen ini read-only terhadap kode; ia
 memberi **nilai angka konkret** yang bisa langsung dipakai di `frontend/js/lib/neural.js`,
 `frontend/css/tokens.css`, `frontend/css/neural.css`, `components.css`, dan view.

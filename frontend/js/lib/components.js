@@ -25,8 +25,20 @@ export function panel({ title, actions, flush = false, footer, id }, ...body) {
  * `countTo` (opsional, angka NYATA dari API) membuat nilai dihitung naik dari 0 ke angka itu lewat animateNumber();
  * `format` memformat angka tersebut (default bilangan bulat). Tanpa countTo, `value` ditampilkan apa adanya.
  */
+/**
+ * Nilai angka + satuan (mis. "18 dtk", "180.6 MB", "15 menit lalu"): angka tetap teks biasa di .stat__value (mono),
+ * kata satuan dibungkus .stat__unit (sans, ukuran keterangan). Isi teks tidak berubah. Nilai tanpa huruf (angka saja,
+ * '—') atau bukan string dikembalikan apa adanya.
+ * @param {unknown} value
+ */
+export function figureValue(value) {
+  if (typeof value !== 'string' || !/\d/.test(value) || !/\p{L}/u.test(value)) return value;
+  return value.split(/(\d[\d.,:]*)/).filter((p) => p !== '')
+    .map((p) => (/^\d/.test(p) ? p : h('span', { class: 'stat__unit' }, p)));
+}
+
 export function stat({ label, value, hint, muted = false, testId, tone, countTo, format }) {
-  const valueEl = h('span', { class: muted ? 'stat__value stat__value--muted' : 'stat__value' }, value);
+  const valueEl = h('span', { class: muted ? 'stat__value stat__value--muted' : 'stat__value' }, figureValue(value));
   if (!muted && Number.isFinite(countTo)) animateNumber(valueEl, countTo, { format });
   return h('div', { class: 'stat', 'data-testid': testId, 'data-tone': tone },
     h('span', { class: 'stat__label' }, label),

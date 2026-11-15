@@ -6,30 +6,30 @@ import { directionBadge, patternBadge, signalStage } from './signalFormat.js';
 // yang ditandai jelas — bukan data pasar.
 
 const COLORS = [
-  ['Background', '--lr-bg'], ['Surface', '--lr-surface'], ['Surface elevated', '--lr-surface-2'], ['Border', '--lr-border'],
-  ['Teks utama', '--lr-text'], ['Teks sekunder', '--lr-text-2'], ['Bullish', '--lr-bull'], ['Warning', '--lr-warn'],
-  ['Bearish', '--lr-bear'], ['Accent', '--lr-accent'],
-  ['Neural cyan', '--lr-neural-cyan'], ['Neural violet', '--lr-neural-violet'], ['Kaca', '--lr-glass'], ['Kaca pekat', '--lr-glass-strong'],
+  ['Dasar grafit', '--lr-bg'], ['Rail', '--lr-surface-rail'], ['Panel', '--lr-surface'], ['Terangkat', '--lr-surface-2'],
+  ['Seam', '--lr-border'], ['Batas kontrol', '--lr-border-control'],
+  ['Teks utama', '--lr-text'], ['Teks sekunder', '--lr-text-2'], ['Teks tersier', '--lr-text-3'],
+  ['Bullish / LONG', '--lr-bull'], ['Waspada', '--lr-warn'], ['Bearish / SHORT', '--lr-bear'], ['Aksen (aksi, fokus)', '--lr-accent'],
+  ['Metadata', '--lr-violet'], ['Latar animasi', '--lr-neural-cyan'],
 ];
 
 const TIMELINE = [
-  ['done', 'Langkah selesai', 'Titik emerald + garis bergradien'],
-  ['active', 'Langkah aktif', 'Titik cyan bercahaya dengan cincin berdenyut'],
+  ['done', 'Langkah selesai', 'Titik hijau + garis bernada bull'],
+  ['active', 'Langkah aktif', 'Titik aksen dengan cincin tipis yang mengembang'],
   ['todo', 'Langkah berikutnya', 'Belum dimulai'],
 ];
 
-/** Panel contoh gaya Neural Aurora. Semua angka di sini ilustratif dan diberi label jelas. */
+/** Panel contoh dunia Konsol Grafit. Semua angka di sini ilustratif dan diberi label jelas. */
 function neuralPanel() {
   const counter = h('span', { class: 'stat__value' }, '0');
   const replay = () => animateNumber(counter, 128, { format: (n) => Math.round(n).toLocaleString('id-ID') });
   replay();
-  return panel({ title: 'Neural Aurora', actions: badge('Contoh ilustratif', 'warn') },
+  return panel({ title: 'Konsol Grafit', actions: badge('Contoh ilustratif', 'warn') },
     h('div', { class: 'stack' },
-      h('p', { class: 'muted' }, h('strong', { class: 'gradient-text' }, 'Kaca gelap · border gradien · glow lembut. '),
-        'Gerak dekoratif mati bila "Animasi latar" dimatikan atau OS meminta reduced motion.'),
+      h('p', { class: 'muted' }, h('strong', null, 'Grafit matte · seam 1px · warna hanya untuk status. '),
+        'Gerak mengikuti perubahan status nyata dan mati bila "Animasi latar" dimatikan atau OS meminta reduced motion.'),
       h('div', { class: 'cluster' },
-        h('button', { class: 'btn btn--primary', type: 'button' }, 'Primer (bullish)'),
-        h('button', { class: 'btn btn--neural', type: 'button' }, 'Neural'),
+        h('button', { class: 'btn btn--primary', type: 'button' }, 'Aksi utama'),
         h('button', { class: 'btn', type: 'button', on: { click: replay } }, 'Ulangi count-up'),
         h('button', { class: 'btn btn--ghost', type: 'button', on: { click: () => toast('Toast contoh (accent).') } }, 'Toast'),
         h('button', { class: 'btn btn--ghost', type: 'button', on: { click: () => toast('Toast contoh (bull).', 'bull') } }, 'Toast bull'),
@@ -54,10 +54,10 @@ function neuralPanel() {
 }
 
 const TYPE = [
-  ['2xl · KPI', '--lr-text-2xl', '26px / 600'], ['xl · Judul halaman', '--lr-text-xl', '20px / 600'],
-  ['lg · Judul seksi', '--lr-text-lg', '16px / 600'], ['md · Penekanan', '--lr-text-md', '14px / 500'],
+  ['2xl · KPI (mono)', '--lr-text-2xl', '24px / 500'], ['xl · Judul halaman', '--lr-text-xl', '22px / 600'],
+  ['lg · Judul seksi', '--lr-text-lg', '16px / 600'], ['md · Penekanan, judul panel small caps', '--lr-text-md', '14px / 600'],
   ['sm · Teks dasar', '--lr-text-sm', '13px / 400'], ['xs · Metadata', '--lr-text-xs', '12px / 400'],
-  ['2xs · Label tabel', '--lr-text-2xs', '11px / 600'],
+  ['2xs · Caption', '--lr-text-2xs', '11px / 500'],
 ];
 
 const ILLUSTRATIVE_ROWS = [
@@ -74,7 +74,7 @@ export async function designSystemView() {
 
   return page({
     title: 'Design System',
-    subtitle: 'Referensi token dan komponen gaya Neural Aurora. Semua nilai berasal dari css/tokens.css.',
+    subtitle: 'Referensi token dan komponen dunia Konsol Grafit. Semua nilai berasal dari css/tokens.css; Atkinson Hyperlegible Next dan Mono di-host sendiri.',
   },
   neuralPanel(),
   panel({ title: 'Warna' },
