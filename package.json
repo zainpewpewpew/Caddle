@@ -28,7 +28,8 @@
     "test:live": "LIVE_BINANCE=1 vitest run --config vitest.live.config.js",
     "audit": "npm audit --omit=dev",
     "report:tests": "vitest run --reporter=default --reporter=json --outputFile.json=reports/vitest-results.json && playwright test && node scripts/test-report.js",
-    "research:bsv": "node --env-file-if-exists=.env scripts/research-bsv-1h.js"
+    "research:bsv": "node --env-file-if-exists=.env scripts/research-bsv-1h.js",
+    "research:timing": "node --env-file-if-exists=.env scripts/research-timing.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",

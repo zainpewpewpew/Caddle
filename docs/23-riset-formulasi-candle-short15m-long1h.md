@@ -26,7 +26,8 @@ Temuan kode yang relevan untuk integrasi (peta kode): timeframe per arah dikunci
 (`backend/market/contracts.js`); worker mengingesti 5m/15m/1h (tidak ada 4h); menambah **jenis pola baru** ke mesin pola
 membutuhkan migrasi yang membangun ulang tabel `signals` (CHECK classification) dan menggeneralisasi asumsi "tepat dua pola
 per arah" — perubahan berisiko tinggi. Baseline proyek untuk pola yang ada pada kombinasi baru juga negatif OOS (SHORT 15m
-v3 −0,13R; LONG 1h v3 −0,08 s/d −0,12R).
+v3 −0,13R; LONG 1h v3 −0,08 s/d −0,12R) — pada 6 koin besar dengan fee 4 bps. Uji ulang di 31 koin dengan fee 5 bps
+(docs/24): LONG 1h v3 +0,02R [−0,09 … +0,12] (sekitar impas), SHORT 15m v3 −0,14R.
 
 ## 2. SHORT 15m — tidak ditambahkan
 

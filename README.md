@@ -150,10 +150,11 @@ Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
 | `npm run migrate` | Menerapkan migrasi database (termasuk `005` arah sinyal Short Scanner) |
 | `npm run user:create -- --username <u> --role admin\|analyst` | Membuat pengguna |
 | `npm run user:password -- --username <u>` | Mengganti kata sandi pengguna (prompt tersembunyi) dan mencabut semua sesinya |
-| `npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01` | Backtest walk-forward sebelum (v2) vs sesudah (v3); laporan di `reports/` ([docs/13](docs/13-panduan-akurasi-v3.md)) |
+| `npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01` | Backtest walk-forward sebelum (v2) vs sesudah (v3); laporan di `reports/` ([docs/13](docs/13-panduan-akurasi-v3.md)). Biaya bawaan fee 5 + slippage 2 bps per sisi (taker Binance Futures VIP 0); ubah dengan `--fee-bps` / `--slippage-bps` |
 | `npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01 --ml` | Sama, plus lab meta-labeling ML (bagian "Lab meta-labeling" di laporan; [docs/16](docs/16-riset-machine-learning.md)) |
 | `npm run reversal:replay -- --synthetic --seeds 21-60` / `-- --top 20 --timeframes 5m,15m,1h --from 2025-06-01` | Alat riset saja (Reversal Radar sudah dihapus dari website & worker): replay berurutan Reversal Radar (tanpa look-ahead) pada skenario sintetis atau data Binance nyata, pembanding mesin lama SA/PVA, laporan di `reports/` ([docs/21](docs/21-validasi-reversal-radar.md)); `--params '{"minEarlyGroups":1}'` meng-override parameter mesin untuk penyetelan (hanya pada `--seeds 1-20 --tuning`) |
 | `npm run research:bsv -- --window explore` / `-- --window oos` | Riset formulasi LONG 1h BSV-1h: paritas eksplorasi atau uji luar sampel terpraregistrasi (studi kejadian + funding historis), laporan di `reports/research/` ([docs/23](docs/23-riset-formulasi-candle-short15m-long1h.md)). Hasil 2026-11-15: tidak lulus, tidak dipakai scanner |
+| `npm run research:timing` / `-- --symbols UNIUSDT,ZECUSDT` | Riset timing sinyal live (LONG 1h SA/PVA, SHORT 15m SD/PVD): alert muncul sebelum, saat, atau sesudah breakout, gerak harga sebelum alert, dan hasil trade per kelompok; data dari cache backtest, laporan di `reports/research/` ([docs/24](docs/24-backtest-31-koin-dan-timing-sinyal.md)) |
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |
@@ -174,7 +175,7 @@ backend/
   database/     koneksi, runner migrasi, migrations/, repositories/
   ingestion/    klien REST/WebSocket Binance (DNS-over-HTTPS khusus host Binance), validasi candle, discovery, backfill
   indicators/   EMA, ATR, RVOL, swing (fungsi murni)
-  research/     formulasi riset yang diuji luar sampel; tidak dipakai worker/scanner live (docs/23)
+  research/     formulasi & studi riset (BSV-1h, timing sinyal); tidak dipakai worker/scanner live (docs/23, docs/24)
   patterns/     detektor SA & PVA (LONG) serta SD & PVD (SHORT, cermin SA/PVA) berversi
   timeframe/    trend & alignment multi-timeframe
   scoring/      skor, risk flag, penjelasan
