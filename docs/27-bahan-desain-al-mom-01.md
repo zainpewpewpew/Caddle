@@ -1,7 +1,8 @@
 # 27 — Bahan desain AL-MOM-01: daya uji SA/PVA vs momentum murni (2026-11-16, belum praregistrasi)
 
-**Status: bahan diskusi, bukan praregistrasi.** Semua angka di sini berasal dari data historis yang sudah dilihat
-(31 koin cache, sinyal 2024-01 → 2026-10), dan dipakai untuk memilih desain, bukan sebagai bukti.
+**Status: bahan diskusi dan draf keputusan (§8), bukan praregistrasi.** Semua angka di sini berasal dari data historis
+(sinyal 2024-01 → 2026-10: §2–§4 dari 31 koin cache, §7 dari 100 koin semesta AL-SA-ATR-01), dan dipakai untuk memilih
+desain, bukan sebagai bukti.
 
 **Urutan disepakati** (tinjauan ChatGPT, disetujui pemilik): AL-SA-ATR-01 (docs/26) diselesaikan dulu, lalu AL-MOM-01,
 baru sesudah itu optimasi entri/keluar. Hasil A/B memakai alert yang sama dengan AL-SA-ATR-01, jadi AL-MOM-01 tidak
@@ -69,6 +70,8 @@ Untuk mendeteksi efek sebesar perkiraan historis (A +0,09 ATR, B +0,045R) dibutu
 di 100 koin selama 12 bulan hanya bisa mendeteksi efek 2,2–2,6× perkiraan historis. Kemungkinan besar hasilnya "tidak
 terbukti", apa pun kenyataannya.
 
+Proyeksi di bagian ini memakai skala √n dari 31 koin. §7 menggantinya dengan pengukuran langsung di 100 koin.
+
 ## 4. Opsi desain (belum dipilih)
 
 1. **Uji batas atas (non-superioritas).** Yang diuji adalah apakah keunggulan SA/PVA lebih kecil dari margin yang
@@ -87,6 +90,7 @@ terbukti", apa pun kenyataannya.
    Hasilnya membatasi nilai maksimum pola. Kelemahannya, margin yang terjangkau dalam setahun masih longgar.
 2. **Semesta lebih besar.** Pakai semua perpetual USDⓈ-M yang lolos syarat likuiditas. Dengan laju alert yang sama, n
    menjadi ±4× dan efek terkecil terdeteksi turun ±2×. Risikonya, koin tipis punya biaya dan slippage lebih besar.
+   (§7.3 membantah perkiraan "±2×": karena sinyal antarkoin berkorelasi, penurunannya hanya ±1,13×.)
 3. **Jendela lebih panjang.** Dengan 24 bulan, efek terkecil terdeteksi menjadi A 0,16 ATR dan B 0,07R.
 4. **Pengurangan varians.** Misalnya penyesuaian regresi di dalam strata atau winsorizing gerak 12 candle. Opsi ini
    harus diuji dulu pada data historis sebelum dipilih.
@@ -100,5 +104,156 @@ dipilih. Itu belum membuktikan profitabilitas atau hubungan sebab-akibat (tinjau
 
 ## 6. Alat
 
-`scripts/research-mom-power.js` (`npm run research:mom-power`), tes UNIT-MOM-001…003. Skrip ini memakai fungsi
-pencocokan dan bootstrap docs/25 apa adanya, serta mask pengecualian dari `scripts/research-matched-exclusion.js`.
+- `scripts/research-mom-power.js` (`npm run research:mom-power`), tes UNIT-MOM-001…003. Skrip ini memakai fungsi
+  pencocokan dan bootstrap docs/25 apa adanya, serta mask pengecualian dari `scripts/research-matched-exclusion.js`.
+  Sejak 2026-11-16 cache berisi 100+ simbol, jadi angka 31 koin §2–§3 diulang dengan `--symbols` berisi 31 koin itu:
+  27 koin `DOCS27_IN_UNIVERSE` di `scripts/research-mom-sim.js`, ditambah APRUSDT, DOODUSDT, IRYSUSDT, dan QUSDT.
+- `scripts/research-mom-sim.js` (`npm run research:mom-sim`), tes UNIT-MOM-004…006: simulasi §7 di 100 koin semesta
+  AL-SA-ATR-01. Opsi `--save-acc`/`--load-acc` menyimpan agregat, supaya analisis bisa diulang tanpa replay.
+
+## 7. Simulasi daya di 100 koin (2026-11-16)
+
+Pemicunya tinjauan ChatGPT (2026-11-16). Proyeksi §3 memakai skala √n dari 31 koin, dan belum mengukur laju alert koin
+lain, korelasi sinyal lintas simbol, maupun pergeseran rezim.
+
+**Data.** Kline 1h historis untuk 73 koin semesta AL-SA-ATR-01 yang belum ada di cache diunduh dari REST Binance
+(2024-01 → 2026-10, 1,23 juta candle). Seluruhnya sebelum jendela uji AL-SA-ATR-01. Laporan:
+`reports/research/mom-sim-20261115T190220Z.{md,json}` (`npm run research:mom-sim`, 715 s). Semesta dipilih pada
+2026-11-15 menurut volume saat itu, jadi data historisnya punya bias survivorship. Karena itu laju dan SE lebih bisa
+dipakai daripada titik efek.
+
+### 7.1 Laju alert dan efek historis
+
+| Kelompok | Alert per simbol-bulan | n cocok | A: selisih [CI 7 hari] | B: selisih [CI 7 hari] |
+|---|---|---|---|---|
+| 27 koin docs/27 (yang ada di semesta) | 2,20 | 1.589 | +0,07 [−0,10 … +0,28] ATR | +0,050 [−0,034 … +0,140]R |
+| 73 koin tambahan | 2,02 | 3.381 | −0,02 [−0,16 … +0,12] ATR | −0,020 [−0,087 … +0,054]R |
+| 100 koin | 2,07 | 4.970 (99% alert) | +0,01 [−0,13 … +0,15] ATR | +0,003 [−0,060 … +0,070]R |
+
+- **Koin tambahan tidak menunjukkan keunggulan.** Koin ini tidak dipakai saat pola dikembangkan dan diperiksa
+  (docs/24–25). Jadi titik 31 koin di §2 (+0,09 ATR) kemungkinan besar terlalu optimistis. Sensitivitas "lampau"
+  memberi gambaran yang sama: A +0,01, B −0,005.
+- **Laju koin tambahan 8% lebih rendah.** Ini indikasi (bukan hitungan ulang) bahwa perkiraan ±8,4 bulan untuk n 600
+  AL-SA-ATR-01 (docs/26 §4) bisa sedikit lebih lama.
+
+### 7.2 SE langsung vs proyeksi √n
+
+Jendela 12 dan 24 bulan bergeser per kuartal di 100 koin.
+
+| Jendela | SE A: median [min … maks] | SE B: median [min … maks] | Jendela terakhir: A · B | Proyeksi √n gaya §3: A · B | Rasio median/proyeksi |
+|---|---|---|---|---|---|
+| 12 bulan (8 jendela) | 0,115 [0,102 … 0,140] | 0,051 [0,045 … 0,063] | 0,102 · 0,046 | 0,077 · 0,035 | 1,51 · 1,48 |
+| 24 bulan (4 jendela) | 0,086 [0,080 … 0,099] | 0,041 [0,038 … 0,044] | 0,083 · 0,038 | 0,054 · 0,025 | 1,59 · 1,67 |
+
+- **Proyeksi diulang dari 27 koin docs/27** dengan cara §3, supaya perbandingannya setara.
+- **Median sedikit pesimistis.** Jendela awal memuat lebih sedikit koin, karena banyak yang baru listing. Jendela 12
+  bulan terakhir punya 215 alert cocok per bulan, sama dengan perkiraan jendela maju, dan SE-nya tetap 1,3×
+  proyeksi.
+- **Jadi proyeksi √n §3 terlalu optimistis 30–70%.** Penyebab utamanya ada di §7.3.
+
+### 7.3 Efek desain lintas simbol
+
+SE periode penuh pada subset simbol acak (20 undian per ukuran):
+
+| Jumlah simbol | 10 | 25 | 50 | 75 | 100 |
+|---|---|---|---|---|---|
+| SE A (ATR) | 0,139 | 0,099 | 0,084 | 0,076 | 0,073 |
+| SE B (R) | 0,068 | 0,048 | 0,040 | 0,035 | 0,033 |
+
+- **Sebagian besar varians bersifat bersama.** Model SE² = a + b/k (k = jumlah simbol) memberi bagian bersama a = 72%
+  (A) dan 67% (B) dari SE² di 100 simbol. Bagian ini berasal dari hari-hari ketika banyak koin bergerak bersama, dan
+  tidak mengecil bila simbol ditambah.
+- **4× simbol hampir tidak menolong.** Dengan ±400 koin, SE hanya mengecil 1,13× (A) dan 1,15× (B), bukan 2×. Efek
+  terkecil yang terdeteksi turun ±12%, bukan ±50%.
+- **Yang mengecilkan SE adalah waktu.** SE 24 bulan ≈ 0,75–0,80× SE 12 bulan (akar rasionya 0,71).
+
+### 7.4 Daya uji batas atas
+
+Daya dihitung dari SE median antarjendela. Efek sebenarnya diasumsikan sama dengan titik 100 koin, yaitu hampir nol.
+
+| Hasil | Margin | Batas | Daya 12 bulan | Daya 24 bulan | Bulan untuk daya 80% |
+|---|---|---|---|---|---|
+| A | 0,25 ATR | dua sisi | 56% | 80% | 24 |
+| A | 0,25 ATR | satu sisi | 68% | 88% | 19 |
+| A | 0,30 ATR | dua sisi | 72% | 92% | 16 |
+| A | 0,30 ATR | satu sisi | 81% | 96% | 13 |
+| B | 0,10R | dua sisi | 47% | 66% | 33 |
+| B | 0,10R | satu sisi | 60% | 77% | 26 |
+| B | 0,12R | dua sisi | 63% | 82% | 23 |
+| B | 0,12R | satu sisi | 74% | 89% | 18 |
+
+- **Pengaruh pilihan SE.** Dengan SE jendela terakhir, daya 24 bulan sedikit lebih tinggi: A 0,25 dua sisi 83%, B 0,10
+  dua sisi 72%. Dengan SE jendela terburuk lebih rendah: A 0,25 dua sisi 69%.
+- **Superioritas lebih lemah dari perkiraan §3.** Untuk batas bawah CI 95% > 0 dengan daya 80%, efek terkecil yang
+  terdeteksi adalah A 0,32 ATR (12 bulan) dan 0,24 ATR (24 bulan), serta B 0,14R dan 0,115R. Angka §3 untuk A adalah
+  0,23 dan 0,16 ATR.
+
+### 7.5 Jarak dari alert sebelumnya (pembanding "tanpa")
+
+| Jarak | Porsi alert | Porsi candle pembanding | n cocok | A [CI 7 hari] | B [CI 7 hari] |
+|---|---|---|---|---|---|
+| ≤ 12 candle | 43% | 18% | 2.116 | +0,06 [−0,11 … +0,25] | +0,019 [−0,064 … +0,112] |
+| 13–48 candle | 40% | 41% | 2.012 | −0,08 [−0,24 … +0,10] | −0,004 [−0,087 … +0,078] |
+| > 48 atau belum ada ("segar") | 17% | 41% | 842 | +0,08 [−0,14 … +0,33] | −0,021 [−0,128 … +0,094] |
+
+- **Penyesuaian jarak perlu untuk keseimbangan.** Alert jauh lebih sering muncul dekat alert lain dibanding candle
+  pembanding: 43% vs 18% dalam 12 candle.
+- **Overlap memadai.** Dengan strata + jarak, 91% alert tetap mendapat pembanding. Hasilnya A +0,01 [−0,13 … +0,15]
+  dan B +0,008 [−0,058 … +0,078]; titiknya tidak berubah dan SE nyaris sama (A 0,071 vs 0,073).
+- **Interaksi tidak terbukti.** Selisih segar − berulang: A +0,09 [−0,14 … +0,31], B −0,029 [−0,134 … +0,087].
+
+### 7.6 Jangkar biaya
+
+- **Biaya pulang-pergi pada alert cocok.** Fee + slippage 14 bps setara median 0,11 ATR [kuartil 0,08 … 0,16], atau
+  0,076R [0,055 … 0,105] dengan stop 1,5 ATR.
+- **Margin dalam satuan biaya.** Margin A 0,25 ATR ≈ 2,2× biaya pulang-pergi, dan margin B 0,10R ≈ 1,3× biaya.
+- **Margin yang lebih ketat tidak terjangkau.** Margin A sebesar satu kali biaya (0,11 ATR) butuh ±125 bulan untuk
+  daya 80%.
+
+### 7.7 Kesimpulan untuk desain
+
+1. **Semesta tetap 100 koin.** Perluasan ke ±400 koin hanya memperkecil SE ±12%, karena ±70% varians bersifat bersama.
+   Biaya data dan likuiditas koin tipis tidak sebanding.
+2. **Horizon 24 bulan memang perlu.** Dalam 12 bulan, tidak ada margin kandidat yang mencapai daya 80% dengan batas dua
+   sisi.
+3. **A dengan margin 0,25 ATR layak secara daya** (24 bulan: 80% dua sisi, 88% satu sisi) bila efek sebenarnya ≈ 0,
+   seperti di data 100 koin. B dengan 0,10R sebagai hasil sekunder kurang daya (66% dua sisi).
+4. **Uji ini hanya bisa menyingkirkan keunggulan besar.** Margin yang bisa diuji (0,25 ATR ≈ 2,2× biaya) tidak
+   menyingkirkan keunggulan kecil yang masih bernilai. Uji superioritas pun hanya mendeteksi keunggulan ≥ 0,24 ATR.
+5. **Jarak alert masuk sebagai strata.** Ketidakseimbangannya besar, dan overlap 91% memadai.
+6. **Perkiraan daya memakai titik 100 koin (≈ 0)**, bukan titik 31 koin yang kemungkinan terlalu optimistis.
+
+## 8. Draf keputusan desain (2026-11-16, belum beku)
+
+Dari tinjauan ChatGPT (2026-11-16) dan keputusan pemilik pada hari yang sama. Angka pendukungnya di §7.
+
+| Unsur | Draf | Catatan |
+|---|---|---|
+| Hasil utama | **A**: nilai informasi, yaitu gerak 12 candle alert vs pembanding strata "tanpa" | Pemilik: AlphaLens adalah scanner; nilai strategi alert sudah diuji AL-SA-ATR-01 |
+| Hasil sekunder | **B**: R dengan geometri identik, dilaporkan tetapi tidak menentukan vonis | Daya 66% pada 24 bulan dengan margin 0,10R dua sisi (§7.4) |
+| Jenis uji | Batas atas (non-superioritas) untuk A dengan margin kandidat 0,25 ATR; batas bawah > 0 (superioritas) dibaca dari CI yang sama | 0,25 ATR ≈ 2,2× biaya pulang-pergi (§7.6), jadi uji ini hanya menyingkirkan keunggulan besar (§7.7) |
+| Batas CI | Belum diputuskan. Usulan: CI 95% dua sisi, yaitu α 2,5% per arah | Konsisten dengan docs/25–26; satu CI menjawab kedua arah tanpa menaikkan galat total |
+| Horizon | Maksimal 24 bulan | |
+| Semesta | 100 simbol beku AL-SA-ATR-01 | Perluasan tidak direncanakan: 4× simbol hanya memperkecil SE 1,13× (§7.3). Kalau tetap dipertimbangkan, syarat likuiditasnya memakai data pada waktunya (point-in-time) |
+| Jarak dari alert sebelumnya | Strata penyesuaian (≤ 12, 13–48, > 48 candle); kelompok "segar" sebagai subkelompok sekunder; interaksi segar vs berulang diuji eksplisit | Overlap 91% (§7.5). Dihitung sama untuk alert dan pembanding, hanya melihat ke belakang |
+| Pembanding | "tanpa" utama, "lampau" sensitivitas | Dua estimand berbeda; tidak ditukar karena overlap |
+| Candle datar pasca-delisting | Sinyal pada atau sesudah waktu delisting dikecualikan oleh aturan | AL-MOM-01 belum beku, jadi aturan ini bisa masuk kodenya (beda dengan AL-SA-ATR-01, docs/26 §11) |
+| Pembekuan | Paling lambat sebelum `--mode evaluate` AL-SA-ATR-01 | Evaluasi itu membuka R alert yang sama di jendela yang sama |
+
+Dengan satu CI 95% dua sisi dan margin M, hasilnya jatuh ke salah satu dari empat kelompok:
+
+| Batas bawah | Batas atas | Bacaan |
+|---|---|---|
+| > 0 | < M | Lebih baik dari momentum, tetapi keunggulannya < M |
+| > 0 | ≥ M | Lebih baik dari momentum |
+| ≤ 0 | < M | Keunggulan, kalau ada, < M |
+| ≤ 0 | ≥ M | Tidak konklusif |
+
+**Masih terbuka:**
+
+- margin akhir dan dasar ekonominya;
+- batas CI satu atau dua sisi;
+- keputusan produk untuk setiap kelompok hasil. Contohnya, apakah SA/PVA tetap dipakai bila hasilnya "keunggulan < M"
+  atau "tidak konklusif". Dengan daya §7, kemungkinan terbesar adalah salah satu dari dua kelompok itu;
+- apakah jendela AL-MOM-01 mulai 2026-11-16, berbagi data dengan AL-SA-ATR-01 dan dinyatakan sebagai "data sudah
+  terkumpul tetapi belum diakses", atau mulai pada tanggal pembekuannya.

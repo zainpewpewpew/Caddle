@@ -79,6 +79,15 @@ export function requiredAlerts({ seHist, nHist, effect, zAlpha = Z_ALPHA, zPower
   return Math.ceil(nHist * ((zAlpha + zPower) * seHist / effect) ** 2);
 }
 
+/**
+ * Kelompok jarak dari alert v2/v3 sebelumnya (candle), untuk strata penyesuaian docs/27 §7: ≤ 12, 13–48, > 48 atau
+ * belum ada. Dihitung sama untuk alert dan pembanding (hanya melihat ke belakang).
+ */
+export function distanceBin(sincePrev) {
+  if (sincePrev === null || sincePrev === undefined || sincePrev > SINCE_PREV_SPLIT) return 'jauh';
+  return sincePrev <= LOOK ? 'd12' : 'd48';
+}
+
 /** Indeks alert sebelumnya (< i) untuk tiap candle; −1 bila tidak ada. alertIdx terurut naik. */
 export function previousAlertIndex(n, alertIdx) {
   const prev = new Int32Array(n).fill(-1);
@@ -128,10 +137,14 @@ async function seriesPart({ symbol, byTf, acc }) {
     const period = quarterOf(B[i].openTime);
     const y = { fwd12, rAtr: trade.r };
     const key = stratumKey({ symbol, period, pre: tm.pre, pos: tm.pos, volBin: binOf(A[i] / B[i].close, cuts.get(period)) });
+    const sincePrev = prev[i] >= 0 ? i - prev[i] : null;
+    // Strata + jarak dari alert sebelumnya (docs/27 §7), hanya untuk pembanding utama "tanpa".
+    const keyJarak = `${key}|${distanceBin(sincePrev)}`;
     for (const v of MOM_VARIANTS) if (!masks[v.key][i]) addControl(acc.controls[v.key], key, y);
+    if (acc.controls.tanpaJarak && !masks.tanpa[i]) addControl(acc.controls.tanpaJarak, keyJarak, y);
     if (alertAt.has(i)) {
       alerts += 1;
-      acc.alerts.push({ key, y, t: B[i].closeTime, symbol, sincePrev: prev[i] >= 0 ? i - prev[i] : null });
+      acc.alerts.push({ key, keyJarak, y, t: B[i].closeTime, symbol, sincePrev, atrPct: A[i] / B[i].close });
       acc.alertTrades.push({ symbol, t: trade.entryTime, exitTime: trade.exitTime, r: trade.r });
     }
   }
@@ -187,10 +200,15 @@ function summarize(acc) {
   return { alerts: acc.alerts.length, symbolMonths: months, variants, alertOnly, power };
 }
 
-export async function runMomPower({ symbols: only = null, from, to, cacheDir, now = Date.now() }) {
+/**
+ * Kumpulkan alert & agregat pembanding per strata untuk simbol cache (semua, atau `only`). Dipakai juga oleh
+ * scripts/research-mom-sim.js. `acc.controls.tanpaJarak` = pembanding "tanpa" dengan strata + jarak alert sebelumnya.
+ */
+export async function collectMomData({ symbols: only = null, from, to, cacheDir }) {
   const symbols = (await readdir(cacheDir)).filter((s) => /^[A-Z0-9]{2,30}$/.test(s) && (!only || only.includes(s))).sort();
   const acc = {
-    controls: Object.fromEntries(MOM_VARIANTS.map((v) => [v.key, new Map()])), alerts: [], alertTrades: [], symbolMonths: new Set(),
+    controls: { ...Object.fromEntries(MOM_VARIANTS.map((v) => [v.key, new Map()])), tanpaJarak: new Map() },
+    alerts: [], alertTrades: [], symbolMonths: new Set(),
   };
   const skipped = [];
   for (const symbol of symbols) {
@@ -205,6 +223,11 @@ export async function runMomPower({ symbols: only = null, from, to, cacheDir, no
     const alerts = await seriesPart({ symbol, byTf: { '1h': candles }, acc });
     log(`${symbol} LONG 1h: ${candles.length} candle, alert v3 ${alerts} (${Date.now() - started} ms)`);
   }
+  return { symbols, skipped, acc };
+}
+
+export async function runMomPower({ symbols: only = null, from, to, cacheDir, now = Date.now() }) {
+  const { symbols, skipped, acc } = await collectMomData({ symbols: only, from, to, cacheDir });
   return {
     generatedAt: new Date(now).toISOString(), from: new Date(from).toISOString().slice(0, 10), to: new Date(to).toISOString().slice(0, 10),
     symbols, skipped, design: { ...MOM_DESIGN, variants: MOM_VARIANTS.map((v) => v.key), sincePrevSplit: SINCE_PREV_SPLIT }, ...summarize(acc),

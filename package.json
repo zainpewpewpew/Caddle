@@ -34,7 +34,8 @@
     "research:matched-exclusion": "node --env-file-if-exists=.env scripts/research-matched-exclusion.js",
     "research:al-sa-atr-01": "node --env-file-if-exists=.env scripts/research-al-sa-atr-01.js",
     "research:al-sa-atr-01-audit": "node --env-file-if-exists=.env scripts/research-al-sa-atr-01-audit.js",
-    "research:mom-power": "node --env-file-if-exists=.env scripts/research-mom-power.js"
+    "research:mom-power": "node --env-file-if-exists=.env scripts/research-mom-power.js",
+    "research:mom-sim": "node --env-file-if-exists=.env scripts/research-mom-sim.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",
