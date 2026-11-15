@@ -17,6 +17,7 @@ import { smartMoneyView } from './views/smartMoneyRadar.js';
 import { smartTokenView } from './views/smartToken.js';
 import { smartWalletView, smartWalletsView } from './views/smartWallets.js';
 import { smartWatchlistView } from './views/smartWatchlist.js';
+import { mountStatusStrip } from './views/statusStrip.js';
 import { symbolView } from './views/symbol.js';
 import { isWorkerActive, workerControlLabel } from './views/workerFormat.js';
 
@@ -378,6 +379,12 @@ async function boot() {
   pollConnection();
   setInterval(pollConnection, 30_000);
   pollScanner();
+  // Strip status scanner (semua halaman): kegagalan pemasangan tidak boleh menggagalkan aplikasi.
+  try {
+    mountStatusStrip(document.getElementById('status-strip'));
+  } catch {
+    // Strip pelengkap: aplikasi tetap berjalan tanpanya.
+  }
   createRouter({
     routes: ROUTES.filter((r) => r.path),
     fallback: '/overview',

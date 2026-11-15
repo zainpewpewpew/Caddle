@@ -22,10 +22,13 @@ import { CHART_TIMEFRAMES, DIRECTIONS, DIRECTION_TIMEFRAMES, TIMEFRAMES, scanned
 import { REVERSAL_ACTIVE_TIMEFRAMES } from '../backend/reversal/constants.js';
 import { createReversalPipeline } from '../backend/reversal/pipeline.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY } from '../backend/settings/scannerSettings.js';
+import { createActivityFeed } from './activity.js';
 import { createScanner } from './scanner.js';
 
 /** Jeda tunggu candle HTF (1h) yang tutup bersamaan sebelum candle 15m dievaluasi (lihat createAnalysisPipeline). */
 export const WORKER_SETTLE_MS = 3_000;
+/** Scan berkala worker: semua seri diperiksa & ditambal tiap menit (keputusan pengguna 2026-11-15). */
+export const SCAN_INTERVAL_MS = 60_000;
 
 const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {} });
 
@@ -90,8 +93,11 @@ function mergeSeries(...lists) {
  *   REVERSAL_TIMEFRAMES); ikut menentukan timeframe ingesti.
  *   reversalEngine: KHUSUS tes — evaluate/transition/resolveParams palsu untuk pipeline reversal (default mesin asli).
  *   reversalOptions: opsi lain createReversalPipeline (mis. provisionalMinIntervalMs, maxReplay) — KHUSUS tes.
+ *   activity: log aktivitas (worker/activity.js); default feed baru berjam `clock`. Sinyal & kandidat reversal yang
+ *   memicu alert ikut dicatat di sini, di samping aktivitas scanner. Scan berkala SCAN_INTERVAL_MS (opsi scanner
+ *   `scanIntervalMs`, null = mati) melaporkan sinyal terbuka arah aktif (DIRECTION_TIMEFRAMES) & kandidat radar aktif.
  * @returns {{ serverClock: object, repos: object, rest: object, pipeline: object, reversal: object, scanner: object,
- *   getSettings: () => Promise<object> }}
+ *   getSettings: () => Promise<object>, activity: object }}
  *   Pemanggil wajib `await pipeline.ensureDefinitions()` sebelum `scanner.start()`.
  */
 export function assembleWorker({
@@ -119,6 +125,7 @@ export function assembleWorker({
   reversalTimeframes = REVERSAL_ACTIVE_TIMEFRAMES,
   reversalEngine,
   reversalOptions,
+  activity = createActivityFeed({ clock }),
 } = {}) {
   if (!db) throw new TypeError('db wajib ada');
 
@@ -149,7 +156,11 @@ export function assembleWorker({
     settleMs,
     sleep: pipelineSleep,
     logger,
-    onAlert,
+    // Alert sinyal → log aktivitas (strip status UI) lalu pengamat pemanggil (log worker / tes).
+    onAlert: (alert) => {
+      activity.signal(alert);
+      onAlert?.(alert);
+    },
     directions,
     // LONG hanya 1h, SHORT hanya 15m (keputusan pengguna 2026-11-15); seri lain hanya konteks HTF/grafik.
     directionTimeframes,
@@ -166,11 +177,21 @@ export function assembleWorker({
     logger,
     params: reversalParams,
     timeframes: reversalTimeframes,
-    onAlert: onReversalAlert,
+    onAlert: (alert) => {
+      activity.reversal(alert);
+      onReversalAlert?.(alert);
+    },
     clock,
     ...reversalOptions,
     ...reversalEngine,
   });
+
+  // Timeframe yang benar-benar dianalisis salah satu pipeline (arah aktif × DIRECTION_TIMEFRAMES ∪ radar aktif); 5m grafik
+  // tidak termasuk. Hanya candle timeframe ini yang dicatat di log aktivitas "Candle … tutup · n koin dianalisis".
+  const analysedTimeframes = new Set([
+    ...directions.flatMap((d) => (directionTimeframes === null ? TIMEFRAMES : (directionTimeframes[d] ?? []))),
+    ...reversalTimeframes,
+  ]);
 
   /** Menjalankan kedua pipeline berurutan; keduanya selalu dicoba, error pertama dilempar setelah keduanya selesai. */
   async function onClosedCandles({ symbol, timeframe, candles, reason }) {
@@ -196,6 +217,10 @@ export function assembleWorker({
       else failure = err;
     }
     if (result !== undefined) onAnalysed?.({ symbol, timeframe, candles, reason, result, reversal: reversalResult });
+    // Satu entri per timeframe × waktu tutup (digabung activity.candles): "Candle 15m 19:15 tutup · 40 koin dianalisis".
+    if (!failure && candles.length > 0 && analysedTimeframes.has(timeframe)) {
+      activity.candles({ timeframe, closeTime: candles.at(-1).closeTime });
+    }
     if (failure) throw failure;
   }
 
@@ -242,9 +267,28 @@ export function assembleWorker({
     setTimer,
     clearTimer,
     // Timeframe ingesti tetap = DIRECTION_TIMEFRAMES arah aktif ∪ radar aktif ∪ CHART_TIMEFRAMES (pengaturan `timeframes` lama diabaikan).
-    options: { timeframes: workerTimeframes(directions, reversalTimeframes), ...scannerOptions, closeMarginMs },
+    // Scan berkala tiap SCAN_INTERVAL_MS kecuali tes menimpanya lewat scannerOptions.scanIntervalMs.
+    options: { timeframes: workerTimeframes(directions, reversalTimeframes), scanIntervalMs: SCAN_INTERVAL_MS, ...scannerOptions, closeMarginMs },
     heartbeatOwner,
+    activity,
+    countOpen: () => countOpen({ repos, directions, directionTimeframes, reversalTimeframes }),
   });
 
-  return { serverClock, repos, rest, pipeline, reversal, scanner, getSettings };
+  return { serverClock, repos, rest, pipeline, reversal, scanner, getSettings, activity };
+}
+
+/**
+ * Sinyal terbuka yang TAMPIL di UI (arah aktif × timeframe arah itu) dan kandidat Reversal Radar terbuka di timeframe
+ * aktif — untuk ringkasan scan berkala ("sinyal terbuka LONG 4 · SHORT 2 · radar 38").
+ */
+async function countOpen({ repos, directions, directionTimeframes, reversalTimeframes }) {
+  const { signals, reversal } = await repos.overview.openCounts();
+  const shown = (direction, timeframe) => directions.includes(direction)
+    && (directionTimeframes === null || (directionTimeframes[direction] ?? []).includes(timeframe));
+  const sum = (rows, keep) => rows.reduce((total, row) => total + (keep(row) ? row.n : 0), 0);
+  return {
+    long: sum(signals, (r) => r.direction === 'LONG' && shown('LONG', r.timeframe)),
+    short: sum(signals, (r) => r.direction === 'SHORT' && shown('SHORT', r.timeframe)),
+    radar: sum(reversal, (r) => reversalTimeframes.includes(r.timeframe)),
+  };
 }

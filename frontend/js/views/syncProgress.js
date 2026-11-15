@@ -201,6 +201,22 @@ function subscribe(el, initial, render) {
   plan(seed ? cadence(seed, hub.burstUntil) : 0);
 }
 
+/** Mode tampilan data sync ternormalisasi (loading | off | waiting | stopping | stale | legacy | sync) — strip status. */
+export const syncMode = (d) => modeOf(d);
+/** Ringkasan satu baris { tone, text, live } — strip status. */
+export const syncHeadline = (d) => headline(d);
+
+/**
+ * Berlangganan data GET /api/system/sync dari poller bersama (tanpa polling tambahan): `render(d)` dipanggil dengan data
+ * ternormalisasi (null = memuat). Berhenti sendiri saat `el` dilepas dari halaman. Dipakai strip status di app shell,
+ * yang terpasang permanen — poller tetap berjalan (tiap 2–10 dtk) di semua halaman.
+ * @param {HTMLElement} el
+ * @param {(d: object|null) => void} render
+ */
+export function subscribeSyncStatus(el, render) {
+  subscribe(el, null, render);
+}
+
 /**
  * Meminta semua tampilan proses sync di halaman memuat ulang segera lalu memantau tiap 2 detik selama 20 detik.
  * Dipanggil setelah tombol Jalankan/Hentikan scanner ditekan agar langkah pertama langsung terlihat.

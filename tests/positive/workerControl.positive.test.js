@@ -4,7 +4,9 @@ import { createFakeFork, flush } from '../helpers/fakeFork.js';
 import { ANALYST, createTestApp, login } from '../helpers/testApp.js';
 import { createWorkerTestApp, getWorker, postWorker, workerAudit } from '../helpers/workerTestApp.js';
 
-const STOPPED = { enabled: true, state: 'stopped', startedAt: null, stoppedAt: null, exitCode: null, signal: null };
+const STOPPED = {
+  enabled: true, state: 'stopped', startedAt: null, stoppedAt: null, exitCode: null, signal: null, via: null, autoRestart: false, restartAt: null,
+};
 
 describe('kontrol scanner dari website — alur positif', () => {
   let ctx;
@@ -25,7 +27,7 @@ describe('kontrol scanner dari website — alur positif', () => {
     const auth = await login(ctx.app);
     const res = await postWorker(ctx.app, 'start', auth);
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ...STOPPED, state: 'running', startedAt: ctx.clock() });
+    expect(res.json()).toEqual({ ...STOPPED, state: 'running', startedAt: ctx.clock(), via: 'manual' });
     expect(ctx.fork.calls).toHaveLength(1);
     expect(ctx.fork.calls[0].scriptPath).toBe(WORKER_SCRIPT_PATH);
     expect(ctx.fork.calls[0].args).toEqual([]);
@@ -36,7 +38,7 @@ describe('kontrol scanner dari website — alur positif', () => {
 
     expect((await getWorker(ctx.app, auth)).json().state).toBe('running');
     const status = (await ctx.app.inject({ url: '/api/system/status', headers: { cookie: auth.cookie } })).json();
-    expect(status.workerControl).toEqual({ ...STOPPED, state: 'running', startedAt: ctx.clock() });
+    expect(status.workerControl).toEqual({ ...STOPPED, state: 'running', startedAt: ctx.clock(), via: 'manual' });
   });
 
   it('POS-SUP-003 admin stop → 200 stopping (SIGTERM); setelah child keluar → stopped; audit worker.stop success', async () => {

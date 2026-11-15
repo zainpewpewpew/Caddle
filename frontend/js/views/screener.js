@@ -1,7 +1,8 @@
 import { api } from '../lib/api.js';
 import { badge, callout, dataTable, emptyState, page, panel, score, selectField } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { formatPrice, formatTime } from '../lib/format.js';
+import { formatTime } from '../lib/format.js';
+import { DATA_REFRESH_MS, priceCell, priceSortValue, reportDataRefresh } from './liveData.js';
 import {
   alignmentBadge, confluenceFieldsOf, confluenceValue, directionOf, formatWinProbability, meetsMinTier, patternBadge,
   refreshUpdatedCells, riskBadges, signalStage, tierBadge, tierRank, updatedCell,
@@ -58,7 +59,8 @@ export function scannerColumns(direction = 'LONG', fields = {}) {
   }
   return [
     { key: 'symbol', label: 'Symbol', render: (r) => h('span', { class: 'mono' }, r.symbol) },
-    { key: 'lastPrice', label: 'Harga', numeric: true, render: (r) => formatPrice(r.lastPrice) },
+    // Harga live dari candle berjalan (diperbarui tiap muat ulang 1 menit); fallback close candle tertutup terakhir.
+    { key: 'lastPrice', label: 'Harga', numeric: true, sortValue: priceSortValue, render: (r) => priceCell(r) },
     { key: 'timeframe', label: 'TF', render: (r) => h('span', { class: 'mono' }, r.timeframe) },
     { key: 'classification', label: 'Pola', render: (r) => patternBadge(r.classification, dir) },
     { key: 'patternScore', label: 'Pattern Score', numeric: true, render: (r) => score(r.patternScore) },
@@ -133,10 +135,11 @@ const SERVER_FILTERS = { pattern: 'classification', stage: 'state', alignment: '
 const SCREENER_LIMIT = 500;
 
 /**
- * Penyegaran latar daftar kandidat selama scanner benar-benar berjalan (state supervisor nyata dari kontrol scanner).
+ * Penyegaran latar daftar kandidat selama scanner benar-benar berjalan (state supervisor nyata dari kontrol scanner):
+ * tiap 1 menit (DATA_REFRESH_MS, keputusan pengguna 2026-11-15) — harga live & kolom Update maju tiap menit.
  * Hasilnya dibandingkan dengan muatan sebelumnya pada filter yang sama: baris baru / skor berubah disorot sesaat.
  */
-const REFRESH_MS = 30_000;
+const REFRESH_MS = DATA_REFRESH_MS;
 /**
  * Setelah scanner baru dinyalakan, worker butuh ±15–60 dtk untuk mengejar candle yang tertinggal: selama START_BURST_MS
  * tabel dimuat ulang tiap START_REFRESH_MS agar kolom "Update" langsung maju, lalu kembali ke REFRESH_MS.
@@ -334,7 +337,11 @@ function emptyResult(filtered, cfg) {
  * @returns {{ el: HTMLElement, ready: Promise<void>, load: (options?: { background?: boolean }) => Promise<void>,
  *   setWorkerActive: (active: boolean) => void, start: () => void, cleanup: () => void }}
  */
-export function createScannerSection(ctx, direction, { onLoaded } = {}) {
+/**
+ * @param {{ onLoaded?: Function, reportRefresh?: boolean }} [options] reportRefresh: kabarkan jam muat ulang ke strip
+ *   status (default true; panel sekunder di halaman lain mematikannya agar hanya tabel utama yang dilaporkan).
+ */
+export function createScannerSection(ctx, direction, { onLoaded, reportRefresh = true } = {}) {
   const dir = directionOf(direction);
   const cfg = SCANNERS[dir];
   // Kolom ditentukan per muatan (kolom konfluensi hanya bila data membawanya); yang terakhir dipakai membaca urutan.
@@ -382,8 +389,16 @@ export function createScannerSection(ctx, direction, { onLoaded } = {}) {
   // start() sudah dipanggil (status awal scanner bukan "baru dinyalakan") & batas jendela muat ulang cepat.
   let sectionStarted = false;
   let burstUntil = 0;
+  // Muatan terakhir yang berhasil & jadwal muat ulang berikutnya (null = tidak otomatis) untuk strip status.
+  let loadedAt = null;
+  let refreshDueAt = null;
   const lastFlashAt = new Map();
   const el = panel({ title: cfg.panelTitle, actions: count, flush: true, footer: cfg.footer }, filters, chartSide.el);
+
+  function report() {
+    if (!reportRefresh || loadedAt === null || disposed) return;
+    reportDataRefresh({ source: cfg.title, at: loadedAt, nextAt: workerActive ? refreshDueAt : null });
+  }
 
   /**
    * @param {{ background?: boolean }} [options] background: penyegaran latar (tidak memperpanjang idle timeout,
@@ -443,6 +458,8 @@ export function createScannerSection(ctx, direction, { onLoaded } = {}) {
       ? [callout(`Batas ${SCREENER_LIMIT} kandidat tercapai (urut Pattern Score); hasil mungkin terpotong. Persempit filter agar tidak ada kandidat yang terlewat.`, 'warn'), table]
       : [table]));
     restoreRowFocus(host, keepFocus);
+    loadedAt = Date.now();
+    report();
     onLoaded?.({ rows, count: data.count, limitReached, filtered });
   }
 
@@ -458,12 +475,15 @@ export function createScannerSection(ctx, direction, { onLoaded } = {}) {
    */
   function scheduleRefresh() {
     clearTimeout(refreshTimer);
+    const delay = Date.now() < burstUntil ? START_REFRESH_MS : REFRESH_MS;
+    refreshDueAt = Date.now() + delay;
     refreshTimer = setTimeout(async () => {
       refreshTimer = null;
       if (disposed || !el.isConnected) return;
       if (workerActive && !document.hidden) await load({ background: true });
       if (!disposed && el.isConnected) scheduleRefresh();
-    }, Date.now() < burstUntil ? START_REFRESH_MS : REFRESH_MS);
+    }, delay);
+    report();
   }
 
   /** "x menit lalu" + penanda Basi dihitung ulang terhadap jam sekarang, juga saat scanner berhenti. */
@@ -486,11 +506,14 @@ export function createScannerSection(ctx, direction, { onLoaded } = {}) {
     setWorkerActive(active) {
       const next = Boolean(active);
       const justStarted = next && !workerActive && sectionStarted;
+      const changed = next !== workerActive;
       workerActive = next;
       // Scanner baru dinyalakan (tombol di halaman ini atau halaman lain): muat ulang cepat sebentar (START_BURST_MS).
       if (justStarted && !disposed) {
         burstUntil = Date.now() + START_BURST_MS;
         scheduleRefresh();
+      } else if (changed) {
+        report();
       }
     },
     start() {

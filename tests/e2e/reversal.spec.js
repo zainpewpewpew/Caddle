@@ -339,7 +339,7 @@ test('E2E-RR-006 tanpa kandidat: empty state jujur per panel (tanpa data contoh)
   expect(errors).toEqual([]);
 });
 
-test('E2E-RR-007 scanner berjalan: penyegaran latar 30 s menyorot baris baru & naik tahap, fokus baris dipertahankan', async ({ page }) => {
+test('E2E-RR-007 scanner berjalan: penyegaran latar tiap 1 menit menyorot baris baru & naik tahap, fokus baris dipertahankan', async ({ page }) => {
   const errors = watchErrors(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.clock.install({ time: REVERSAL_NOW });
@@ -373,7 +373,7 @@ test('E2E-RR-007 scanner berjalan: penyegaran latar 30 s menyorot baris baru & n
   await del.focus();
 
   advanced = true;
-  await page.clock.fastForward(31_000);
+  await page.clock.fastForward(61_000);
   await expect.poll(() => laterCalls).toBeGreaterThan(0);
   const alp = panelRow(page, 'reversal-developing', 'ALPUSDT');
   await expect(alp).toBeVisible();

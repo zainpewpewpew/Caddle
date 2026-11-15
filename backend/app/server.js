@@ -2,6 +2,9 @@ import { buildApp } from './buildApp.js';
 import { ConfigError, loadConfig } from './config.js';
 import { openDatabase } from '../database/connection.js';
 import { configureBinanceNetwork } from '../ingestion/binance/network.js';
+import { DIRECTION_TIMEFRAMES } from '../market/contracts.js';
+import { REVERSAL_ACTIVE_TIMEFRAMES } from '../reversal/constants.js';
+import { createPrettyStream, formatBanner, formatLogLine, openBrowser, useColor, usePrettyLogs } from '../system/consoleLog.js';
 import { STOP_TIMEOUT_MS } from '../system/workerSupervisor.js';
 import { DefaultUserError, ensureDefaultUser } from '../users/defaultUser.js';
 
@@ -20,8 +23,23 @@ async function main() {
     throw err;
   }
 
+  // Terminal interaktif (LOG_FORMAT=auto + TTY, atau pretty): log server & worker sebagai teks ringkas berjam WIB, tanpa
+  // log per-request (polling UI tiap beberapa detik). Selain itu JSON per baris seperti sebelumnya.
+  const pretty = usePrettyLogs(config.logFormat);
+  const color = pretty && useColor();
   const db = openDatabase(config.databasePath);
-  const app = await buildApp({ config, db });
+  const app = await buildApp({
+    config,
+    db,
+    ...(pretty ? {
+      logStream: createPrettyStream({ scope: 'server', color }),
+      requestLogging: false,
+      workerOutput: (line) => {
+        const text = formatLogLine(line, { scope: 'scanner', color });
+        if (text !== null) process.stdout.write(`${text}\n`);
+      },
+    } : {}),
+  });
   app.addHook('onClose', async () => db.close());
   // Server juga memanggil Binance (sinkron Smart Money dari website): DNS sama dengan worker (BINANCE_DNS).
   const binanceNetwork = configureBinanceNetwork({ mode: config.binanceDns, logger: app.log });
@@ -76,7 +94,34 @@ async function main() {
   // Menutup jendela terminal `npm start` mengirim SIGHUP: hentikan worker dengan graceful seperti Ctrl+C.
   process.on('SIGHUP', shutdown);
 
-  await app.listen({ host: config.host, port: config.port });
+  try {
+    await app.listen({ host: config.host, port: config.port });
+  } catch (err) {
+    if (err?.code === 'EADDRINUSE') {
+      // Penyebab paling umum: AlphaLens sudah berjalan di terminal lain. Pesan jelas, bukan stack trace.
+      console.error(`Port ${config.port} sudah dipakai — kemungkinan AlphaLens sudah berjalan di terminal lain. `
+        + `Buka ${config.appOrigin} di browser, atau hentikan proses lama (Ctrl+C di terminalnya) lalu jalankan npm start lagi.`);
+      await supervisor.shutdown().catch(() => {});
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  // Banner: alamat website + status scanner (terminal interaktif); JSON mode cukup log "Server listening".
+  if (pretty) {
+    const scannerState = await supervisor.status().then((s) => s.state, () => null);
+    process.stdout.write(formatBanner({
+      origin: config.appOrigin,
+      workerControl: config.workerControl,
+      workerAutostart: config.workerAutostart,
+      scannerState,
+      openBrowser: config.openBrowser,
+      color,
+      timeframes: { long: DIRECTION_TIMEFRAMES.LONG.join('/'), short: DIRECTION_TIMEFRAMES.SHORT.join('/'), radar: REVERSAL_ACTIVE_TIMEFRAMES.join('/') },
+    }));
+  }
+  // Browser default ke halaman website (OPEN_BROWSER; hanya `npm start` di terminal interaktif, bukan `npm run dev`).
+  openBrowser(`${config.appOrigin}/`, { enabled: config.openBrowser, logger: app.log });
 }
 
 main().catch((err) => {

@@ -66,12 +66,19 @@ export async function reversalRoutes(app, { reversal, candles, timeframes = REVE
   const active = timeframes === null ? [...REVERSAL_TIMEFRAMES] : REVERSAL_TIMEFRAMES.filter((tf) => timeframes.includes(tf));
   const allActive = active.length === REVERSAL_TIMEFRAMES.length;
 
-  /** Menambahkan lastPrice/lastCandleAt (candle tutup terakhir seri) ke setiap baris; tanpa candle → null, tidak dikarang. */
+  /**
+   * Menambahkan lastPrice/lastCandleAt (candle tutup terakhir seri) dan livePrice/livePriceAt (candle berjalan dari
+   * WebSocket) ke setiap baris; tanpa candle → null, tidak dikarang.
+   */
   async function withLastPrice(rows) {
     const out = [];
     for (const row of rows) {
       const [last] = await candles.getLatest({ symbol: row.symbol, timeframe: row.timeframe, limit: 1 });
-      out.push({ ...row, lastPrice: last?.close ?? null, lastCandleAt: last?.closeTime ?? null });
+      const live = typeof candles.getLivePrice === 'function' ? await candles.getLivePrice({ symbol: row.symbol, timeframe: row.timeframe }) : null;
+      out.push({
+        ...row, lastPrice: last?.close ?? null, lastCandleAt: last?.closeTime ?? null,
+        livePrice: live?.price ?? null, livePriceAt: live?.at ?? null,
+      });
     }
     return out;
   }

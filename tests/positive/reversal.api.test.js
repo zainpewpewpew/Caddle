@@ -30,6 +30,32 @@ describe('API Reversal Radar — timeframe aktif produksi (LONG Scanner hanya 1h
   });
 });
 
+describe('API Reversal Radar — harga live (candle berjalan dari WebSocket)', () => {
+  it('POS-RR-LIVE-001 livePrice/livePriceAt dari candle berjalan seri (selain lastPrice candle tertutup); tanpa candle berjalan → null', async () => {
+    const app = await createTestApp();
+    const cookie = (await login(app.app)).cookie;
+    const fetchJson = async (url) => (await app.app.inject({ url, headers: { cookie } })).json();
+    try {
+      const { repos } = app.app.services;
+      await seedReversalCandidates(repos, { withCandles: true });
+      const [before] = (await fetchJson('/api/reversal/candidates')).items;
+      expect(before).toMatchObject({ symbol: 'CCCUSDT', livePrice: null, livePriceAt: null });
+      const [last] = await repos.candles.getLatest({ symbol: 'CCCUSDT', timeframe: '1h', limit: 1 });
+      const close = last.close * 1.02;
+      const running = {
+        ...last, openTime: last.openTime + H1, closeTime: last.closeTime + H1, open: last.close,
+        high: Math.max(close, last.close), low: Math.min(close, last.close), close, isClosed: false, source: 'ws',
+      };
+      const at = last.closeTime + 120_000;
+      await repos.candles.upsertProvisional(running, { now: at });
+      const [after] = (await fetchJson('/api/reversal/candidates')).items;
+      expect(after).toMatchObject({ lastPrice: last.close, lastCandleAt: last.closeTime, livePrice: close, livePriceAt: at });
+    } finally {
+      await app.app.close();
+    }
+  });
+});
+
 // Mekanika filter API diuji pada SEMUA timeframe yang didukung mesin (reversalTimeframes: null); pembatasan produksi
 // (hanya 1h) diuji POS-RR-TF-001.
 describe('API Reversal Radar — alur positif', () => {

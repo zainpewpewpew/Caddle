@@ -114,6 +114,24 @@
   color: var(--lr-warn);
 }
 
+/* Harga live (candle berjalan dari WebSocket, liveData.js): titik kecil di depan angka; teks tetap netral. */
+.price-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.price-cell[data-live="true"]::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--lr-live-color, var(--lr-bull));
+}
+
 /* Terbaru = sudah dievaluasi pada candle terakhir yang tutup. Penanda kecil (Small Marker): titik status, teks tetap netral. */
 .updated-at[data-fresh="true"]::before {
   content: "";

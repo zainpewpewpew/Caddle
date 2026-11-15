@@ -50,7 +50,10 @@ describe('supervisor worker — transisi state', () => {
     expect(options.env).toEqual({ DATABASE_PATH: '/tmp/x.db' });
     fork.last().emit('spawn');
     const status = await started;
-    expect(status).toEqual({ state: 'running', startedAt: clock(), stoppedAt: null, exitCode: null, signal: null });
+    // Tanpa opsi autoRestart (default false): tidak ada start ulang otomatis; via default 'manual'.
+    expect(status).toEqual({
+      state: 'running', startedAt: clock(), stoppedAt: null, exitCode: null, signal: null, via: 'manual', autoRestart: false, restartAt: null,
+    });
   });
 
   it('UNIT-SUP-002 running → stopping (SIGTERM) → stopped saat child keluar; stop({ wait: false }) langsung mengembalikan stopping', async () => {
@@ -500,5 +503,123 @@ describe('supervisor worker — sanitasi log child (temuan review)', () => {
     expect(out[1]).toBe('abcdefghij\tk');
     expect(out[2]).toBe('Rp 1.000 — «harga» é ✓');
     expect(out[3]).toBe(`${'q'.repeat(200)} …[dipotong]`);
+  });
+});
+
+describe('supervisor worker — start ulang otomatis setelah crash (npm start terus memindai)', () => {
+  // startTimeoutMs 9 dtk agar tidak tertukar dengan jeda start ulang 10 dtk di timers.pending().
+  const auto = (extra = {}) => setup({ autoRestart: true, startTimeoutMs: 9_000, ...extra });
+  const settle = async () => { await flush(); await flush(); await flush(); };
+
+  it('UNIT-SUP-040 crash → state crashed + restartAt (jeda 10 dtk, ≥ cooldown) → child baru via auto-restart; percobaan dilaporkan onAutoRestart', async () => {
+    const events = [];
+    const { supervisor, fork, clock, timers } = auto({ onAutoRestart: (e) => events.push(e) });
+    await supervisor.start();
+    expect((await supervisor.status()).autoRestart).toBe(true);
+    clock.advance(1_000);
+    fork.last().exit(1);
+    expect(await supervisor.status()).toMatchObject({ state: 'crashed', exitCode: 1, autoRestart: true, restartAt: clock() + 10_000 });
+    expect(timers.pending()).toEqual([10_000]);
+    clock.advance(10_000);
+    timers.fire(10_000);
+    await settle();
+    expect(fork.calls).toHaveLength(2);
+    expect(await supervisor.status()).toMatchObject({ state: 'running', via: 'auto-restart', autoRestart: true, restartAt: null, startedAt: clock() });
+    expect(events).toEqual([{ outcome: 'success', attempt: 1, state: 'running' }]);
+  });
+
+  it('UNIT-SUP-041 crash beruntun → jeda berlipat 10 → 20 → 40 dtk, dibatasi autoRestartMaxMs', async () => {
+    const { supervisor, fork, clock, timers } = auto({ restartCooldownMs: 0, autoRestartMaxMs: 30_000 });
+    await supervisor.start();
+    const delays = [];
+    for (let i = 0; i < 4; i += 1) {
+      fork.last().exit(1);
+      const { restartAt } = await supervisor.status();
+      const delay = restartAt - clock();
+      delays.push(delay);
+      clock.advance(delay);
+      timers.fire(delay);
+      await settle();
+    }
+    expect(delays).toEqual([10_000, 20_000, 30_000, 30_000]);
+    expect(fork.calls).toHaveLength(5);
+    expect((await supervisor.status()).state).toBe('running');
+  });
+
+  it('UNIT-SUP-042 child yang berjalan ≥ autoRestartStableMs sebelum crash dianggap stabil: jeda kembali ke 10 dtk', async () => {
+    const { supervisor, fork, clock, timers } = auto({ restartCooldownMs: 0, autoRestartStableMs: 60_000 });
+    await supervisor.start();
+    fork.last().exit(1);
+    clock.advance(10_000);
+    timers.fire(10_000);
+    await settle();
+    fork.last().exit(1);
+    expect((await supervisor.status()).restartAt - clock()).toBe(20_000);
+    clock.advance(20_000);
+    timers.fire(20_000);
+    await settle();
+    clock.advance(60_000);
+    fork.last().exit(1);
+    expect((await supervisor.status()).restartAt - clock()).toBe(10_000);
+  });
+
+  it('UNIT-SUP-043 berhenti normal (Hentikan → SIGTERM → kode 0, atau keluar sendiri kode 0) tidak pernah dijalankan ulang', async () => {
+    const { supervisor, fork, timers } = auto({ restartCooldownMs: 0, fork: createFakeFork({ gracefulExit: true }) });
+    await supervisor.start();
+    await supervisor.stop();
+    expect(await supervisor.status()).toMatchObject({ state: 'stopped', autoRestart: false, restartAt: null });
+    expect(timers.pending()).toEqual([]);
+    await supervisor.start();
+    fork.last().exit(0);
+    expect(await supervisor.status()).toMatchObject({ state: 'stopped', exitCode: 0, autoRestart: false, restartAt: null });
+    expect(timers.pending()).toEqual([]);
+  });
+
+  it('UNIT-SUP-044 Hentikan saat start ulang otomatis terjadwal → jadwal dibatalkan, scanner tetap berhenti (crashed)', async () => {
+    const { supervisor, fork, timers } = auto();
+    await supervisor.start();
+    fork.last().exit(1);
+    expect(timers.pending()).toEqual([10_000]);
+    expect(await supervisor.stop()).toMatchObject({ state: 'crashed', autoRestart: false, restartAt: null });
+    expect(timers.pending()).toEqual([]);
+    expect(fork.calls).toHaveLength(1);
+  });
+
+  it('UNIT-SUP-045 penutupan server membatalkan start ulang otomatis yang terjadwal', async () => {
+    const { supervisor, fork, timers } = auto();
+    await supervisor.start();
+    fork.last().exit(1);
+    await supervisor.shutdown();
+    expect(timers.pending()).toEqual([]);
+    expect(await supervisor.status()).toMatchObject({ state: 'crashed', autoRestart: false, restartAt: null });
+  });
+
+  it('UNIT-SUP-046 saat jadwal tiba worker lain sudah menulis heartbeat segar → ditolak WORKER_EXTERNAL dan start ulang otomatis dihentikan (tanpa percobaan berulang)', async () => {
+    const events = [];
+    const { supervisor, fork, clock, timers, state } = auto({ onAutoRestart: (e) => events.push(e) });
+    await supervisor.start();
+    clock.advance(1_000);
+    fork.last().exit(1);
+    state.heartbeat = { at: clock() + 5_000, state: { state: 'running' } };
+    clock.advance(10_000);
+    timers.fire(10_000);
+    await settle();
+    expect(fork.calls).toHaveLength(1);
+    expect(events).toEqual([{ outcome: 'failure', attempt: 1, reason: 'WORKER_EXTERNAL' }]);
+    expect(timers.pending()).toEqual([]);
+    expect(await supervisor.status()).toMatchObject({ state: 'external', autoRestart: false, restartAt: null });
+  });
+
+  it('UNIT-SUP-047 tanpa autoRestart (default) crash tidak dijadwalkan ulang; `via` mencatat cara start (autostart/manual, nilai lain → manual)', async () => {
+    const plain = setup({ startTimeoutMs: 9_000 });
+    await plain.supervisor.start();
+    plain.fork.last().exit(1);
+    expect(await plain.supervisor.status()).toMatchObject({ state: 'crashed', autoRestart: false, restartAt: null });
+    expect(plain.timers.pending()).toEqual([]);
+
+    const { supervisor } = setup({ restartCooldownMs: 0, fork: createFakeFork({ gracefulExit: true }) });
+    expect((await supervisor.start({ via: 'autostart' })).via).toBe('autostart');
+    await supervisor.stop();
+    expect((await supervisor.start({ via: 'bogus' })).via).toBe('manual');
   });
 });

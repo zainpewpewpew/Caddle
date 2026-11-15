@@ -260,7 +260,8 @@ describe('pipeline Reversal Radar — candle tertutup (replay dari kursor, HTF t
     expect(alerts[0].events.map((e) => e.type)).toEqual(['STAGE_UP']);
     expect(alerts[0].snapshot).toMatchObject({ stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING', lastCandleTime: at(106) });
     expect(alerts[0].evaluation).toMatchObject({ stage: 'DEVELOPING_REVERSAL', provisional: false, candleOpenTime: at(106) });
-    expect(logger.info).toHaveBeenCalledWith({ symbol: SYMBOL, timeframe: '5m', stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING', events: ['STAGE_UP'] }, 'alert kandidat reversal');
+    // debug: log info berbahasa manusia untuk alert yang sama ditulis worker (worker/index.js onReversalAlert).
+    expect(logger.debug).toHaveBeenCalledWith({ symbol: SYMBOL, timeframe: '5m', stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING', events: ['STAGE_UP'] }, 'alert kandidat reversal');
     expect(await repos.reversal.getOpen(SERIES)).toMatchObject({ id: 1, stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING', barsInStage: 0, evidence: IDS_OF.DEVELOPING_REVERSAL });
 
     // Candle 107 ditutup jauh di bawah invalidasi → CANCELLED dari DEVELOPING → alert; kandidat tertutup.

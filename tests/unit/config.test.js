@@ -109,16 +109,32 @@ describe('konfigurasi WORKER_CONTROL & WORKER_AUTOSTART (tombol scanner di websi
     expect(loadConfig({ ...PROD, WORKER_CONTROL: 'true' }).workerControl).toBe(true);
   });
 
-  it('UNIT-CFG-009 WORKER_AUTOSTART default false; true/false eksplisit dihormati', () => {
-    expect(loadConfig({}).workerAutostart).toBe(false);
+  it('UNIT-CFG-009 WORKER_AUTOSTART default: aktif di development bila WORKER_CONTROL aktif (npm start langsung memindai); false di test & produksi; eksplisit dihormati', () => {
+    expect(loadConfig({}).workerAutostart).toBe(true);
+    expect(loadConfig({ WORKER_CONTROL: 'false' }).workerAutostart).toBe(false);
+    expect(loadConfig({ NODE_ENV: 'test' }).workerAutostart).toBe(false);
+    expect(loadConfig({ NODE_ENV: 'test', WORKER_CONTROL: 'true' }).workerAutostart).toBe(false);
     expect(loadConfig(PROD).workerAutostart).toBe(false);
+    expect(loadConfig({ ...PROD, WORKER_CONTROL: 'true' }).workerAutostart).toBe(false);
     expect(loadConfig({ WORKER_AUTOSTART: 'true' }).workerAutostart).toBe(true);
     expect(loadConfig({ WORKER_AUTOSTART: 'false' }).workerAutostart).toBe(false);
+    expect(loadConfig({ NODE_ENV: 'test', WORKER_AUTOSTART: 'true' }).workerAutostart).toBe(true);
+  });
+
+  it('UNIT-CFG-010 OPEN_BROWSER default aktif hanya di development; LOG_FORMAT default auto, pretty/json diterima', () => {
+    expect(loadConfig({}).openBrowser).toBe(true);
+    expect(loadConfig({ OPEN_BROWSER: 'false' }).openBrowser).toBe(false);
+    expect(loadConfig({ NODE_ENV: 'test' }).openBrowser).toBe(false);
+    expect(loadConfig(PROD).openBrowser).toBe(false);
+    expect(loadConfig({}).logFormat).toBe('auto');
+    expect(loadConfig({ LOG_FORMAT: 'pretty' }).logFormat).toBe('pretty');
+    expect(loadConfig({ LOG_FORMAT: ' json ' }).logFormat).toBe('json');
+    expect(() => loadConfig({ LOG_FORMAT: 'xml' })).toThrow('LOG_FORMAT harus salah satu dari: auto, pretty, json');
   });
 
   it.each([
     ['WORKER_CONTROL', 'yes'], ['WORKER_CONTROL', '1'], ['WORKER_CONTROL', 'TRUE'], ['WORKER_CONTROL', 'on'],
-    ['WORKER_AUTOSTART', 'yes'], ['WORKER_AUTOSTART', '0'], ['WORKER_AUTOSTART', 'False'],
+    ['WORKER_AUTOSTART', 'yes'], ['WORKER_AUTOSTART', '0'], ['WORKER_AUTOSTART', 'False'], ['OPEN_BROWSER', 'yes'],
   ])('NEG-CFG-008 %s=%s tidak valid ditolak dengan pesan berbahasa Indonesia', (name, value) => {
     expect(() => loadConfig({ [name]: value })).toThrow(ConfigError);
     expect(() => loadConfig({ [name]: value })).toThrow(`${name} harus 'true' atau 'false'`);

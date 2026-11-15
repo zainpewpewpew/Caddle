@@ -22,14 +22,15 @@ import {
   START_BURST_MS, START_REFRESH_MS, createScannerSection, currentSort, decorateRows, focusedRowKey, restoreRowFocus, rowTextKey,
   scanRadar,
 } from './screener.js';
+import { DATA_REFRESH_MS, priceCell, priceSortValue, reportDataRefresh } from './liveData.js';
 import { refreshUpdatedCells, updatedCell } from './signalFormat.js';
 import { createSymbolChartPanel, isValidSymbol, normalizeTimeframe } from './symbolChart.js';
 import { workerControlBar } from './workerControl.js';
 import { isWorkerActive } from './workerFormat.js';
 
 const SUBTITLE = 'Pelabel struktur 1h, deskriptif dan bukan prediksi: validasi data nyata belum menunjukkan keunggulan. Skor = kecocokan aturan, bukan probabilitas.';
-/** Penyegaran latar (hanya saat scanner benar-benar berjalan & halaman terlihat), pola screener.js. */
-const REFRESH_MS = 30_000;
+/** Penyegaran latar tiap 1 menit (hanya saat scanner benar-benar berjalan & halaman terlihat), pola screener.js. */
+const REFRESH_MS = DATA_REFRESH_MS;
 /** Teks relatif kolom "Update" dihitung ulang tiap interval ini. */
 const CLOCK_TICK_MS = 15_000;
 /** Preferensi lipatan panel sekunder SA/PVA ('1' terbuka, '0' terlipat). */
@@ -127,7 +128,8 @@ const COLUMNS = [
   { key: 'status', label: 'Status', sortValue: (r) => statusLabel(effectiveStatus(r)), render: statusPill },
   { key: 'score', label: 'Skor', numeric: true, sortValue: scoreValue, render: scoreCell },
   { key: 'evidenceCount', label: 'Bukti', numeric: true, sortValue: (r) => evidencePreview(r).count, render: evidenceCell },
-  { key: 'lastPrice', label: 'Harga', numeric: true, render: (r) => formatPrice(r.lastPrice) },
+  // Harga live dari candle 1h berjalan (diperbarui tiap muat ulang 1 menit); fallback close candle tertutup terakhir.
+  { key: 'lastPrice', label: 'Harga', numeric: true, sortValue: priceSortValue, render: (r) => priceCell(r) },
   { key: 'moveSinceDetectionPct', label: 'Sejak deteksi', numeric: true, sortValue: (r) => moveInfo(r).pct, render: moveCell },
   { key: 'liquidityClass', label: 'Likuiditas', render: (r) => liquidityBadge(r.liquidityClass) },
   { key: 'candleStatus', label: 'Candle', sortValue: candleStatusOf, render: candleStatusBadge },
@@ -410,6 +412,8 @@ export async function reversalRadarView(ctx) {
   const legacyCount = h('span', { class: 'rr-legacy__count num', 'data-testid': 'reversal-legacy-count' }, '…');
   let legacyAutoOpened = false;
   const legacy = createScannerSection(ctx, 'LONG', {
+    // Strip status melaporkan jam muat ulang tabel utama (Reversal Radar) saja.
+    reportRefresh: false,
     onLoaded: ({ rows, limitReached }) => {
       legacyCount.textContent = limitReached ? `≥ ${rows.length} kandidat` : `${rows.length} kandidat`;
       // Terlipat selama kosong; dibuka otomatis SEKALI saat mesin lama punya kandidat (hasil nyata tidak disembunyikan
@@ -446,7 +450,15 @@ export async function reversalRadarView(ctx) {
   let clockTimer = null;
   let disposed = false;
   let burstUntil = 0;
+  // Muatan terakhir yang berhasil & jadwal muat ulang berikutnya, untuk strip status ("Tabel diperbarui …").
+  let loadedAt = null;
+  let refreshDueAt = null;
   const lastFlashAt = new Map();
+
+  function report() {
+    if (loadedAt === null || disposed) return;
+    reportDataRefresh({ source: 'LONG Scanner', at: loadedAt, nextAt: workerActive ? refreshDueAt : null });
+  }
 
   function showError(err) {
     const missing = err instanceof ApiError && err.status === 404;
@@ -515,6 +527,8 @@ export async function reversalRadarView(ctx) {
       + (provisional > 0 ? ` · ${provisional} provisional (candle berjalan)` : '')
       + (groups.other.length > 0 ? ` · ${groups.other.length} tanpa tahap dikenal (tidak ditampilkan)` : '');
     detail.refresh(items);
+    loadedAt = Date.now();
+    report();
   }
 
   form.addEventListener('change', () => {
@@ -536,12 +550,15 @@ export async function reversalRadarView(ctx) {
       radar.set(s);
       const next = isWorkerActive(s);
       const justStarted = next && !workerActive;
+      const changed = next !== workerActive;
       workerActive = next;
       legacy.setWorkerActive(workerActive);
       // Scanner baru dinyalakan: muat ulang cepat sebentar agar kolom "Update" langsung maju (pola screener.js).
       if (justStarted && !disposed) {
         burstUntil = Date.now() + START_BURST_MS;
         scheduleRefresh();
+      } else if (changed) {
+        report();
       }
     },
   });
@@ -567,12 +584,15 @@ export async function reversalRadarView(ctx) {
 
   function scheduleRefresh() {
     clearTimeout(refreshTimer);
+    const delay = Date.now() < burstUntil ? START_REFRESH_MS : REFRESH_MS;
+    refreshDueAt = Date.now() + delay;
     refreshTimer = setTimeout(async () => {
       refreshTimer = null;
       if (disposed || !el.isConnected) return;
       if (workerActive && !document.hidden) await load({ background: true });
       if (!disposed && el.isConnected) scheduleRefresh();
-    }, Date.now() < burstUntil ? START_REFRESH_MS : REFRESH_MS);
+    }, delay);
+    report();
   }
 
   function startClock() {

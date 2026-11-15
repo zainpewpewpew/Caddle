@@ -215,7 +215,8 @@ export function createReversalPipeline({
 
     // Alert hanya dari hasil candle terbaru; transisi historis hasil replay disimpan tanpa alert.
     if (result?.alert) {
-      logger?.info?.({ symbol, timeframe, stage: result.next.stage, status: result.next.status, events: result.events.map((e) => e.type) },
+      // debug: worker mencatat alert yang sama sebagai info berbahasa manusia ("kandidat reversal: …", worker/index.js).
+      logger?.debug?.({ symbol, timeframe, stage: result.next.stage, status: result.next.status, events: result.events.map((e) => e.type) },
         'alert kandidat reversal');
       onAlert?.({
         symbol, timeframe, candidateId: result.candidateId, stage: result.next.stage ?? null, status: result.next.status,

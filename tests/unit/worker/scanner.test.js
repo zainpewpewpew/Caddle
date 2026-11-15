@@ -5,6 +5,7 @@ import { TIMEFRAME_MS } from '../../../backend/market/contracts.js';
 import { createServerClock } from '../../../backend/ingestion/serverClock.js';
 import { discoverSymbols } from '../../../backend/ingestion/symbolDiscovery.js';
 import { DEFAULT_SCANNER_SETTINGS } from '../../../backend/settings/scannerSettings.js';
+import { createActivityFeed } from '../../../worker/activity.js';
 import { createScanner } from '../../../worker/scanner.js';
 
 const M5 = TIMEFRAME_MS['5m'];
@@ -247,9 +248,13 @@ function setup({
   closureClock,
   heartbeatOwner,
   onProvisionalCandle,
+  activity,
+  countOpen,
 } = {}) {
   const log = [];
   const timers = createFakeTimers(start);
+  // activity: pabrik (timers) => feed, agar stempel log aktivitas memakai jam tes.
+  const feed = activity ? activity(timers) : undefined;
   const rest = createFakeRest({ clock: timers.clock, symbols, log });
   const repos = createFakeRepos({ log, monitoredInDb });
   const streams = createFakeStreams();
@@ -282,8 +287,10 @@ function setup({
     ...(closureClock ? { closureClock } : {}),
     ...(heartbeatOwner !== undefined ? { heartbeatOwner } : {}),
     ...(onProvisionalCandle !== undefined ? { onProvisionalCandle } : {}),
+    ...(feed ? { activity: feed } : {}),
+    ...(countOpen ? { countOpen } : {}),
   });
-  return { scanner, rest, repos, streams, timers, analysed, log, settings };
+  return { scanner, rest, repos, streams, timers, analysed, log, settings, activity: feed };
 }
 
 const ot = (list) => list.map((c) => c.openTime);
@@ -1571,5 +1578,100 @@ describe('integrasi dengan klien WebSocket nyata (WebSocket palsu)', () => {
     await scanner.stop();
     expect(s2.closeCalls).toEqual([{ code: 1000, reason: 'stop' }]);
     expect(timers.pending.size).toBe(0);
+  });
+});
+
+describe('scan berkala tiap menit & log aktivitas (keputusan pengguna 2026-11-15)', () => {
+  const MIN = 60_000;
+  // START = 01:00:07 → scan pertama di batas menit berikutnya + 5 dtk = 01:01:05.
+  const FIRST_SCAN = Math.floor(START / MIN) * MIN + MIN + 5_000;
+  const scanSetup = (extra = {}) => {
+    const infos = [];
+    const logger = { ...silentLogger, info: (fields, msg) => infos.push({ fields, msg }) };
+    const ctx = setup({
+      options: { scanIntervalMs: MIN },
+      activity: (timers) => createActivityFeed({ clock: timers.clock }),
+      countOpen: async () => ({ long: 3, short: 1, radar: 7 }),
+      logger,
+      ...extra,
+    });
+    return { ...ctx, infos };
+  };
+  const lastBeat = (repos) => repos.ingestion.heartbeat.mock.calls.at(-1)[0];
+
+  it('UNIT-SCN-SCAN-001 scan pertama di batas menit + 5 dtk: seri mutakhir tanpa REST, harga live dihitung, ringkasan di status/heartbeat/log/aktivitas', async () => {
+    const { scanner, repos, streams, timers, infos, activity, rest } = scanSetup();
+    await scanner.start();
+    expect(scanner.status()).toMatchObject({ scan: null, scanIntervalMs: MIN, nextScanAt: FIRST_SCAN });
+    for (const symbol of ['BTCUSDT', 'ETHUSDT']) {
+      streams.current().push(candle(symbol, '5m', LAST_CLOSED + M5, { source: 'ws', isClosed: false }));
+    }
+    await flush();
+    const klinesBefore = rest.klineCalls().length;
+    await timers.advance(FIRST_SCAN - START);
+    expect(rest.klineCalls()).toHaveLength(klinesBefore);
+    expect(scanner.status().scan).toMatchObject({
+      seq: 1, at: FIRST_SCAN, symbols: 2, series: 6, fresh: 6, stale: 0, repaired: 0, priced: 2,
+      open: { long: 3, short: 1, radar: 7 }, intervalMs: MIN, nextAt: FIRST_SCAN + MIN,
+    });
+    // Heartbeat langsung setelah scan, sudah membawa jadwal scan berikutnya.
+    expect(lastBeat(repos)).toMatchObject({ at: FIRST_SCAN, state: { scan: { seq: 1, fresh: 6, nextAt: FIRST_SCAN + MIN }, nextScanAt: FIRST_SCAN + MIN } });
+    expect(infos.map((e) => e.msg)).toContain('scan #1: 6/6 seri mutakhir · harga live 2 seri · sinyal terbuka LONG 3 · SHORT 1 · radar 7');
+    expect(activity.list().filter((e) => e.kind === 'scan')).toEqual([
+      expect.objectContaining({ seq: 1, series: 6, fresh: 6, stale: 0, priced: 2, open: { long: 3, short: 1, radar: 7 } }),
+    ]);
+  });
+
+  it('UNIT-SCN-SCAN-002 candle tertutup yang tidak tiba lewat WS ditambal REST oleh scan berikutnya lalu dianalisis (reason scan)', async () => {
+    const { scanner, timers, analysed, activity, infos, repos } = scanSetup();
+    await scanner.start();
+    const beatsBefore = repos.ingestion.heartbeat.mock.calls.length;
+    // Scan #6 = 01:06:05: candle 5m 01:00 sudah tutup > 30 dtk tanpa kline final WS → 2 seri tertinggal.
+    await timers.advance(FIRST_SCAN + 5 * MIN - START);
+    expect(scanner.status().scan).toMatchObject({ seq: 6, series: 6, fresh: 6, stale: 0, repaired: 2, priced: 0 });
+    expect(analysed.filter((e) => e.reason === 'scan').map((e) => `${e.symbol}:${e.timeframe}:${ot(e.candles)}`).sort())
+      .toEqual([`BTCUSDT:5m:${LAST_CLOSED + M5}`, `ETHUSDT:5m:${LAST_CLOSED + M5}`]);
+    // Entri "Candle … dianalisis" dicatat perakitan worker (assemble.js, tahu timeframe yang dianalisis pipeline), bukan scanner.
+    expect(activity.list().filter((e) => e.kind === 'candles')).toEqual([]);
+    expect(repos.ingestion.heartbeat.mock.calls.length).toBeGreaterThan(beatsBefore + 6);
+    expect(infos.map((e) => e.msg)).toContain('scan #6: 6/6 seri mutakhir · harga live 0 seri · 2 seri ditambal · sinyal terbuka LONG 3 · SHORT 1 · radar 7');
+  });
+
+  it('UNIT-SCN-SCAN-003 stop() membatalkan scan terjadwal; tanpa options.scanIntervalMs (default) tidak ada scan & log aktivitas kosong', async () => {
+    const { scanner, timers } = scanSetup();
+    await scanner.start();
+    await scanner.stop();
+    expect(scanner.status().nextScanAt).toBeNull();
+    await timers.advance(10 * MIN);
+    expect(scanner.status().scan).toBeNull();
+
+    const plain = setup();
+    await plain.scanner.start();
+    expect(plain.scanner.status()).toMatchObject({ scan: null, scanIntervalMs: null, nextScanAt: null, activity: [] });
+    await plain.timers.advance(5 * MIN);
+    expect(plain.scanner.status().scan).toBeNull();
+  });
+
+  it('UNIT-SCN-ACT-001 log aktivitas: start → discovery → ws open → bootstrap; galat backfill tercatat; stopping saat berhenti', async () => {
+    const { scanner, activity, rest, timers } = scanSetup();
+    await scanner.start();
+    expect(activity.list().map((e) => e.kind)).toEqual(['start', 'discovery', 'ws', 'bootstrap']);
+    expect(activity.list()[1]).toMatchObject({ cycle: 'initial', symbols: 2, failed: false });
+    expect(activity.list()[2]).toMatchObject({ state: 'open', reconnects: 0 });
+    expect(activity.list()[3]).toMatchObject({ series: 6, failed: 0 });
+    rest.failKlines.add('BTCUSDT');
+    await timers.advance(FIRST_SCAN + 5 * MIN - START);
+    expect(scanner.status().scan).toMatchObject({ seq: 6, stale: 1, repaired: 1 });
+    expect(activity.list().filter((e) => e.kind === 'error')).toEqual([
+      expect.objectContaining({ source: 'backfill', symbol: 'BTCUSDT', timeframe: '5m', message: expect.stringContaining('HTTP 500') }),
+    ]);
+    await scanner.stop();
+    expect(activity.list().at(-1).kind).toBe('stopping');
+  });
+
+  it('NEG-SCN-SCAN-001 opsi scan tidak valid ditolak saat konstruksi', () => {
+    expect(() => setup({ options: { scanIntervalMs: 500 } })).toThrow('options.scanIntervalMs');
+    expect(() => setup({ options: { scanIntervalMs: MIN, scanOffsetMs: MIN } })).toThrow('options.scanOffsetMs');
+    expect(() => setup({ countOpen: 'x' })).toThrow('countOpen harus fungsi atau null');
   });
 });

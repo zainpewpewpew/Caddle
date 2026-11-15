@@ -487,7 +487,8 @@ export function createAnalysisPipeline({
     for (const direction of seriesDirections) {
       const result = results.get(direction);
       if (!result?.alert) continue;
-      logger?.info?.({ symbol, timeframe, direction, state: result.next.state, reason: result.event?.reason }, 'alert sinyal');
+      // debug: worker mencatat alert yang sama sebagai info berbahasa manusia ("sinyal baru / naik tahap: …", worker/index.js).
+      logger?.debug?.({ symbol, timeframe, direction, state: result.next.state, reason: result.event?.reason }, 'alert sinyal');
       onAlert?.({ symbol, timeframe, direction, state: result.next.state, event: result.event, view: result.view });
     }
     const perDirection = {};

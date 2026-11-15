@@ -32,6 +32,23 @@ describe('API sinyal — alur positif', () => {
     expect(['QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT']).toContain(items[0].state);
   });
 
+  it('POS-SIG-LIVE-001 harga live candle berjalan (WebSocket) ikut di baris aktif sebagai livePrice/livePriceAt; tanpa candle berjalan → null', async () => {
+    const { repos } = ctx.app.services;
+    const { candles } = await seedSignals(repos);
+    expect((await get('/api/signals/active')).json().items[0]).toMatchObject({ livePrice: null, livePriceAt: null });
+    const last = candles.at(-1);
+    const close = last.close * 1.01;
+    const running = {
+      ...last, openTime: last.openTime + 300_000, closeTime: last.closeTime + 300_000, open: last.close,
+      high: Math.max(close, last.close), low: Math.min(close, last.close), close, isClosed: false, source: 'ws',
+    };
+    const at = last.closeTime + 60_000;
+    await repos.candles.upsertProvisional(running, { now: at });
+    expect((await get('/api/signals/active')).json().items[0]).toMatchObject({
+      lastPrice: last.close, lastCandleAt: last.closeTime, livePrice: close, livePriceAt: at,
+    });
+  });
+
   it('POS-SIG-003 filter timeframe/klasifikasi/skor diterapkan di server', async () => {
     await seedSignals(ctx.app.services.repos);
     expect((await get('/api/signals/active?timeframe=1h')).json().count).toBe(0);

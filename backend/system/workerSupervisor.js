@@ -7,6 +7,10 @@
 // menunjukkan worker lain (mis. `npm run worker` di terminal) sudah menulis ke database yang sama.
 // Start ulang dibatasi jeda RESTART_COOLDOWN_MS setelah child keluar: tiap proses worker baru memulai limiter
 // bobot & status blokir 418/429 Binance dari nol (hanya di memori), jadi restart beruntun tidak boleh membanjiri Binance.
+// Start ulang OTOMATIS (opsi autoRestart, aktif di server produksi lewat buildApp): child yang dijalankan supervisor lalu
+// keluar tak terduga (crash) dijalankan lagi setelah jeda yang berlipat ganda per crash beruntun (10 dtk → 20 → 40 … maks
+// 5 menit; child yang sempat berjalan ≥ 10 menit dianggap stabil sehingga hitungan mulai dari awal). Berhenti normal
+// (tombol Hentikan, kode keluar 0) dan penutupan server tidak pernah memicu start ulang otomatis.
 
 import { fork as nodeFork } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -25,6 +29,14 @@ export const START_TIMEOUT_MS = 10_000;
 export const MAX_LINE_LENGTH = 16_384;
 /** Jeda minimum sejak child yang sempat berjalan keluar (stop maupun crash) sampai start berikutnya diizinkan. */
 export const RESTART_COOLDOWN_MS = 10_000;
+/** Jeda start ulang otomatis untuk crash pertama; berlipat ganda per crash beruntun sampai AUTO_RESTART_MAX_MS. */
+export const AUTO_RESTART_BASE_MS = 10_000;
+/** Batas atas jeda start ulang otomatis. */
+export const AUTO_RESTART_MAX_MS = 300_000;
+/** Child yang berjalan sekurangnya selama ini sebelum crash dianggap stabil: hitungan crash beruntun mulai dari 1 lagi. */
+export const AUTO_RESTART_STABLE_MS = 600_000;
+/** Cara child dijalankan (snapshot `via`): tombol/API, WORKER_AUTOSTART saat boot, atau start ulang otomatis setelah crash. */
+export const START_VIAS = Object.freeze(['manual', 'autostart', 'auto-restart']);
 
 export const WORKER_STATES = Object.freeze(['stopped', 'starting', 'running', 'stopping', 'crashed', 'external']);
 
@@ -158,6 +170,11 @@ export function createLineForwarder(write, maxLength = MAX_LINE_LENGTH) {
  *   hostname?: string,
  *   setTimer?: (fn: Function, ms: number) => unknown,
  *   clearTimer?: (id: unknown) => void,
+ *   autoRestart?: boolean,
+ *   autoRestartBaseMs?: number,
+ *   autoRestartMaxMs?: number,
+ *   autoRestartStableMs?: number,
+ *   onAutoRestart?: ((e: { outcome: 'success'|'failure', attempt: number, state?: string, reason?: string }) => unknown) | null,
  * }} [options]
  *   fork: injeksi untuk tes (default child_process.fork). scriptPath: path ABSOLUT skrip worker — default
  *   WORKER_SCRIPT_PATH; hanya kode (tes/E2E) yang boleh menggantinya, tidak pernah env atau request.
@@ -166,6 +183,9 @@ export function createLineForwarder(write, maxLength = MAX_LINE_LENGTH) {
  *   restartCooldownMs: jeda start ulang (default RESTART_COOLDOWN_MS; 0 = tanpa jeda, hanya untuk tes/E2E).
  *   isPidAlive / hostname: memeriksa `state.owner` heartbeat ({ pid, host } yang ditulis worker/index.js); heartbeat
  *   segar dari pid yang sudah tidak hidup di host ini (worker mati tanpa heartbeat akhir) bukan worker luar.
+ *   autoRestart: jalankan ulang child yang crash (default false; buildApp mengaktifkannya). Jeda = autoRestartBaseMs ×
+ *   2^(crash beruntun − 1), maks autoRestartMaxMs, dan tidak pernah kurang dari sisa jeda start ulang (restartCooldownMs).
+ *   onAutoRestart: dipanggil setelah setiap percobaan start ulang otomatis (buildApp mencatatnya di log audit).
  */
 export function createWorkerSupervisor({
   fork = nodeFork,
@@ -183,14 +203,22 @@ export function createWorkerSupervisor({
   hostname = osHostname(),
   setTimer = setTimeout,
   clearTimer = clearTimeout,
+  autoRestart = false,
+  autoRestartBaseMs = AUTO_RESTART_BASE_MS,
+  autoRestartMaxMs = AUTO_RESTART_MAX_MS,
+  autoRestartStableMs = AUTO_RESTART_STABLE_MS,
+  onAutoRestart = null,
 } = {}) {
   if (typeof fork !== 'function') throw new TypeError('fork wajib berupa fungsi');
   if (typeof scriptPath !== 'string' || !isAbsolute(scriptPath)) throw new TypeError('scriptPath wajib berupa path absolut');
-  for (const [name, value] of [['stopTimeoutMs', stopTimeoutMs], ['startTimeoutMs', startTimeoutMs]]) {
+  for (const [name, value] of [['stopTimeoutMs', stopTimeoutMs], ['startTimeoutMs', startTimeoutMs], ['autoRestartBaseMs', autoRestartBaseMs]]) {
     if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} harus bilangan bulat ≥ 1`);
   }
   if (!Number.isSafeInteger(restartCooldownMs) || restartCooldownMs < 0) throw new RangeError('restartCooldownMs harus bilangan bulat ≥ 0');
+  if (!Number.isSafeInteger(autoRestartMaxMs) || autoRestartMaxMs < autoRestartBaseMs) throw new RangeError('autoRestartMaxMs harus bilangan bulat ≥ autoRestartBaseMs');
+  if (!Number.isSafeInteger(autoRestartStableMs) || autoRestartStableMs < 0) throw new RangeError('autoRestartStableMs harus bilangan bulat ≥ 0');
   if (typeof isPidAlive !== 'function') throw new TypeError('isPidAlive wajib berupa fungsi');
+  if (onAutoRestart !== null && typeof onAutoRestart !== 'function') throw new TypeError('onAutoRestart harus fungsi atau null');
   // Snapshot env saat dibuat: perubahan process.env sesudahnya (atau dari request) tidak mencapai child.
   const childEnv = Object.freeze({ ...env });
 
@@ -211,8 +239,19 @@ export function createWorkerSupervisor({
   let stopResolvers = [];
   let stopTimer = null;
   let closed = false;
+  // Cara child terakhir dijalankan (START_VIAS) — dicatat saat event 'spawn'; `pendingVia` = permintaan start berjalan.
+  let via = null;
+  let pendingVia = null;
+  // Start ulang otomatis: `keepAlive` aktif sejak child berhasil dijalankan (autoRestart) sampai berhenti normal, tombol
+  // Hentikan, atau penutupan server. `crashStreak` = crash beruntun (menentukan jeda); `restartAt` = jadwal berikutnya.
+  let keepAlive = false;
+  let crashStreak = 0;
+  let restartTimer = null;
+  let restartAt = null;
 
-  const snapshot = () => ({ state, startedAt, stoppedAt, exitCode, signal: exitSignal });
+  const snapshot = () => ({
+    state, startedAt, stoppedAt, exitCode, signal: exitSignal, via, autoRestart: keepAlive, restartAt,
+  });
 
   /** Heartbeat segar dari worker yang BUKAN child server ini, atau null. `strict`: error baca dilempar. */
   async function externalHeartbeat({ strict = false, provided } = {}) {
@@ -273,7 +312,80 @@ export function createWorkerSupervisor({
     const fields = { workerPid: proc.pid, exitCode, signal: exitSignal };
     if (state === 'crashed') logger.error(fields, 'worker scanner berhenti tak terduga');
     else logger.info(fields, 'worker scanner berhenti');
+    if (state === 'crashed') {
+      // Child yang sempat berjalan lama dianggap stabil: crash berikutnya kembali memakai jeda terpendek.
+      const ranMs = startedAt === null ? 0 : stoppedAt - startedAt;
+      crashStreak = ranMs >= autoRestartStableMs ? 1 : crashStreak + 1;
+      scheduleAutoRestart();
+    } else {
+      keepAlive = false;
+      crashStreak = 0;
+    }
     finishStop();
+  }
+
+  // ---------- start ulang otomatis ----------
+
+  function cancelAutoRestart() {
+    if (restartTimer !== null) clearTimer(restartTimer);
+    restartTimer = null;
+    restartAt = null;
+  }
+
+  /** Jeda untuk crash beruntun ke-n: base × 2^(n−1), maks autoRestartMaxMs. */
+  const backoffMs = () => Math.min(autoRestartMaxMs, autoRestartBaseMs * 2 ** Math.max(0, Math.min(30, crashStreak - 1)));
+
+  /** Menjadwalkan start ulang otomatis (bila aktif). `delayMs` menggantikan jeda backoff; sisa cooldown selalu dihormati. */
+  function scheduleAutoRestart(delayMs = backoffMs()) {
+    if (!keepAlive || closed) return;
+    cancelAutoRestart();
+    const ms = Math.max(delayMs, cooldownRemaining());
+    restartAt = clock() + ms;
+    logger.warn({ inMs: ms, attempt: crashStreak },
+      `worker scanner akan dijalankan ulang otomatis dalam ${Math.max(1, Math.round(ms / 1000))} dtk (crash beruntun ke-${crashStreak})`);
+    restartTimer = setTimer(() => {
+      restartTimer = null;
+      restartAt = null;
+      autoRestartNow().catch((err) => logger.error({ err: err?.message }, 'start ulang otomatis worker gagal'));
+    }, ms);
+  }
+
+  async function notifyAutoRestart(event) {
+    if (!onAutoRestart) return;
+    try {
+      await onAutoRestart(event);
+    } catch (err) {
+      logger.warn({ err: err?.message }, 'gagal mencatat start ulang otomatis worker');
+    }
+  }
+
+  async function autoRestartNow() {
+    // Sudah dijalankan lagi (mis. tombol) atau dihentikan sejak jadwal dibuat: tidak ada yang perlu dilakukan.
+    if (!keepAlive || closed || state !== 'crashed') return;
+    const attempt = crashStreak;
+    try {
+      const result = await supervisor.start({ via: 'auto-restart' });
+      logger.info({ attempt }, 'worker scanner dijalankan ulang otomatis');
+      await notifyAutoRestart({ outcome: 'success', attempt, state: result.state });
+    } catch (err) {
+      const reason = err instanceof WorkerSupervisorError ? err.code : 'INTERNAL_ERROR';
+      logger.warn({ attempt, reason }, 'start ulang otomatis worker ditolak');
+      await notifyAutoRestart({ outcome: 'failure', attempt, reason });
+      if (reason === 'WORKER_COOLDOWN') scheduleAutoRestart(err.retryAfterMs ?? autoRestartBaseMs);
+      // Worker lain (mis. npm run worker) sudah memindai database yang sama: start ulang otomatis dihentikan (tidak
+      // mencoba berulang & mengisi audit tiap 5 menit); tombol "Jalankan scanner" tetap tersedia setelah worker itu berhenti.
+      else if (reason === 'WORKER_EXTERNAL') {
+        keepAlive = false;
+        crashStreak = 0;
+        logger.info({}, 'worker lain sudah berjalan di luar website — start ulang otomatis dihentikan');
+      } else if (reason === 'INTERNAL_ERROR') scheduleAutoRestart(autoRestartMaxMs);
+      // Fork gagal sebelum child ada (tanpa event exit): dihitung sebagai crash berikutnya. Child yang sempat dibuat lalu
+      // keluar sudah dijadwalkan ulang oleh onExit.
+      else if (reason === 'WORKER_SPAWN_FAILED' && state === 'crashed' && restartTimer === null) {
+        crashStreak += 1;
+        scheduleAutoRestart();
+      }
+    }
   }
 
   function spawnChild() {
@@ -326,7 +438,9 @@ export function createWorkerSupervisor({
         if (child !== proc || state !== 'starting') return;
         state = 'running';
         startedAt = clock();
-        logger.info({ workerPid: proc.pid }, 'worker scanner dijalankan');
+        via = pendingVia ?? 'manual';
+        keepAlive = autoRestart;
+        logger.info({ workerPid: proc.pid, via }, 'worker scanner dijalankan');
         settle(resolve, snapshot());
       });
       // 'on' (bukan 'once'): event 'error' kedua tanpa listener akan menjatuhkan proses server.
@@ -376,14 +490,20 @@ export function createWorkerSupervisor({
       return snapshot();
     },
 
-    /** Menjalankan child. Resolve setelah event 'spawn' (state 'running'). */
-    start() {
+    /**
+     * Menjalankan child. Resolve setelah event 'spawn' (state 'running').
+     * @param {{ via?: 'manual'|'autostart'|'auto-restart' }} [options] via: dicatat di snapshot (default 'manual')
+     */
+    start({ via: requestedVia = 'manual' } = {}) {
       if (closed) return Promise.reject(new WorkerSupervisorError('WORKER_SHUTTING_DOWN'));
       if (state === 'starting' || state === 'running') return Promise.reject(new WorkerSupervisorError('WORKER_ALREADY_RUNNING'));
       if (state === 'stopping') return Promise.reject(new WorkerSupervisorError('WORKER_STOPPING'));
       const wait = cooldownRemaining();
       if (wait > 0) return Promise.reject(new WorkerSupervisorError('WORKER_COOLDOWN', { retryAfterMs: wait }));
       const previous = state;
+      // Start yang diminta (tombol / autostart) menggantikan start ulang otomatis yang masih terjadwal.
+      cancelAutoRestart();
+      pendingVia = START_VIAS.includes(requestedVia) ? requestedVia : 'manual';
       // Klaim sinkron sebelum await pertama: start() kedua yang datang bersamaan langsung ditolak (satu instance).
       state = 'starting';
       const promise = doStart(previous).finally(() => {
@@ -400,12 +520,23 @@ export function createWorkerSupervisor({
     async stop({ wait = true } = {}) {
       if (state === 'stopping') return wait ? stopPromise : snapshot();
       if (state === 'starting') throw new WorkerSupervisorError('WORKER_STARTING');
+      // Crash dengan start ulang otomatis terjadwal: "Hentikan" membatalkan jadwal itu (scanner tetap berhenti).
+      if (state === 'crashed' && restartTimer !== null) {
+        keepAlive = false;
+        crashStreak = 0;
+        cancelAutoRestart();
+        logger.info({}, 'start ulang otomatis worker dibatalkan');
+        return snapshot();
+      }
       if (state !== 'running') {
         if (await externalHeartbeat()) throw new WorkerSupervisorError('WORKER_EXTERNAL');
         throw new WorkerSupervisorError('WORKER_NOT_RUNNING');
       }
       const proc = child;
       state = 'stopping';
+      // Berhenti atas permintaan: tidak dijalankan ulang otomatis.
+      keepAlive = false;
+      crashStreak = 0;
       stopPromise = new Promise((resolve) => { stopResolvers.push(resolve); });
       const done = stopPromise;
       logger.info({ workerPid: proc.pid, timeoutMs: stopTimeoutMs }, 'menghentikan worker scanner (SIGTERM)');
@@ -430,6 +561,8 @@ export function createWorkerSupervisor({
     /** Untuk penutupan server: tolak start baru, tunggu start yang berjalan, lalu hentikan child. Idempoten. */
     async shutdown() {
       closed = true;
+      keepAlive = false;
+      cancelAutoRestart();
       if (startPromise) await startPromise.catch(() => {});
       if (state === 'running' || state === 'stopping') await supervisor.stop();
     },

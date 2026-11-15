@@ -211,7 +211,8 @@ test('E2E-SIG-008 scanner berjalan + baris kandidat sedang fokus → penyegaran 
   await row().focus();
 
   advanced = true;
-  await page.clock.fastForward(31_000);
+  // Penyegaran latar tiap 1 menit (DATA_REFRESH_MS).
+  await page.clock.fastForward(61_000);
   await expect.poll(() => laterCalls).toBeGreaterThan(0);
   await page.clock.fastForward(60_000);
   await expect(text()).toHaveText('Terbaru · 19:01');
@@ -219,7 +220,7 @@ test('E2E-SIG-008 scanner berjalan + baris kandidat sedang fokus → penyegaran 
   expect(errors).toEqual([]);
 });
 
-test('E2E-SIG-009 tombol "Jalankan scanner": begitu worker berjalan, tabel dimuat ulang cepat (tiap 5 dtk selama 2 menit), bukan menunggu 30 dtk', async ({ page }) => {
+test('E2E-SIG-009 tombol "Jalankan scanner": begitu worker berjalan, tabel dimuat ulang cepat (tiap 5 dtk selama 2 menit), bukan menunggu 1 menit', async ({ page }) => {
   const errors = watchErrors(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.clock.install({ time: UPDATE_NOW });
@@ -255,7 +256,7 @@ test('E2E-SIG-009 tombol "Jalankan scanner": begitu worker berjalan, tabel dimua
   await page.getByRole('button', { name: /Jalankan scanner/ }).first().click();
   await expect(page.getByTestId('scan-radar')).toHaveAttribute('data-active', 'true');
   const before = calls;
-  // Jauh di bawah REFRESH_MS (30 dtk): muatan ulang cepat sudah membawa evaluasi baru.
+  // Jauh di bawah REFRESH_MS (1 menit): muatan ulang cepat sudah membawa evaluasi baru.
   await page.clock.fastForward(6_000);
   await expect.poll(() => calls).toBeGreaterThan(before);
   await expect(cell.locator('.updated-at__text')).toHaveText('Terbaru · 19:00');

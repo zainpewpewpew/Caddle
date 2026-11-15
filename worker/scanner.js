@@ -30,10 +30,16 @@
 // Progres sync (status().sync, docs/09-proses-sync.md): langkah clock → discovery → bootstrap → live beserta hitungan
 // siklus. Selama clock/discovery/bootstrap, perubahan progres memicu "heartbeat progres" (paling cepat tiap
 // progressHeartbeatMs, trailing) di samping heartbeat 30 detik, agar UI dapat menampilkan proses sync secara langsung.
+// Scan berkala (options.scanIntervalMs; worker: 60 dtk, keputusan pengguna 2026-11-15): tiap menit semua seri diperiksa
+// kemutakhirannya, seri yang tertinggal ditambal REST (sweep), lalu ringkasan { seq, fresh/series, harga live, sinyal
+// terbuka } dicatat di status().scan, log aktivitas, log terminal, dan heartbeat langsung. Sinyal tetap hanya dari candle
+// TERTUTUP: scan tidak mengevaluasi candle berjalan (tanpa repaint).
+// Log aktivitas (dependensi `activity`, worker/activity.js) disalin ke heartbeat (status().activity) untuk strip status UI.
 
 import { HIGHER_TIMEFRAMES, TIMEFRAMES, TIMEFRAME_MS, expectedCloseTime } from '../backend/market/contracts.js';
 import { CLOSE_MARGIN_MS, MAX_KLINES_PER_REQUEST, lastClosedOpenTime, planBackfill, planGapFill } from '../backend/ingestion/backfill.js';
 import { REJECT_REASONS } from '../backend/ingestion/symbolDiscovery.js';
+import { NOOP_ACTIVITY } from './activity.js';
 
 export const SCANNER_DEFAULTS = Object.freeze({
   heartbeatMs: 30_000,
@@ -59,6 +65,12 @@ export const SCANNER_DEFAULTS = Object.freeze({
   emitBootstrap: false,
   // Timeframe yang dianalisis (array) menggantikan pengaturan `timeframes`; null = ikuti pengaturan.
   timeframes: null,
+  // Scan berkala: null = mati (default createScanner, tes lama); worker (assemble) memakai 60 dtk. Jadwal selaras menit
+  // jam server + scanOffsetMs (mis. hh:mm:05) — candle 15m/1h tutup di awal menit dan kline final WS tiba ±1 dtk kemudian.
+  scanIntervalMs: null,
+  scanOffsetMs: 5_000,
+  // Heartbeat cepat setelah aktivitas baru (sinyal, candle dianalisis, galat) agar strip status UI melihatnya cepat.
+  activityHeartbeatMs: 2_000,
 });
 
 const MESSAGE_MAX = 500;
@@ -248,6 +260,10 @@ function liquidityThresholds(raw) {
  *   onProvisionalCandle: kline BERJALAN (isClosed false) seri yang dianalisis, dipanggil dari handleProvisional setelah
  *   throttle 1 d yang ada, TANPA ditunggu (promise dilacak agar stop() menunggunya); error dicatat sumber 'provisional'.
  *   Worker meneruskannya ke pipeline Reversal Radar (evaluasi provisional); null = tidak ada.
+ *   activity: log aktivitas (worker/activity.js createActivityFeed); default tanpa efek. Scanner menambah entri
+ *   start/discovery/bootstrap/ws/scan/error/stopping dan menyalin daftar ke status().activity (entri candles, signal,
+ *   dan reversal ditambahkan perakitan worker, worker/assemble.js, pada feed yang sama).
+ *   countOpen: hitungan sinyal terbuka untuk ringkasan scan berkala → { long, short, radar } (null = tidak dilaporkan).
  * @returns {{ start(): Promise<void>, stop(): Promise<void>, status(): object, liquidityOf(symbol: string): object|null }}
  */
 export function createScanner({
@@ -269,8 +285,14 @@ export function createScanner({
   options = {},
   serverClock = null,
   heartbeatOwner = null,
+  activity = NOOP_ACTIVITY,
+  countOpen = null,
 }) {
   assertDeps({ rest, streamFactory, repos, getSettings, discoverSymbols, onClosedCandles, onMonitoringStopped, onProvisionalCandle, serverClock });
+  if (countOpen !== null && typeof countOpen !== 'function') throw new TypeError('countOpen harus fungsi atau null');
+  for (const m of ['start', 'stopping', 'discovery', 'bootstrap', 'ws', 'scan', 'error', 'list']) {
+    if (typeof activity?.[m] !== 'function') throw new TypeError(`activity.${m} wajib ada`);
+  }
   if (typeof clock !== 'function' || typeof localClock !== 'function' || typeof closureClock !== 'function') {
     throw new TypeError('clock, localClock, dan closureClock wajib berupa fungsi');
   }
@@ -286,6 +308,12 @@ export function createScanner({
   }
   if (cfg.timeframes !== null && (!Array.isArray(cfg.timeframes) || !cfg.timeframes.some((tf) => TIMEFRAMES.includes(tf)))) {
     throw new RangeError('options.timeframes harus null atau array timeframe valid');
+  }
+  if (cfg.scanIntervalMs !== null && (!Number.isInteger(cfg.scanIntervalMs) || cfg.scanIntervalMs < 1_000 || cfg.scanIntervalMs > 3_600_000)) {
+    throw new RangeError('options.scanIntervalMs harus null atau bilangan bulat 1000..3600000');
+  }
+  if (!Number.isInteger(cfg.scanOffsetMs) || cfg.scanOffsetMs < 0 || (cfg.scanIntervalMs !== null && cfg.scanOffsetMs >= cfg.scanIntervalMs)) {
+    throw new RangeError('options.scanOffsetMs harus bilangan bulat ≥ 0 dan < scanIntervalMs');
   }
   /** Acuan rencana REST: waktu server (jam acuan penutupan) dikurangi margin penutupan. */
   const settledNow = () => closureClock() - cfg.closeMarginMs;
@@ -337,6 +365,10 @@ export function createScanner({
    * progres maupun heartbeat 30 detik yang jatuh di tengah siklus (lihat runCycle: heartbeat penutup).
    */
   let progressBeats = 0;
+  /** Scan berkala: nomor urut, ringkasan terakhir (status().scan), jadwal berikutnya (localClock). */
+  let scanSeq = 0;
+  let lastScan = null;
+  let nextScanAt = null;
 
   const isStopping = () => phase === 'stopping' || phase === 'stopped';
   const checkStopping = () => {
@@ -388,6 +420,9 @@ export function createScanner({
     if (last !== undefined && now - last < cfg.errorThrottleMs) return;
     if (errorSeen.size >= 1000) errorSeen.clear();
     errorSeen.set(key, now);
+    // Galat yang tercatat (setelah throttle) juga tampil di log aktivitas UI.
+    activity.error({ source, symbol: st?.symbol, timeframe: st?.timeframe, message: detail });
+    requestActivityBeat();
     try {
       await repos.ingestion.recordError({ at: now, source, message });
     } catch (e) {
@@ -412,6 +447,16 @@ export function createScanner({
     schedule('progress-heartbeat', cfg.progressHeartbeatMs, async () => {
       if (PROGRESS_STEPS.has(sync.step)) await heartbeat();
     });
+  }
+
+  /**
+   * Heartbeat cepat (activityHeartbeatMs, satu jadwal untuk banyak aktivitas beruntun) setelah aktivitas baru selama
+   * scanner berjalan — strip status UI menampilkan sinyal/candle/galat dalam beberapa detik, bukan menunggu 30 detik.
+   * Selama siklus clock/discovery/bootstrap heartbeat progres sudah berjalan.
+   */
+  function requestActivityBeat() {
+    if (phase !== 'running' || timers.has('activity-heartbeat')) return;
+    schedule('activity-heartbeat', cfg.activityHeartbeatMs, () => heartbeat());
   }
 
   /** Langkah siklus berikutnya; tidak menimpa 'stopping'/'stopped' saat scanner sedang berhenti. */
@@ -500,6 +545,9 @@ export function createScanner({
     try {
       await onClosedCandles({ symbol: st.symbol, timeframe: st.timeframe, candles: emitted, reason });
       lastAnalysisAt = localClock();
+      // Entri log aktivitas "Candle 15m 19:15 tutup · n koin dianalisis" dicatat perakitan worker (assemble.js), yang
+      // tahu timeframe mana yang benar-benar dianalisis pipeline (5m grafik saja tidak); di sini cukup heartbeat cepat.
+      requestActivityBeat();
     } catch (err) {
       await report('analysis', err, st);
     }
@@ -664,10 +712,15 @@ export function createScanner({
       if (s.state === 'open') {
         if (meta.down) reconnectSweep();
         else if (!meta.opened) firstOpenSweep();
+        // Log aktivitas hanya saat status koneksi benar-benar berubah (bukan tiap event state yang sama).
+        if (meta.down || !meta.opened) activity.ws({ state: 'open', reconnects: reconnectsBase + (s.reconnects ?? 0) });
         meta.opened = true;
         meta.down = false;
+        requestActivityBeat();
       } else if (meta.opened) {
+        if (!meta.down) activity.ws({ state: 'down', reconnects: reconnectsBase + (s.reconnects ?? 0) });
         meta.down = true;
+        requestActivityBeat();
       }
     }
   }
@@ -758,6 +811,89 @@ export function createScanner({
     schedule('sweep', settings.backfillIntervalMs, async () => {
       await sweep('sweep', cfg.sweepGraceMs);
       scheduleSweep();
+    });
+  }
+
+  // ---------- scan berkala (tiap menit) ----------
+
+  /** Jumlah seri yang belum menerima candle tertutup terakhirnya (dengan grace sweep), menurut waktu acuan penutupan. */
+  function countStale() {
+    const now = closureClock() - Math.max(cfg.sweepGraceMs, cfg.closeMarginMs);
+    let stale = 0;
+    for (const st of streams.values()) {
+      if (st.lastOpenTime === null || st.lastOpenTime < lastClosedOpenTime(now, st.timeframe)) stale += 1;
+    }
+    return stale;
+  }
+
+  /**
+   * Satu scan: periksa semua seri, tambal yang tertinggal lewat REST (sweep — seri mutakhir tidak menyentuh Binance),
+   * hitung harga live (kline berjalan diterima dalam 2 interval terakhir), sinyal terbuka, lalu catat ringkasan di
+   * status().scan + log aktivitas + log + heartbeat langsung. Tidak mengevaluasi candle berjalan.
+   */
+  async function runScan() {
+    if (phase !== 'running') return;
+    const startedAt = localClock();
+    scanSeq += 1;
+    const seq = scanSeq;
+    const staleBefore = countStale();
+    if (staleBefore > 0) await sweep('scan', cfg.sweepGraceMs);
+    if (isStopping()) return;
+    const stale = countStale();
+    const priceSince = localClock() - 2 * cfg.scanIntervalMs;
+    let priced = 0;
+    let lastPriceAt = null;
+    for (const st of streams.values()) {
+      if (st.provisionalAt === null) continue;
+      if (st.provisionalAt >= priceSince) priced += 1;
+      if (lastPriceAt === null || st.provisionalAt > lastPriceAt) lastPriceAt = st.provisionalAt;
+    }
+    let open = null;
+    if (countOpen) {
+      try {
+        const counts = await countOpen();
+        const num = (v) => (Number.isInteger(v) && v >= 0 ? v : null);
+        open = counts ? { long: num(counts.long), short: num(counts.short), radar: num(counts.radar) } : null;
+      } catch (err) {
+        await report('scan', err);
+      }
+    }
+    const finishedAt = localClock();
+    lastScan = {
+      seq, at: startedAt, finishedAt, durationMs: finishedAt - startedAt,
+      symbols: monitored.length, series: streams.size, fresh: streams.size - stale, stale,
+      repaired: Math.max(0, staleBefore - stale), priced, lastPriceAt, open,
+    };
+    activity.scan(lastScan);
+    const openText = open ? ` · sinyal terbuka LONG ${open.long ?? '—'} · SHORT ${open.short ?? '—'} · radar ${open.radar ?? '—'}` : '';
+    logger.info({ seq, series: lastScan.series, fresh: lastScan.fresh, stale, repaired: lastScan.repaired, priced, durationMs: lastScan.durationMs },
+      `scan #${seq}: ${lastScan.fresh}/${lastScan.series} seri mutakhir · harga live ${priced} seri`
+        + `${lastScan.repaired > 0 ? ` · ${lastScan.repaired} seri ditambal` : ''}${openText}`);
+    // Heartbeat ini sudah membawa jadwal scan berikutnya (scheduleScan menyusul dengan nilai yang sama).
+    nextScanAt = localClock() + nextScanDelay();
+    await heartbeat();
+  }
+
+  /** Jeda ke batas menit jam server berikutnya + scanOffsetMs (≥ 1 dtk dari sekarang). */
+  function nextScanDelay() {
+    const interval = cfg.scanIntervalMs;
+    const now = clock();
+    let target = Math.floor(now / interval) * interval + cfg.scanOffsetMs;
+    while (target - now < 1_000) target += interval;
+    return target - now;
+  }
+
+  /** Menjadwalkan scan berikutnya (lihat nextScanDelay). */
+  function scheduleScan() {
+    if (cfg.scanIntervalMs === null || phase !== 'running') return;
+    const delay = nextScanDelay();
+    nextScanAt = localClock() + delay;
+    schedule('scan', delay, async () => {
+      try {
+        await runScan();
+      } finally {
+        scheduleScan();
+      }
     });
   }
 
@@ -1034,9 +1170,11 @@ export function createScanner({
         // Baru dilaporkan setelah hasil discovery diterapkan (syncSymbols berhasil). Bila gagal, symbolsDiscovered tetap
         // null → UI menampilkan "Discovery gagal", sesuai penanganan catch di bawah (error, backoff, fallback).
         syncProgress({ symbolsDiscovered: found.selected.length });
+        activity.discovery({ cycle: kind === 'start' ? 'initial' : 'rediscovery', symbols: found.selected.length });
       } catch (err) {
         if (err instanceof ScannerStopped) throw err;
         discoveryFailures += 1;
+        activity.discovery({ cycle: kind === 'start' ? 'initial' : 'rediscovery', failed: true });
         await report('discovery', err);
         nextDelay = Math.min(cfg.rediscoveryMs, cfg.discoveryRetryMs * 2 ** (discoveryFailures - 1));
         if (err instanceof AnomalousDiscovery && err.released.length > 0) {
@@ -1053,7 +1191,12 @@ export function createScanner({
       }
       checkStopping();
       if (target !== null) stats.candles += await applyTarget(target, stopped, at, statusBySymbol);
-      logger.info({ kind, symbols: monitored.length, streams: streams.size, candles: stats.candles }, 'siklus scanner selesai');
+      // Backfill histori selesai (siklus awal, atau rediscovery yang menambah seri baru).
+      if (target !== null && (kind === 'start' || sync.streamsTotal > 0)) {
+        activity.bootstrap({ series: sync.streamsTotal, candles: stats.candles, failed: sync.streamsFailed });
+      }
+      logger.info({ kind, symbols: monitored.length, streams: streams.size, candles: stats.candles },
+        `siklus scanner selesai: ${monitored.length} koin · ${streams.size} seri · ${stats.candles} candle disinkron`);
     } catch (err) {
       if (!(err instanceof ScannerStopped)) {
         await report(settings ? 'scanner' : 'settings', err);
@@ -1113,6 +1256,12 @@ export function createScanner({
       // Proses sync (salinan): lastCandleAt = closeTime candle tertutup tersimpan terbaru (waktu server, sama dengan
       // acuan candleLagMs); lastAnalysisAt = jam host saat callback analisis terakhir selesai; clockSynced: lihat atas.
       sync: { ...sync, lastCandleAt: latestCloseTime, lastAnalysisAt, clockSynced },
+      // Scan berkala: ringkasan terakhir (null sebelum scan pertama / scan mati) + jadwal berikutnya (jam host).
+      scan: lastScan ? { ...lastScan, open: lastScan.open ? { ...lastScan.open } : null, intervalMs: cfg.scanIntervalMs, nextAt: nextScanAt } : null,
+      scanIntervalMs: cfg.scanIntervalMs,
+      nextScanAt: phase === 'running' ? nextScanAt : null,
+      // Log aktivitas (terlama → terbaru) untuk strip status UI; [] bila scanner tidak memakai log aktivitas.
+      activity: activity.list(),
     };
   }
 
@@ -1153,6 +1302,7 @@ export function createScanner({
       if (startPromise) return startPromise;
       if (phase !== 'idle') return Promise.resolve();
       phase = 'starting';
+      activity.start();
       startPromise = track((async () => {
         await heartbeat();
         scheduleHeartbeat();
@@ -1160,6 +1310,7 @@ export function createScanner({
         if (isStopping()) return;
         phase = 'running';
         ensureSweep();
+        scheduleScan();
         await heartbeat();
       })().catch((err) => report('scanner', err)));
       return startPromise;
@@ -1169,6 +1320,8 @@ export function createScanner({
     stop() {
       if (stopPromise) return stopPromise;
       phase = 'stopping';
+      nextScanAt = null;
+      activity.stopping();
       syncProgress({ step: 'stopping' });
       stopPromise = (async () => {
         for (const name of [...timers.keys()]) cancel(name);

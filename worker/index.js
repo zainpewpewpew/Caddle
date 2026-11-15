@@ -1,9 +1,9 @@
 // Entry point proses worker scanner (Milestone 2–3): `npm run worker`, atau dijalankan server sebagai child
 // process lewat tombol "Jalankan scanner" (backend/system/workerSupervisor.js).
 // Membuka SQLite + migrasi, merakit dependensi nyata lewat worker/assemble.js (REST/WS Binance, jam
-// server, repositori, pipeline analisis LONG SA/PVA + SHORT SD/PVD, pipeline Reversal Radar 5m/15m/1h),
-// menjalankan scanner, dan menangani graceful shutdown (SIGTERM/SIGINT/SIGHUP — SIGHUP dikirim saat jendela
-// terminal ditutup).
+// server, repositori, pipeline analisis LONG SA/PVA 1h + SHORT SD/PVD 15m, pipeline Reversal Radar 1h, scan berkala
+// tiap menit, log aktivitas), menjalankan scanner, dan menangani graceful shutdown (SIGTERM/SIGINT/SIGHUP — SIGHUP
+// dikirim saat jendela terminal ditutup).
 // Bila SMART_MONEY_PROVIDERS terisi dan adapternya aktif, worker juga menjalankan loop sinkronisasi Insider / Smart
 // Money Radar (worker/smartMoney.js) yang berhenti bersama shutdown. Tanpa provider: tidak ada loop, tidak ada data.
 // Riset saja: worker tidak pernah mengirim order (LONG maupun SHORT).
@@ -129,12 +129,12 @@ async function main() {
     heartbeatOwner: { pid: process.pid, host: hostname() },
     onAlert: (alert) => logger.info({
       symbol: alert.symbol, timeframe: alert.timeframe, direction: alert.direction, state: alert.state, reason: alert.event?.reason,
-    }, 'sinyal baru / naik tahap'),
+    }, `sinyal baru / naik tahap: ${alert.direction} ${alert.symbol} ${alert.timeframe} → ${alert.state}`),
     // Kandidat reversal dibuka / naik tahap / batal (docs/19 §4): hanya informasi riset, bukan perintah transaksi.
     onReversalAlert: (alert) => logger.info({
       symbol: alert.symbol, timeframe: alert.timeframe, stage: alert.stage, status: alert.status,
       events: alert.events.map((e) => e.type), score: alert.snapshot?.score,
-    }, 'kandidat reversal: dibuka / naik tahap / batal'),
+    }, `kandidat reversal: ${alert.symbol} ${alert.timeframe} → ${alert.stage ?? alert.status}`),
     onAnalysed: ({ symbol, timeframe, reason, candles, result, reversal }) => {
       logger.debug({ symbol, timeframe, reason, count: candles.length, ...result, reversal }, 'candle tertutup dianalisis');
     },
@@ -156,7 +156,9 @@ async function main() {
     });
   }
 
-  const statusTimer = setInterval(() => logger.info(scanner.status(), 'status scanner'), STATUS_LOG_INTERVAL_MS);
+  // Status lengkap (JSON besar) hanya di LOG_LEVEL=debug: ringkasan per menit untuk pengguna adalah log "scan #n" dari
+  // scan berkala scanner (worker/scanner.js).
+  const statusTimer = setInterval(() => logger.debug(scanner.status(), 'status scanner'), STATUS_LOG_INTERVAL_MS);
 
   let shuttingDown = false;
   const shutdown = async (reason, exitCode = 0) => {
@@ -211,7 +213,10 @@ async function main() {
 
   logger.info({ databasePath: config.databasePath }, 'worker scanner mulai');
   await scanner.start();
-  logger.info(scanner.status(), 'bootstrap scanner selesai');
+  const ready = scanner.status();
+  logger.debug(ready, 'bootstrap scanner selesai');
+  logger.info({ symbols: ready.symbols, streams: ready.streams, ws: ready.ws, errors: ready.errors },
+    `scanner live: ${ready.symbols} koin · ${ready.streams} seri · scan otomatis tiap menit`);
 }
 
 main().catch((err) => {

@@ -3,7 +3,8 @@ import { WORKER_SCRIPT_PATH } from '../../backend/system/workerSupervisor.js';
 import { ANALYST, login } from '../helpers/testApp.js';
 import { createWorkerTestApp, postWorker, workerAudit } from '../helpers/workerTestApp.js';
 
-const STATUS_KEYS = ['enabled', 'exitCode', 'signal', 'startedAt', 'state', 'stoppedAt'];
+// via (enum cara start), autoRestart (boolean), restartAt (waktu jadwal start ulang otomatis): bukan pid/path/env/log.
+const STATUS_KEYS = ['autoRestart', 'enabled', 'exitCode', 'restartAt', 'signal', 'startedAt', 'state', 'stoppedAt', 'via'];
 
 describe('kontrol scanner dari website — keamanan', () => {
   let ctx;
@@ -57,6 +58,33 @@ describe('kontrol scanner dari website — keamanan', () => {
     const status = (await ctx.app.inject({ url: '/api/system/status', headers: { cookie: auth.cookie } })).json();
     expect(Object.keys(status.workerControl).sort()).toEqual(STATUS_KEYS);
     expect(JSON.stringify(started.json())).not.toMatch(/worker\/index|DATABASE_PATH|pid/);
+    // Field tambahan hanya bertipe sempit: enum cara start, boolean, dan stempel waktu/null.
+    const { via, autoRestart, restartAt } = started.json();
+    expect(['manual', 'autostart', 'auto-restart']).toContain(via);
+    expect(typeof autoRestart).toBe('boolean');
+    expect(restartAt === null || Number.isSafeInteger(restartAt)).toBe(true);
+  });
+
+  it('SEC-SUP-006 scan & log aktivitas worker di /api/system/sync disaring server: kind tak dikenal, HTML, dan karakter kontrol tidak diteruskan', async () => {
+    ctx = await createWorkerTestApp();
+    const auth = await login(ctx.app);
+    await ctx.app.services.repos.ingestion.heartbeat({
+      at: ctx.clock(),
+      state: {
+        state: 'running', ws: 'open', owner: { pid: 4242, host: 'h' },
+        scan: { seq: 1, at: ctx.clock(), series: 6, fresh: 6, path: '/etc/passwd' },
+        activity: [
+          { id: 1, at: ctx.clock(), kind: 'error', source: 'backfill', message: '<img src=x onerror=alert(1)>\u001b[2J', env: 'SECRET' },
+          { id: 2, at: ctx.clock(), kind: '<script>', text: 'x' },
+        ],
+      },
+    });
+    const body = (await ctx.app.inject({ url: '/api/system/sync', headers: { cookie: auth.cookie } })).json();
+    expect(body.scanner.scan).not.toHaveProperty('path');
+    expect(body.scanner.activity).toHaveLength(1);
+    expect(Object.keys(body.scanner.activity[0]).sort()).toEqual(['at', 'id', 'kind', 'message', 'source', 'symbol', 'timeframe']);
+    expect(body.scanner.activity[0].message.includes('\u001b')).toBe(false);
+    expect(JSON.stringify(body)).not.toMatch(/SECRET|4242|\/etc\/passwd/);
   });
 
   it('SEC-SUP-005 rute start/stop hanya POST; GET start → 404 lewat catch-all (bukan menjalankan worker)', async () => {

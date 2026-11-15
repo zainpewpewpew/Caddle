@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 
 import { authRoutes } from '../api/authRoutes.js';
 import { healthRoutes } from '../api/healthRoutes.js';
@@ -68,17 +68,26 @@ const CHART_VENDOR_DIR = resolveChartVendorDir();
  *   menjalankan putaran di proses server lewat createSyncRunner — lease database mencegah putaran tumpang-tindih).
  *   smartMoneySync: KHUSUS tes & E2E (jeda antar-sync, deps/tuning sinkronisasi, runSync tiruan). Produksi memakai
  *   jeda DEFAULT_MANUAL_COOLDOWN_MS dan harga native dari klines Binance publik (createSyncDeps, dibuat malas).
+ *   logStream: tujuan baris log server (default stdout). server.js memberi formatter teks ringkas untuk terminal
+ *   interaktif (LOG_FORMAT, backend/system/consoleLog.js); tanpa opsi ini log tetap JSON per baris.
+ *   requestLogging: log "incoming request"/"request completed" Fastify (default true). server.js mematikannya untuk
+ *   terminal interaktif: polling UI tiap beberapa detik membanjiri layar tanpa informasi bagi pengguna.
+ *   workerOutput: tujuan baris log worker scanner (child) yang diteruskan supervisor (default stdout server).
+ *   workerAutoRestart: start ulang otomatis worker yang crash (default true; lihat createWorkerSupervisor).
  */
 export async function buildApp({
   config, db, clock = Date.now, hasherOptions, logger, workerSupervisor, workerScriptPath, workerRestartCooldownMs,
   smartMoneyRegistry, smartMoneySync, directionTimeframes = DIRECTION_TIMEFRAMES,
-  reversalTimeframes = REVERSAL_ACTIVE_TIMEFRAMES,
+  reversalTimeframes = REVERSAL_ACTIVE_TIMEFRAMES, logStream, requestLogging = true, workerOutput, workerAutoRestart = true,
 }) {
   const app = Fastify({
     logger: logger ?? {
       level: config.logLevel,
       redact: ['req.headers.cookie', 'req.headers["x-csrf-token"]', 'res.headers["set-cookie"]'],
+      ...(logStream ? { stream: logStream } : {}),
     },
+    // Log per-request dimatikan lewat LogController (opsi top-level disableRequestLogging deprecated di Fastify 5).
+    ...(requestLogging ? {} : { logController: new LogController({ disableRequestLogging: true }) }),
     trustProxy: config.trustProxy,
     bodyLimit: 64 * 1024,
     connectionTimeout: 30_000,
@@ -109,6 +118,8 @@ export async function buildApp({
 
   // Worker scanner sebagai child process terpisah (tombol di System Health). DATABASE_PATH diteruskan
   // eksplisit agar child selalu menulis ke database yang sama dengan server.
+  // Scanner yang crash dijalankan ulang otomatis (jeda berlipat, maks 5 menit) dan tiap percobaan tercatat di audit
+  // tanpa user (`via: 'auto-restart'`), seperti WORKER_AUTOSTART.
   const supervisor = workerSupervisor ?? createWorkerSupervisor({
     scriptPath: workerScriptPath ?? WORKER_SCRIPT_PATH,
     env: { ...process.env, DATABASE_PATH: config.databasePath },
@@ -116,6 +127,12 @@ export async function buildApp({
     clock,
     readExternalHeartbeat: async () => (await repos.ingestion.getStatus()).heartbeat,
     ...(workerRestartCooldownMs !== undefined ? { restartCooldownMs: workerRestartCooldownMs } : {}),
+    ...(workerOutput ? { output: workerOutput } : {}),
+    autoRestart: workerAutoRestart,
+    onAutoRestart: ({ outcome, attempt, state, reason }) => repos.audit.record({
+      occurredAt: clock(), action: 'worker.start', outcome,
+      detail: outcome === 'success' ? { via: 'auto-restart', attempt, state } : { via: 'auto-restart', attempt, reason },
+    }),
   });
 
   const smRegistry = smartMoneyRegistry ?? createLiveProviderRegistry(config, { env: process.env, clock });
@@ -253,7 +270,7 @@ export async function buildApp({
     }
     const record = (outcome, detail) => repos.audit.record({ occurredAt: clock(), action: 'worker.start', outcome, detail });
     try {
-      const status = await supervisor.start();
+      const status = await supervisor.start({ via: 'autostart' });
       await record('success', { via: 'autostart', state: status.state });
     } catch (err) {
       if (!(err instanceof WorkerSupervisorError)) throw err;

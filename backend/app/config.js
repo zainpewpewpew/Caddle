@@ -21,11 +21,18 @@ const DEFAULTS = Object.freeze({
   MAX_USERS: '2',
   TRUST_PROXY: 'false',
   LOG_LEVEL: 'info',
+  LOG_FORMAT: 'auto',
   BINANCE_DNS: 'doh',
 });
 
 const ENVIRONMENTS = new Set(['development', 'test', 'production']);
 const LOG_LEVELS = new Set(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']);
+/**
+ * LOG_FORMAT: tampilan log di terminal `npm start`. `auto` (default): teks ringkas berbahasa Indonesia bila stdout
+ * adalah terminal interaktif (TTY), JSON per baris bila tidak (mis. dialihkan ke file / layanan). `pretty` / `json`:
+ * paksa salah satunya.
+ */
+export const LOG_FORMATS = Object.freeze(['auto', 'pretty', 'json']);
 
 export class ConfigError extends Error {
   constructor(message) {
@@ -116,7 +123,11 @@ function parseDefaultUser(raw, nodeEnv) {
 /**
  * Flag boolean opsional: kosong → `fallback`; selain 'true'/'false' → ConfigError.
  * WORKER_CONTROL (tombol jalankan/hentikan scanner di website): default aktif hanya di development.
- * WORKER_AUTOSTART (server menjalankan worker saat boot, hanya bila WORKER_CONTROL aktif): default false.
+ * WORKER_AUTOSTART (server menjalankan worker saat boot, hanya bila WORKER_CONTROL aktif): default aktif di development
+ * bila WORKER_CONTROL aktif — `npm start` langsung memindai tanpa menekan "Jalankan scanner" (keputusan pengguna
+ * 2026-11-15); test & produksi default false.
+ * OPEN_BROWSER (server membuka browser default ke APP_ORIGIN setelah siap): default aktif hanya di development, dan
+ * hanya berlaku untuk `npm start` di terminal interaktif (bukan `npm run dev` yang memuat ulang, bukan output dialihkan).
  */
 function parseFlag(name, raw, fallback) {
   return raw === undefined ? fallback : parseBoolean(name, raw);
@@ -156,6 +167,9 @@ export function loadConfig(env = process.env) {
 
   const logLevel = read('LOG_LEVEL');
   if (!LOG_LEVELS.has(logLevel)) throw new ConfigError('LOG_LEVEL tidak dikenal');
+  const logFormat = read('LOG_FORMAT');
+  if (!LOG_FORMATS.includes(logFormat)) throw new ConfigError(`LOG_FORMAT harus salah satu dari: ${LOG_FORMATS.join(', ')}`);
+  const workerControl = parseFlag('WORKER_CONTROL', read('WORKER_CONTROL'), nodeEnv === 'development');
 
   return Object.freeze({
     nodeEnv,
@@ -167,6 +181,7 @@ export function loadConfig(env = process.env) {
     cookieSecure,
     trustProxy: parseTrustProxy(read('TRUST_PROXY')),
     logLevel,
+    logFormat,
     session: Object.freeze({
       idleMs: parseInteger('SESSION_IDLE_MINUTES', read('SESSION_IDLE_MINUTES'), { min: 1, max: 1440 }) * 60_000,
       absoluteMs: parseInteger('SESSION_ABSOLUTE_HOURS', read('SESSION_ABSOLUTE_HOURS'), { min: 1, max: 168 }) * 3_600_000,
@@ -182,8 +197,9 @@ export function loadConfig(env = process.env) {
     api: Object.freeze({ rateLimitMax: parseInteger('API_RATE_LIMIT_MAX', read('API_RATE_LIMIT_MAX'), { min: 1, max: 100_000 }) }),
     maxUsers: parseInteger('MAX_USERS', read('MAX_USERS'), { min: 1, max: 10 }),
     defaultUser: parseDefaultUser(read('DEFAULT_USER'), nodeEnv),
-    workerControl: parseFlag('WORKER_CONTROL', read('WORKER_CONTROL'), nodeEnv === 'development'),
-    workerAutostart: parseFlag('WORKER_AUTOSTART', read('WORKER_AUTOSTART'), false),
+    workerControl,
+    workerAutostart: parseFlag('WORKER_AUTOSTART', read('WORKER_AUTOSTART'), nodeEnv === 'development' && workerControl),
+    openBrowser: parseFlag('OPEN_BROWSER', read('OPEN_BROWSER'), nodeEnv === 'development'),
     binanceDns: parseBinanceDns(read('BINANCE_DNS')),
     smartMoney: parseSmartMoneyConfig({ ...env, NODE_ENV: nodeEnv }),
   });

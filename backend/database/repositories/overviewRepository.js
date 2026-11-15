@@ -21,9 +21,24 @@ export function createOverviewRepository(db) {
     recent: db.prepare(`SELECT s.id, sym.symbol, s.timeframe, s.direction, s.classification, s.state, s.first_detected_at
                         FROM signals s JOIN symbols sym ON sym.id = s.symbol_id
                         ORDER BY s.first_detected_at DESC LIMIT 10`),
+    // Hitungan ringan untuk scan berkala worker (log "sinyal terbuka"): per arah × timeframe, dan kandidat Reversal Radar
+    // terbuka per timeframe. Pemanggil menyaring timeframe yang tampil di UI.
+    openSignalsBySeries: db.prepare(`SELECT direction, timeframe, COUNT(*) AS n FROM signals
+      WHERE state IN ('QUIET', 'EARLY_BULLISH', 'MOMENTUM_BUILDING', 'BREAKOUT', 'EARLY_BEARISH', 'BREAKDOWN')
+      GROUP BY direction, timeframe`),
+    openReversalByTimeframe: db.prepare(`SELECT timeframe, COUNT(*) AS n FROM reversal_candidates
+      WHERE closed_at IS NULL GROUP BY timeframe`),
   };
 
   return {
+    /**
+     * Sinyal terbuka per arah × timeframe dan kandidat Reversal Radar terbuka per timeframe.
+     * @returns {Promise<{ signals: Array<{ direction: string, timeframe: string, n: number }>, reversal: Array<{ timeframe: string, n: number }> }>}
+     */
+    async openCounts() {
+      return { signals: stmt.openSignalsBySeries.all(), reversal: stmt.openReversalByTimeframe.all() };
+    },
+
     async summary() {
       const counts = { LONG: { active: 0, early: 0, aligned: 0 }, SHORT: { active: 0, early: 0, aligned: 0 } };
       for (const row of stmt.openByDirection.all()) {

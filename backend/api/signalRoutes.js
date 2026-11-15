@@ -49,11 +49,17 @@ const toInt = (value, fallback) => (value === undefined ? fallback : Number.pars
  *   directionTimeframes: default DIRECTION_TIMEFRAMES; null = semua timeframe (tanpa pembatasan, dipakai tes mekanika).
  */
 export async function signalRoutes(app, { signals, candles, directionTimeframes = DIRECTION_TIMEFRAMES }) {
+  // lastPrice = close candle TERTUTUP terakhir; livePrice/livePriceAt = close candle berjalan dari WebSocket (diperbarui
+  // terus selama scanner live) — UI memakai livePrice bila masih segar, selain itu lastPrice.
   async function withLastPrice(rows) {
     const out = [];
     for (const row of rows) {
       const [last] = await candles.getLatest({ symbol: row.symbol, timeframe: row.timeframe, limit: 1 });
-      out.push({ ...row, lastPrice: last?.close ?? null, lastCandleAt: last?.closeTime ?? null });
+      const live = typeof candles.getLivePrice === 'function' ? await candles.getLivePrice({ symbol: row.symbol, timeframe: row.timeframe }) : null;
+      out.push({
+        ...row, lastPrice: last?.close ?? null, lastCandleAt: last?.closeTime ?? null,
+        livePrice: live?.price ?? null, livePriceAt: live?.at ?? null,
+      });
     }
     return out;
   }

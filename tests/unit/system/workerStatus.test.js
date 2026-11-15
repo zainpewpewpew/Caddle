@@ -53,3 +53,46 @@ describe('ringkasan status worker', () => {
     expect(isHeartbeatLive({ at: 'x', state: {} }, NOW)).toBe(false);
   });
 });
+
+describe('ringkasan scan berkala & log aktivitas (strip status)', () => {
+  const SCAN = {
+    seq: 57, at: NOW - 2_000, finishedAt: NOW - 1_990, durationMs: 10, symbols: 40, series: 120, fresh: 119, stale: 1, repaired: 0,
+    priced: 118, lastPriceAt: NOW - 1_000, open: { long: 4, short: 2, radar: 38 }, intervalMs: 60_000, nextAt: NOW + 58_000,
+  };
+
+  it('UNIT-WST-010 scan & jadwal diteruskan apa adanya selama heartbeat segar; jadwal null saat basi; field asing dibuang', () => {
+    const r = summarizeWorker(beat({ state: 'running', ws: 'open', scan: { ...SCAN, owner: { pid: 1 } }, scanIntervalMs: 60_000, nextScanAt: NOW + 58_000 }), NOW);
+    expect(r.scanner.scan).toEqual(SCAN);
+    expect(r.scanner.scanIntervalMs).toBe(60_000);
+    expect(r.scanner.nextScanAt).toBe(NOW + 58_000);
+    const stale = summarizeWorker(beat({ state: 'running', scan: SCAN, nextScanAt: NOW + 1 }, HEARTBEAT_STALE_MS + 1), NOW);
+    expect(stale.scanner.scan.seq).toBe(57);
+    expect(stale.scanner.nextScanAt).toBeNull();
+    expect(summarizeWorker(beat({ state: 'running', scan: { seq: -1, at: NOW } }), NOW).scanner.scan).toBeNull();
+    expect(summarizeWorker(beat({ state: 'running', scan: [] }), NOW).scanner.scan).toBeNull();
+    const odd = summarizeWorker(beat({ state: 'running', scan: { ...SCAN, fresh: '119', open: { long: -1, short: 2.5, radar: 3 } } }), NOW).scanner.scan;
+    expect(odd.fresh).toBeNull();
+    expect(odd.open).toEqual({ long: null, short: null, radar: 3 });
+  });
+
+  it('UNIT-WST-011 aktivitas: hanya kind dikenal dengan id/at sah; field per kind disaring; pesan galat tanpa karakter kontrol, maks 160; maks 30 entri terbaru', () => {
+    const activity = [
+      { id: 1, at: NOW - 9, kind: 'start' },
+      { id: 2, at: NOW - 8, kind: 'evil', html: '<img>' },
+      { id: 'x', at: NOW - 7, kind: 'start' },
+      { id: 4, at: NOW - 6, kind: 'signal', symbol: 'ETHUSDT', timeframe: '15m', direction: 'SHORT', state: 'EARLY_BEARISH', tier: 'B', extra: 1 },
+      { id: 5, at: NOW - 5, kind: 'error', source: 'backfill', symbol: 'BTCUSDT', timeframe: '1h', message: `a\u001b[31mb‮c${'z'.repeat(300)}` },
+      { id: 6, at: NOW - 4, kind: 'candles', timeframe: '15m', closeTime: NOW - 60_001, count: 40 },
+      { id: 7, at: NOW - 3, kind: 'reversal', symbol: 'bad sym', timeframe: '1h', stage: 'CONFIRMED_BREAKOUT', status: 'CONFIRMED' },
+    ];
+    const r = summarizeWorker(beat({ state: 'running', activity }), NOW).scanner.activity;
+    expect(r.map((e) => e.id)).toEqual([1, 4, 5, 6, 7]);
+    expect(r[1]).toEqual({ id: 4, at: NOW - 6, kind: 'signal', symbol: 'ETHUSDT', timeframe: '15m', direction: 'SHORT', state: 'EARLY_BEARISH', tier: 'B' });
+    expect(r[2].message.startsWith('a [31mb c')).toBe(true);
+    expect(r[2].message).toHaveLength(160);
+    expect(r[4].symbol).toBeNull();
+    const many = Array.from({ length: 45 }, (_, i) => ({ id: i + 1, at: NOW, kind: 'start' }));
+    expect(summarizeWorker(beat({ state: 'running', activity: many }), NOW).scanner.activity.map((e) => e.id)[0]).toBe(16);
+    expect(summarizeWorker(beat({ state: 'running', activity: 'x' }), NOW).scanner.activity).toEqual([]);
+  });
+});

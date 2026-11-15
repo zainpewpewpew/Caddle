@@ -125,6 +125,8 @@ export function createCandleRepository(db, { clock = Date.now } = {}) {
         p.trade_count, p.taker_buy_volume, p.taker_buy_quote_volume, p.source
       FROM provisional_candles p JOIN symbols s ON s.id = p.symbol_id
       WHERE s.symbol = @symbol AND p.timeframe = @timeframe`),
+    livePrice: db.prepare(`SELECT p.close, p.updated_at, p.open_time FROM provisional_candles p JOIN symbols s ON s.id = p.symbol_id
+      WHERE s.symbol = @symbol AND p.timeframe = @timeframe`),
   };
 
   const resolveNow = (options) => {
@@ -258,6 +260,19 @@ export function createCandleRepository(db, { clock = Date.now } = {}) {
       assertSeries({ symbol, timeframe });
       const row = stmt.provisional.get({ symbol, timeframe });
       return row ? toCandle(row, symbol, timeframe, false) : null;
+    },
+
+    /**
+     * Harga live seri = close candle BERJALAN terakhir dari WebSocket (provisional_candles), beserta kapan diterima
+     * (`at`, jam penyimpanan) dan openTime candle itu; null bila belum ada / sudah tertutup. Untuk kolom "Harga" tabel
+     * scanner — sinyal tetap dihitung dari candle tertutup.
+     * @returns {Promise<{ price: number, at: number, openTime: number }|null>}
+     */
+    async getLivePrice({ symbol, timeframe } = {}) {
+      assertSeries({ symbol, timeframe });
+      const row = stmt.livePrice.get({ symbol, timeframe });
+      if (!row || !Number.isFinite(row.close) || !Number.isFinite(row.updated_at)) return null;
+      return { price: row.close, at: row.updated_at, openTime: row.open_time };
     },
   };
 }

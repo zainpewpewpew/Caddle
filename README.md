@@ -52,7 +52,13 @@ npm start                            # http://127.0.0.1:8080 → halaman awal; t
 
 > **Setelah `git pull`:** jalankan `npm ci` lagi bila `package.json`/`package-lock.json` berubah (mis. library grafik `lightweight-charts`). Server tetap start tanpa paket itu, tetapi grafik koin tidak tersedia dan log startup memperingatkan.
 
-Cukup **satu terminal**: login sebagai admin, buka **System Health**, lalu tekan **Jalankan scanner**. Server menjalankan worker scanner (discovery simbol, candle REST/WebSocket, analisis pola) sebagai proses terpisah, dan log worker tampil di terminal `npm start` yang sama. Lihat [Scanner (worker)](#scanner-worker).
+Cukup **satu terminal** dan **satu perintah**: `npm start` langsung menjalankan scanner (default `WORKER_AUTOSTART` di development) dan membuka browser ke website (`OPEN_BROWSER`). Server menjalankan worker scanner (discovery simbol, candle REST/WebSocket, analisis pola) sebagai proses terpisah; bila worker crash, server menjalankannya ulang otomatis. Lihat [Scanner (worker)](#scanner-worker).
+
+**Melihat apa yang sedang dikerjakan:**
+
+- **Terminal `npm start`** menampilkan banner alamat website + status scanner, lalu log ringkas berjam WIB (bukan JSON). Tiap menit muncul satu baris ringkasan scan, mis. `19:04:05  scanner  scan #57: 120/120 seri mutakhir · harga live 120 seri · sinyal terbuka LONG 4 · SHORT 2 · radar 38`, plus baris untuk candle yang dianalisis, sinyal baru, dan galat. Log per-request tidak dicetak di terminal interaktif. Output yang dialihkan ke file/layanan tetap JSON (`LOG_FORMAT`).
+- **Website:** strip status di bawah topbar (semua halaman) menampilkan *Live* / *Sinkron data* / *Berhenti* / *Berhenti tak terduga — dijalankan ulang otomatis dalam …*, scan terakhir dan hitung mundur ke scan berikutnya, jumlah koin & seri yang mutakhir, kapan harga terakhir masuk, kapan candle 15m/1h berikutnya tutup, dan kapan tabel halaman dimuat ulang. Tombol **Aktivitas** membuka ±30 kejadian terakhir worker (scan, candle dianalisis, sinyal baru, kandidat Reversal Radar, galat).
+- **Data tiap 1 menit:** worker memindai semua seri tiap menit (detik :05) dan menambal candle yang tertinggal; tabel LONG/SHORT Scanner dimuat ulang tiap menit dan kolom **Harga** memakai harga live candle berjalan (titik kecil = live). Sinyal tetap dihitung dari candle **tertutup** (SHORT 15m, LONG 1h), jadi tidak berubah-ubah sebelum candle tutup.
 
 Pendaftaran publik sengaja tidak ada. Maksimal dua pengguna (`MAX_USERS=2`) dibuat lewat CLI di server; batas ini berlaku juga bila beberapa `user:create` berjalan bersamaan. Kata sandi minimal 12 karakter (kecuali kata sandi akun default prototipe di bawah, yang dipilih pemilik).
 
@@ -79,7 +85,7 @@ Worker scanner selalu berjalan sebagai **proses terpisah** dari server API, deng
    - **Proses sync terlihat langsung:** setelah start, kontrol ringkas menampilkan langkah yang sedang berjalan (sinkron jam → discovery simbol → backfill candle x/y seri → stream live → analisis pola) dan System Health memuat panel **Proses sync scanner** lengkap, diperbarui tiap 2 detik selama sync dan tiap 10 detik saat live ([docs/09](docs/09-proses-sync.md)).
    - Menghentikan scanner mengirim SIGTERM (worker menyelesaikan tugas aktif dan menulis heartbeat akhir); bila belum berhenti dalam 15 detik, worker dihentikan paksa (SIGKILL).
    - Menutup server (Ctrl+C / SIGTERM, atau menutup jendela terminal `npm start` yang mengirim SIGHUP) menghentikan worker lebih dulu. Bila server mati mendadak, worker berhenti sendiri saat koneksi IPC ke server terputus.
-   - Worker yang crash **tidak** dijalankan ulang otomatis: status menjadi *Gagal (kode keluar N)*. Sesaat setelah start, System Health dan kontrol scanner ringkas terus memantau selama ±10 detik, jadi worker yang langsung crash tampil sebagai *Gagal* dalam beberapa detik. Periksa log di terminal `npm start`, lalu tekan **Jalankan scanner** lagi.
+   - Worker yang crash **dijalankan ulang otomatis**: status *Gagal (kode keluar N)* dengan jadwal start ulang (strip status menampilkan hitung mundurnya). Jeda 10 detik untuk crash pertama, berlipat ganda untuk crash beruntun (20 → 40 … maks 5 menit); worker yang sempat berjalan ≥ 10 menit dianggap stabil sehingga jeda kembali 10 detik. Setiap percobaan tercatat di audit (`worker.start`, `via: auto-restart`). **Hentikan scanner** saat start ulang terjadwal membatalkannya. Berhenti normal (tombol Hentikan, Ctrl+C) tidak pernah memicu start ulang.
    - **Jeda start ulang 10 detik:** setelah worker berhenti atau crash, start berikutnya baru diterima 10 detik kemudian (sebelumnya: pesan "Scanner baru saja berhenti. Tunggu beberapa detik lalu coba lagi.", HTTP 429). Setiap proses worker baru memulai pembatas bobot dan status blokir Binance (418/429) dari nol, jadi restart beruntun tidak boleh membanjiri Binance. Tombol start/stop juga dibatasi 10 permintaan per menit.
    - **Audit:** setiap permintaan start/stop dari pengguna yang sudah login tercatat di log audit (`worker.start` / `worker.stop`): berhasil, ditolak supervisor (mis. sudah berjalan, jeda), ditolak karena bukan admin atau token CSRF tidak valid (403), maupun error internal (500). Permintaan yang ditolak sebelum sesi dikenali (tanpa login 401, Origin lintas situs, atau rate limit 429) tidak tercatat karena tidak ada pengguna yang dapat dicatat.
 2. **Terminal terpisah:** `npm run worker` tetap tersedia (mis. bila kontrol website dinonaktifkan). Jangan jalankan bersamaan dengan worker dari website: dua worker pada satu database menggandakan ingesti. Selama worker dari terminal masih mengirim heartbeat (< 90 detik), tombol menolak menjalankan worker kedua dan status tampil *Berjalan di luar website*. Hentikan worker itu dari terminalnya (Ctrl+C). Heartbeat memuat pid worker penulisnya: bila proses itu sudah tidak ada di komputer yang sama (mis. dibunuh paksa sebelum sempat menulis heartbeat akhir), heartbeatnya tidak lagi memblokir tombol maupun `WORKER_AUTOSTART`.
@@ -87,7 +93,9 @@ Worker scanner selalu berjalan sebagai **proses terpisah** dari server API, deng
 | Variabel | Default | Fungsi |
 |---|---|---|
 | `WORKER_CONTROL` | aktif bila `NODE_ENV=development`; nonaktif di `test` & `production` | `true`/`false`: menampilkan & mengizinkan tombol scanner di website. Saat nonaktif, API start/stop menjawab 503 dan System Health menyarankan `npm run worker`. |
-| `WORKER_AUTOSTART` | `false` | `true`: server langsung menjalankan worker saat start (butuh `WORKER_CONTROL` aktif; tercatat di audit). Dibatalkan bila worker di luar website sedang berjalan. |
+| `WORKER_AUTOSTART` | aktif bila `NODE_ENV=development` dan `WORKER_CONTROL` aktif; `false` di `test` & `production` | `true`: server langsung menjalankan worker saat start (butuh `WORKER_CONTROL` aktif; tercatat di audit, `via: autostart`). Dibatalkan bila worker di luar website sedang berjalan. `false`: scanner menunggu tombol **Jalankan scanner**. |
+| `OPEN_BROWSER` | aktif bila `NODE_ENV=development` | `true`: setelah server siap, browser default dibuka ke `APP_ORIGIN` — hanya untuk `npm start` di terminal interaktif (tidak untuk `npm run dev` yang memuat ulang, atau output yang dialihkan). |
+| `LOG_FORMAT` | `auto` | `auto`: teks ringkas berjam WIB bila stdout terminal interaktif, JSON per baris bila tidak. `pretty` / `json`: paksa salah satunya. Warna mengikuti `NO_COLOR`. |
 | `BINANCE_DNS` | `doh` | Cara me-resolve host Binance. `doh`: DNS-over-HTTPS **khusus** `*.binance.com` / `*.binance.vision` (lihat di bawah). `system`: resolver sistem saja (perilaku lama). Nilai lain membuat server dan worker menolak start. |
 
 Nilai selain `true`/`false` membuat server menolak start (fail fast).
@@ -135,7 +143,7 @@ Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
 
 | Perintah | Fungsi |
 |---|---|
-| `npm start` | Menjalankan server (memuat `.env` bila ada); scanner dijalankan dari tombol di System Health |
+| `npm start` | Menjalankan server (memuat `.env` bila ada), langsung menjalankan scanner (`WORKER_AUTOSTART`), dan membuka browser (`OPEN_BROWSER`) |
 | `npm run dev` | Server dengan auto-reload |
 | `npm run worker` | Worker scanner di terminal terpisah (alternatif tombol website; jangan dijalankan bersamaan) |
 | `npm run migrate` | Menerapkan migrasi database (termasuk `005` arah sinyal Short Scanner) |

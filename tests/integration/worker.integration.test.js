@@ -23,7 +23,7 @@ import { DIRECTION_TIMEFRAMES, HIGHER_TIMEFRAMES, TIMEFRAME_MS } from '../../bac
 import { REVERSAL_ACTIVE_TIMEFRAMES, REVERSAL_TIMEFRAMES } from '../../backend/reversal/constants.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY, normalizeScannerSettings } from '../../backend/settings/scannerSettings.js';
 import { HEARTBEAT_STALE_MS, summarizeWorker } from '../../backend/system/workerStatus.js';
-import { assembleWorker, workerTimeframes } from '../../worker/assemble.js';
+import { SCAN_INTERVAL_MS, assembleWorker, workerTimeframes } from '../../worker/assemble.js';
 import { downtrendCandles, silentAccumulationCandles, zigzag } from '../fixtures/candles/scenarios.js';
 import { SYNTHETIC_START, generateCandles, withPriceScale } from '../fixtures/candles/synthetic.js';
 
@@ -535,7 +535,9 @@ async function createWorker({
     }),
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
-    scannerOptions: { timeframes: null, ...scannerOptions },
+    // Scan berkala 1 menit (produksi SCAN_INTERVAL_MS) dimatikan untuk tes mekanika yang memeriksa urutan REST persis;
+    // perilakunya diuji INT-WRK-SCAN-001 dengan default produksi.
+    scannerOptions: { timeframes: null, scanIntervalMs: null, ...scannerOptions },
     settleMs,
     pipelineSleep: (ms) => new Promise((resolve) => {
       settles.push({ at: timers.clock(), ms });
@@ -750,6 +752,14 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
           step: 'live', cycle: 'initial', streamsTotal: 6, streamsDone: 6, streamsFailed: 0, candlesStored: 136,
           symbolsDiscovered: 2, lastCandleAt: START - 7_001, lastAnalysisAt: null,
         }),
+        // Scan berkala dimatikan di tes mekanika (createWorker); log aktivitas siklus start (worker/activity.js).
+        scan: null, scanIntervalMs: null, nextScanAt: null,
+        activity: expect.arrayContaining([
+          expect.objectContaining({ kind: 'start' }),
+          expect.objectContaining({ kind: 'discovery', cycle: 'initial', symbols: 2, failed: false }),
+          expect.objectContaining({ kind: 'bootstrap', series: 6, candles: 136, failed: 0 }),
+          expect.objectContaining({ kind: 'ws', state: 'open', reconnects: 0 }),
+        ]),
       },
     });
 
@@ -1818,6 +1828,35 @@ describe('worker end-to-end — Reversal Radar: 5m ikut diingesti, dua pipeline 
     expect(reversalEngine.calls.evaluate.some((e) => e.provisional)).toBe(true);
     expect(new Set(cursorRows(db).map((r) => r.timeframe))).toEqual(new Set(['1h']));
     expect(scanner.status()).toMatchObject({ state: 'running', errors: 0, gaps: 0, queue: 0 });
+    expect(problems(logs)).toEqual([]);
+  });
+
+  it('INT-WRK-SCAN-001 scan berkala produksi (SCAN_INTERVAL_MS 60 dtk): tiap batas menit + 5 dtk ringkasan seri mutakhir, harga live & sinyal terbuka ditulis ke heartbeat SQLite; summarizeWorker meneruskan scan & log aktivitas (scan, candle dianalisis); tanpa REST tambahan saat semua seri mutakhir', async () => {
+    expect(SCAN_INTERVAL_MS).toBe(60_000);
+    const { scanner, driver, repos, timers, logs, binance } = await setup({
+      scannerOptions: { timeframes: workerTimeframes(), scanIntervalMs: SCAN_INTERVAL_MS },
+      directionTimeframes: DIRECTION_TIMEFRAMES, reversalTimeframes: REVERSAL_ACTIVE_TIMEFRAMES,
+    });
+    await scanner.start();
+    const klinesAfterBoot = binance.klineCalls().length;
+    // START = 04:00:07 → 16 scan (04:01:05 … 04:16:05); candle 15m 04:00 tutup 04:15 (dianalisis SHORT), 5m hanya grafik.
+    await driver.runUntil(START + 16 * 60_000);
+    // Semua candle tiba lewat WS: scan hanya memeriksa, tidak menyentuh REST.
+    expect(binance.klineCalls()).toHaveLength(klinesAfterBoot);
+    const { scanner: st } = summarizeWorker(await repos.ingestion.getStatus(), timers.clock());
+    expect(st.scan).toMatchObject({ symbols: 2, series: 6, fresh: 6, stale: 0, repaired: 0, priced: 6, intervalMs: SCAN_INTERVAL_MS });
+    expect(st.scan.seq).toBe(16);
+    expect((st.scan.at - 5_000) % SCAN_INTERVAL_MS).toBe(0);
+    expect(st.nextScanAt).toBe(st.scan.at + SCAN_INTERVAL_MS);
+    expect(st.scan.open).toEqual({ long: expect.any(Number), short: expect.any(Number), radar: 0 });
+    const kinds = new Set(st.activity.map((e) => e.kind));
+    for (const kind of ['start', 'discovery', 'ws', 'bootstrap', 'scan', 'candles']) expect(kinds.has(kind)).toBe(true);
+    for (const kind of kinds) expect(['start', 'discovery', 'ws', 'bootstrap', 'scan', 'candles', 'signal', 'reversal']).toContain(kind);
+    // Hanya timeframe yang benar-benar dianalisis pipeline yang dicatat: candle 15m (SHORT), bukan 5m grafik.
+    expect(st.activity.filter((e) => e.kind === 'candles')).toEqual([
+      expect.objectContaining({ timeframe: '15m', closeTime: T0 + 4 * H1 + M15 - 1, count: 2 }),
+    ]);
+    expect(logs.filter((e) => /^scan #\d+: 6\/6 seri mutakhir · harga live \d seri · sinyal terbuka LONG \d+ · SHORT \d+ · radar 0$/.test(e.msg))).toHaveLength(16);
     expect(problems(logs)).toEqual([]);
   });
 
