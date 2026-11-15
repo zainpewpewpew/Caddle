@@ -32,7 +32,8 @@
     "research:timing": "node --env-file-if-exists=.env scripts/research-timing.js",
     "research:matched": "node --env-file-if-exists=.env scripts/research-matched.js",
     "research:matched-exclusion": "node --env-file-if-exists=.env scripts/research-matched-exclusion.js",
-    "research:al-sa-atr-01": "node --env-file-if-exists=.env scripts/research-al-sa-atr-01.js"
+    "research:al-sa-atr-01": "node --env-file-if-exists=.env scripts/research-al-sa-atr-01.js",
+    "research:al-sa-atr-01-audit": "node --env-file-if-exists=.env scripts/research-al-sa-atr-01-audit.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",

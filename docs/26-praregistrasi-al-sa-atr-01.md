@@ -1,5 +1,8 @@
 # 26 — Praregistrasi AL-SA-ATR-01: alert LONG 1h dengan gerak awal ≥ 2,7 ATR (dibekukan 2026-11-15)
 
+> **Adendum 1 (§10)**, ditulis sebelum data uji ada, menambah audit data bulanan dan laporan pendamping. §1–§8 tidak
+> berubah.
+
 **Status: DIBEKUKAN sebelum data uji ada.** Data uji dimulai **2026-11-16 00:00 UTC**, sehari sesudah pembekuan. Commit
 beku = commit pertama yang menambahkan dokumen ini; aturan, semesta, ukuran sampel, kriteria, dan kode analisis tidak
 boleh diubah sesudahnya. Perubahan apa pun = uji baru dengan praregistrasi baru (AL-SA-ATR-02 dst.). Hasil dicatat di §9
@@ -143,3 +146,80 @@ pohon saat dijalankan. Hash dihitung dari byte file, jadi checkout harus tanpa k
 ## 9. Hasil
 
 Belum ada. Diisi sekali, sesudah evaluasi (§4).
+
+## 10. Adendum 1: integritas data dan laporan pendamping (2026-11-15 UTC, sebelum data uji ada)
+
+Adendum ini ditulis dan di-push sebelum jendela data dimulai (2026-11-16 00:00 UTC); waktu tepatnya ada di timestamp
+commit yang menambahkan bagian ini. **§1–§8 tidak berubah**: hipotesis,
+aturan, semesta, n wajib, kriteria P0–P4, aturan berhenti, dan commit beku `00d33d6` tetap sama. Adendum hanya
+menambah prosedur data yang tidak membaca R, serta laporan pendamping yang bukan penentu. Pemicunya tinjauan ChatGPT
+(2026-11-16 WIB) tentang delisting, rezim pasar, konsentrasi simbol, dan presisi Monte Carlo.
+
+### 10.1 Masalah di kode beku
+
+- **Simbol delisting terbuang seluruhnya.** Kalau API Binance menolak simbol yang sudah delisting, `loadFromBinance` gagal
+  untuk seluruh simbol. Evaluate lalu melewatkan simbol itu sepenuhnya, bukan "dihitung sampai data terakhirnya" seperti
+  janji §3.
+- **Evaluasi bisa gagal total.** Pemuatan funding dan bulan kohort di evaluate tidak menangani galat, jadi penolakan API
+  untuk funding membuat seluruh evaluasi berhenti. Mode count tidak memuat funding, sehingga run bulanan tidak mengisi
+  cache funding.
+- **Bukti.** Uji asap dengan klien yang selalu ditolak (jendela pra-uji Sep–Okt 2026, 6 koin): tanpa cache funding,
+  evaluate gagal total. Dengan cache yang diisi audit (§10.2), evaluate selesai tanpa simbol terlewat.
+- **Trade terbuka tidak dihitung.** Trade yang masih terbuka saat data simbol berhenti, misalnya karena delisting, tidak
+  dihitung (§3). Untuk LONG, aturan ini cenderung membuang trade yang rugi.
+
+### 10.2 Prosedur data (wajib; tidak membaca R)
+
+1. **Audit bulanan.** Setiap tanggal 1, bersama `--mode count` dengan cutoff yang sama, jalankan
+   `npm run research:al-sa-atr-01-audit -- --to YYYY-MM-01`. Skripnya `scripts/research-al-sa-atr-01-audit.js`, di luar
+   hash pohon. Audit ini:
+   - memuat kline jendela, funding jendela, dan bulan kohort ke cache;
+   - menulis file cache bulan kosong hanya untuk bulan lengkap yang seluruhnya sebelum listing (candle pertama dari
+     Binance); file yang sudah ada tidak pernah ditimpa;
+   - mencatat status exchangeInfo, celah data, data yang berhenti sebelum cutoff, dan trade yang tetap terbuka beserta
+     penyebabnya;
+   - tidak menghitung R, win rate, atau hasil trade.
+
+   Jumlah trade filter dan pelengkap hasil audit harus sama dengan count. Kalau berbeda, auditnya salah dan diperbaiki
+   sebelum evaluasi. Paritas ini sudah dicek pada uji asap (filter 11, pelengkap 8, terbuka 0, sama dengan skrip beku).
+2. **Sebelum evaluasi tunggal**, audit pada cutoff evaluasi harus berstatus "siap evaluasi": kline, funding, dan bulan
+   kohort ke-100 simbol termuat. Kalau ada simbol yang gagal karena delisting, data yang hilang diisi ke cache sebagai
+   deviasi yang diizinkan §7. Sumbernya hanya dua: REST Binance lewat commit lain, atau arsip publik Binance
+   (data.binance.vision, kline 1h dan funding rate USDⓈ-M). Bulan lengkap sesudah candle terakhir simbol ditulis sebagai
+   bulan kosong. Setiap file yang diisi dicatat di §9 (simbol, bulan, sumber, SHA-256), dan pengisian ini tidak membaca R.
+3. **Evaluasi** tetap dijalankan sekali di commit beku, sesudah audit siap.
+
+### 10.3 Laporan pendamping (bukan penentu; dibuat sesudah evaluasi)
+
+Vonis P0–P4 tidak berubah oleh apa pun di bagian ini. Kalau salah satu laporan menunjukkan vonisnya rapuh, catatan itu
+ditulis di §9 berdampingan dengan vonis.
+
+1. **Trade terbuka.** Daftar trade terbuka per simbol beserta penyebabnya. P1–P3 dihitung ulang dengan trade terbuka
+   dimasukkan dengan dua cara:
+   - kasus terburuk: −1R dikurangi biaya pulang-pergi dan funding;
+   - ditandai pada close candle terakhir yang tersedia: R kotor saat itu dikurangi biaya dan funding.
+
+   Kalau salah satu cara membalik vonis, hasilnya disebut **rapuh terhadap delisting**.
+2. **Rezim pasar.** Dari BTCUSDT 1h di jendela evaluasi dilaporkan return dan volatilitas realisasi per bulan. Setiap trade
+   diberi label saat entri:
+   - tren BTC 30 hari: naik bila close BTC > close 720 candle sebelumnya, selain itu turun;
+   - tersil volatilitas realisasi 30 hari BTC, dihitung atas jendela evaluasi.
+
+   Yang dilaporkan: n dan R bersih rata-rata per rezim, serta jumlah trade per bulan. Ini perlu karena n 600 bisa saja
+   tercapai saat pasar sangat aktif.
+3. **Konsentrasi.** Porsi trade 5 simbol terbanyak, rentang R bersih rata-rata bila tiap simbol dikeluarkan bergantian
+   (leave-one-symbol-out), dan P1 tanpa simbol yang menyumbang trade terbanyak.
+4. **Presisi Monte Carlo.** CI P1 dan P2 dihitung ulang dengan 20.000 replikasi (benih sama), dan dengan 10 benih lain pada
+   2.000 replikasi. Dilaporkan simpangan batas bawahnya antarbenih. Kalau |batas bawah| < 3 × simpangan itu, vonis
+   ditandai **dekat batas**. Keputusan tetap memakai benih dan 2.000 replikasi beku.
+5. **Paritas.** Laporan ini dibuat skrip terpisah yang menghitung ulang trade dengan logika evaluate. Angkanya (n, rata-rata,
+   CI) harus sama persis dengan laporan evaluate sebelum dipakai.
+
+### 10.4 Yang sengaja tidak diubah
+
+- **Kriteria, semesta, dan bootstrap tetap.** Kriteria tetap; semesta 100 simbol tetap tanpa penggantian; bootstrap tetap
+  2.000 replikasi.
+- **Korelasi P1–P2 sudah diperhitungkan.** Korelasinya 0,65 dan sudah masuk analisis daya §4, dengan peluang lulus palsu
+  0,8% bila tidak ada efek.
+- **Hash pohon sengaja mencakup seluruh `backend/`.** Evaluasi berjalan di checkout commit beku, jadi perubahan di `main`
+  tidak memengaruhinya. Satu-satunya risiko adalah pengambilan data, dan risiko itu ditangani §7 serta §10.2.
