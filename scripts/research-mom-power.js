@@ -22,7 +22,7 @@ import { labelTrade } from '../backend/backtest/labeler.js';
 import { BACKTEST_WARMUP, replaySeries } from '../backend/backtest/runner.js';
 import { atr } from '../backend/indicators/index.js';
 import {
-  MATCH_DEFAULTS, addControl, binOf, forwardMove, matchAlerts, movingBlockBootstrapMean, onePositionPerSymbol,
+  DAY_MS, MATCH_DEFAULTS, addControl, binOf, forwardMove, matchAlerts, movingBlockBootstrapMean, onePositionPerSymbol,
   quantileCuts, quarterOf, stratumKey,
 } from '../backend/research/matchedBaseline.js';
 import { breakoutFlags, timingAt } from '../backend/research/signalTiming.js';
@@ -88,6 +88,25 @@ export function distanceBin(sincePrev) {
   return sincePrev <= LOOK ? 'd12' : 'd48';
 }
 
+/** Jarak (candle) untuk kovariat keseimbangan: > 48 atau belum ada → 49. */
+export const cappedDistance = (sincePrev) => (sincePrev === null || sincePrev === undefined || sincePrev > SINCE_PREV_SPLIT ? SINCE_PREV_SPLIT + 1 : sincePrev);
+
+/** Sel agregat pembanding: n, jumlah hasil (A = fwd12, B = rAtr), dan jumlah kovariat. */
+export function addCell(cells, key, y, cov) {
+  let c = cells.get(key);
+  if (!c) {
+    c = [0, 0, 0, 0, 0, 0, 0];
+    cells.set(key, c);
+  }
+  c[0] += 1;
+  c[1] += y.fwd12;
+  c[2] += y.rAtr;
+  c[3] += cov.pre;
+  c[4] += cov.pos;
+  c[5] += cov.atr;
+  c[6] += cov.dist;
+}
+
 /** Indeks alert sebelumnya (< i) untuk tiap candle; −1 bila tidak ada. alertIdx terurut naik. */
 export function previousAlertIndex(n, alertIdx) {
   const prev = new Int32Array(n).fill(-1);
@@ -142,9 +161,16 @@ async function seriesPart({ symbol, byTf, acc }) {
     const keyJarak = `${key}|${distanceBin(sincePrev)}`;
     for (const v of MOM_VARIANTS) if (!masks[v.key][i]) addControl(acc.controls[v.key], key, y);
     if (acc.controls.tanpaJarak && !masks.tanpa[i]) addControl(acc.controls.tanpaJarak, keyJarak, y);
+    // Agregat pembanding per strata-jarak × hari (docs/27 §9): untuk bootstrap yang mengambil ulang pembanding per blok
+    // hari dan untuk keseimbangan kovariat. Hari = closeTime, sama dengan waktu alert.
+    if (acc.cells && !masks.tanpa[i]) addCell(acc.cells, `${keyJarak}#${Math.floor(B[i].closeTime / DAY_MS)}`, y, {
+      pre: tm.pre, pos: tm.pos, atr: A[i] / B[i].close, dist: cappedDistance(sincePrev),
+    });
     if (alertAt.has(i)) {
       alerts += 1;
-      acc.alerts.push({ key, keyJarak, y, t: B[i].closeTime, symbol, sincePrev, atrPct: A[i] / B[i].close });
+      acc.alerts.push({
+        key, keyJarak, y, t: B[i].closeTime, symbol, sincePrev, atrPct: A[i] / B[i].close, pre: tm.pre, pos: tm.pos,
+      });
       acc.alertTrades.push({ symbol, t: trade.entryTime, exitTime: trade.exitTime, r: trade.r });
     }
   }
@@ -204,11 +230,11 @@ function summarize(acc) {
  * Kumpulkan alert & agregat pembanding per strata untuk simbol cache (semua, atau `only`). Dipakai juga oleh
  * scripts/research-mom-sim.js. `acc.controls.tanpaJarak` = pembanding "tanpa" dengan strata + jarak alert sebelumnya.
  */
-export async function collectMomData({ symbols: only = null, from, to, cacheDir }) {
+export async function collectMomData({ symbols: only = null, from, to, cacheDir, withCells = false }) {
   const symbols = (await readdir(cacheDir)).filter((s) => /^[A-Z0-9]{2,30}$/.test(s) && (!only || only.includes(s))).sort();
   const acc = {
     controls: { ...Object.fromEntries(MOM_VARIANTS.map((v) => [v.key, new Map()])), tanpaJarak: new Map() },
-    alerts: [], alertTrades: [], symbolMonths: new Set(),
+    alerts: [], alertTrades: [], symbolMonths: new Set(), ...(withCells ? { cells: new Map() } : {}),
   };
   const skipped = [];
   for (const symbol of symbols) {

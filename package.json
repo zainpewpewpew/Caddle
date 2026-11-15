@@ -35,7 +35,8 @@
     "research:al-sa-atr-01": "node --env-file-if-exists=.env scripts/research-al-sa-atr-01.js",
     "research:al-sa-atr-01-audit": "node --env-file-if-exists=.env scripts/research-al-sa-atr-01-audit.js",
     "research:mom-power": "node --env-file-if-exists=.env scripts/research-mom-power.js",
-    "research:mom-sim": "node --env-file-if-exists=.env scripts/research-mom-sim.js"
+    "research:mom-sim": "node --env-file-if-exists=.env scripts/research-mom-sim.js",
+    "research:mom-overlap": "node --env-file-if-exists=.env --max-old-space-size=8192 scripts/research-mom-overlap.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",

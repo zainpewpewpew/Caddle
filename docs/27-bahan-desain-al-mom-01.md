@@ -171,6 +171,9 @@ SE periode penuh pada subset simbol acak (20 undian per ukuran):
 
 Daya dihitung dari SE median antarjendela. Efek sebenarnya diasumsikan sama dengan titik 100 koin, yaitu hampir nol.
 
+> **Pembaruan (§9.4):** SE di sini berasal dari bootstrap alert saja. Bootstrap yang mengulang prosedur, yaitu metode
+> yang dikunci docs/28 §5, memberi SE ±25% lebih kecil. Jadi angka daya di bagian ini konservatif.
+
 | Hasil | Margin | Batas | Daya 12 bulan | Daya 24 bulan | Bulan untuk daya 80% |
 |---|---|---|---|---|---|
 | A | 0,25 ATR | dua sisi | 56% | 80% | 24 |
@@ -217,7 +220,8 @@ Daya dihitung dari SE median antarjendela. Efek sebenarnya diasumsikan sama deng
 2. **Horizon 24 bulan memang perlu.** Dalam 12 bulan, tidak ada margin kandidat yang mencapai daya 80% dengan batas dua
    sisi.
 3. **A dengan margin 0,25 ATR layak secara daya** (24 bulan: 80% dua sisi, 88% satu sisi) bila efek sebenarnya ≈ 0,
-   seperti di data 100 koin. B dengan 0,10R sebagai hasil sekunder kurang daya (66% dua sisi).
+   seperti di data 100 koin. B dengan 0,10R sebagai hasil sekunder kurang daya (66% dua sisi). Dengan bootstrap
+   prosedur penuh, dayanya naik menjadi 96% (A) dan 78% (B); lihat §9.4.
 4. **Uji ini hanya bisa menyingkirkan keunggulan besar.** Margin yang bisa diuji (0,25 ATR ≈ 2,2× biaya) tidak
    menyingkirkan keunggulan kecil yang masih bernilai. Uji superioritas pun hanya mendeteksi keunggulan ≥ 0,24 ATR.
 5. **Jarak alert masuk sebagai strata.** Ketidakseimbangannya besar, dan overlap 91% memadai.
@@ -235,7 +239,7 @@ Dari tinjauan ChatGPT (2026-11-16) dan keputusan pemilik pada hari yang sama. An
 | Unsur | Draf | Catatan |
 |---|---|---|
 | Hasil utama | **A**: nilai informasi, yaitu gerak 12 candle alert vs pembanding strata "tanpa" | Pemilik: AlphaLens adalah scanner; nilai strategi alert sudah diuji AL-SA-ATR-01 |
-| Hasil sekunder | **B**: R dengan geometri identik, dilaporkan tetapi tidak menentukan vonis | Daya 66% pada 24 bulan dengan margin 0,10R dua sisi (§7.4) |
+| Hasil sekunder | **B**: R dengan geometri identik, dilaporkan tetapi tidak menentukan vonis | Daya pada 24 bulan dengan margin 0,10R dua sisi: 66% dengan bootstrap alert saja (§7.4), 78% dengan bootstrap prosedur penuh (§9.4) |
 | Jenis uji | Batas atas (non-superioritas) untuk A dengan margin kandidat 0,25 ATR; batas bawah > 0 (superioritas) dibaca dari CI yang sama | 0,25 ATR ≈ 2,2× biaya pulang-pergi (§7.6), jadi uji ini hanya menyingkirkan keunggulan besar (§7.7) |
 | Batas CI | Belum diputuskan. Usulan: CI 95% dua sisi, yaitu α 2,5% per arah | Konsisten dengan docs/25–26; satu CI menjawab kedua arah tanpa menaikkan galat total |
 | Horizon | Maksimal 24 bulan | |
@@ -254,7 +258,7 @@ Dengan satu CI 95% dua sisi dan margin M, hasilnya jatuh ke salah satu dari empa
 | ≤ 0 | < M | Keunggulan, kalau ada, < M |
 | ≤ 0 | ≥ M | Tidak konklusif |
 
-**Masih terbuka:**
+**Yang tadinya masih terbuka** (keempatnya sudah diputuskan; lihat catatan pembaruan di atas dan docs/28):
 
 - margin akhir dan dasar ekonominya;
 - batas CI satu atau dua sisi;
@@ -262,3 +266,93 @@ Dengan satu CI 95% dua sisi dan margin M, hasilnya jatuh ke salah satu dari empa
   atau "tidak konklusif". Dengan daya §7, kemungkinan terbesar adalah salah satu dari dua kelompok itu;
 - apakah jendela AL-MOM-01 mulai 2026-11-16, berbagi data dengan AL-SA-ATR-01 dan dinyatakan sebagai "data sudah
   terkumpul tetapi belum diakses", atau mulai pada tanggal pembekuannya.
+
+## 9. Diagnostik overlap dan bootstrap (2026-11-16)
+
+Pemicunya tinjauan ChatGPT (2026-11-16). Empat hal diminta: estimand pada populasi overlap, ciri alert tanpa pembanding,
+batas ketidakseimbangan kovariat, dan bootstrap yang mengulang prosedur estimasi. Datanya sama dengan §7 (100 koin,
+sinyal 2024-01 → 2026-10). Laporan: `reports/research/mom-overlap-20261115T195046Z.{md,json}`
+(`npm run research:mom-overlap`; replay 751 s, analisis 90 s).
+
+### 9.1 Cakupan dan sensitivitas estimand
+
+CI di tabel ini berasal dari bootstrap alert saja, sama dengan §7.
+
+| Pencocokan | Alert cocok | A [CI 7 hari] | B [CI 7 hari] |
+|---|---|---|---|
+| Strata dasar | 4.970 (99%) | +0,01 [−0,13 … +0,15] | +0,003 [−0,060 … +0,070] |
+| Strata + jarak (estimand docs/28) | 4.592 (91%) | +0,01 [−0,13 … +0,15] | +0,008 [−0,058 … +0,078] |
+| Fallback: strata + jarak, selain itu dasar | 4.970 (99%; 378 lewat dasar) | −0,00 [−0,14 … +0,14] | −0,001 [−0,065 … +0,067] |
+
+Titiknya tidak bergantung pada pilihan pencocokan.
+
+### 9.2 Alert tanpa pembanding pada strata + jarak (451 alert, 9%)
+
+- **Satu ciri yang berbeda tegas: gerak awal.** 41% punya gerak awal ≥ 4 ATR, padahal di alert yang cocok hanya 11%.
+  Jadi ±26% alert dengan gerak awal ≥ 4 ATR tidak mendapat pembanding.
+- **Ciri lain mirip:**
+  - jarak ≤ 12 candle: 43% vs 43%;
+  - posisi rentang ≥ 0,8: 62% vs 60%;
+  - koin tambahan: 69% vs 68%;
+  - ATR% median: 1,25% vs 1,23%;
+  - sebaran tahun juga serupa.
+- **Hasilnya bila dicocokkan pada strata dasar** (n 378): A −0,12 [−0,50 … +0,24], B −0,103 [−0,281 … +0,077].
+  Memasukkannya lewat fallback hampir tidak mengubah titik keseluruhan.
+- **Akibatnya,** kesimpulan AL-MOM-01 terutama berlaku untuk alert dengan gerak awal moderat; cakupannya untuk gerak
+  awal ekstrem lebih lemah. Hal ini dilaporkan bersama hasil (docs/28 §7).
+
+### 9.3 Keseimbangan kovariat (SMD sesudah pencocokan)
+
+| Kovariat | Strata dasar | Strata + jarak |
+|---|---|---|
+| Gerak awal | +0,004 | +0,005 |
+| Posisi rentang | +0,070 | +0,067 |
+| ATR% | −0,063 | −0,060 |
+| Jarak dari alert sebelumnya | **−0,202** | −0,015 |
+
+- **Strata dasar tidak seimbang pada jarak:** alert lebih dekat ke alert sebelumnya dibanding pembandingnya.
+- **Strata + jarak memperbaikinya.** Semua |SMD| ≤ 0,07.
+- **Usulan untuk pembekuan kode** (docs/28 §9): batas |SMD| ≤ 0,10 per kovariat. Pelanggaran dilaporkan, estimand
+  tidak diubah.
+
+### 9.4 Bootstrap yang mengulang prosedur
+
+Tiga versi dibandingkan pada bobot hari yang sama:
+
+- **prosedur penuh:** alert dan pembanding diambil ulang bersama, rata-rata strata dihitung ulang (metode docs/28 §5);
+- **alert saja:** rata-rata pembanding tetap, metode yang dipakai docs/25–27;
+- **alert saja, himpunan sama:** seperti alert saja, tetapi hanya alert yang juga ikut di versi penuh pada replikasi
+  itu.
+
+| SE (strata + jarak) | A: penuh · alert saja · himpunan sama | B: penuh · alert saja · himpunan sama |
+|---|---|---|
+| Periode penuh | 0,051 · 0,071 · 0,068 | 0,027 · 0,035 · 0,034 |
+| Median 12 bulan (8 jendela) | 0,098 · 0,121 | 0,046 · 0,055 |
+| Median 24 bulan (4 jendela) | 0,065 · 0,087 | 0,034 · 0,043 |
+
+- **SE prosedur penuh ±25% lebih kecil** (rasio median per jendela 0,74–0,81, dan konsisten di setiap jendela).
+- **Penyebabnya bukan alert yang terbuang.** Versi "himpunan sama" hampir sama dengan versi alert saja. Yang terjadi:
+  rata-rata pembanding strata bergerak bersama hasil alert pada hari-hari yang sama, jadi desain berpasangan
+  mengurangi varians, sedangkan bootstrap alert saja mengabaikannya.
+- **Daya dengan SE prosedur penuh:**
+
+  | Hasil, margin | Daya 12 bulan (dua sisi) | Daya 24 bulan (dua · satu sisi) | Bulan untuk daya 80% (dua · satu sisi) |
+  |---|---|---|---|
+  | A 0,25 ATR | 69% | 96% · 98% | 14 · 11 |
+  | A 0,30 ATR | 85% | 99% · 100% | 9 · 7 |
+  | B 0,10R | 51% | 78% · 86% | 25 · 20 |
+  | B 0,12R | 68% | 91% · 95% | 17 · 13 |
+
+  Untuk superioritas (batas bawah CI 95% > 0, daya 80%), efek terkecil yang terdeteksi adalah A 0,27 ATR (12 bulan)
+  dan 0,18 ATR (24 bulan), serta B 0,13R dan 0,095R.
+- **Margin tidak diubah.** 0,25 ATR dipilih sebagai batas deskriptif, bukan karena dayanya (docs/28 §6). Daya yang
+  lebih tinggi tidak menjadi alasan untuk menggantinya.
+- **docs/25 juga terdampak.** CI docs/25 §2 memakai bootstrap alert saja, jadi kemungkinan juga sedikit konservatif.
+  Dengan rasio yang sama, CI selisih A "tanpa" di 31 koin (+0,09 [−0,09 … +0,31], §2) kira-kira menjadi
+  [−0,05 … +0,26] dan tetap memuat nol. Kesimpulannya tidak berubah.
+
+### 9.5 Untuk pembekuan kode (docs/28 §9)
+
+- Batas |SMD| ≤ 0,10 per kovariat (usulan §9.3).
+- Laporan alert tanpa pembanding memisahkan kelompok gerak awal ≥ 4 ATR.
+- Bootstrap prosedur penuh dengan ≥ 10.000 replikasi. Versi alert saja dilaporkan sebagai pembanding metode.
