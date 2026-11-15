@@ -172,7 +172,7 @@ describe('API sinyal — filter & urutan atas matriks sinyal sintetis', () => {
 });
 
 // Perilaku produksi: LONG Scanner hanya 15m, SHORT Scanner hanya 1h (DIRECTION_TIMEFRAMES).
-describe('API sinyal — timeframe tetap per arah (LONG 15m, SHORT 1h)', () => {
+describe('API sinyal — timeframe tetap per arah (LONG 1h, SHORT 15m)', () => {
   let ctx;
   let auth;
   beforeEach(async () => {
@@ -184,16 +184,16 @@ describe('API sinyal — timeframe tetap per arah (LONG 15m, SHORT 1h)', () => {
 
   const get = (url) => ctx.app.inject({ url, headers: { cookie: auth.cookie } }).then((r) => r.json());
 
-  it('POS-SIG-TF-001 LONG tanpa filter → hanya sinyal 15m; sinyal LONG 5m/1h lama tidak tampil', async () => {
+  it('POS-SIG-TF-001 LONG tanpa filter → hanya sinyal 1h; sinyal LONG 5m/15m lama tidak tampil', async () => {
     const { items } = await get('/api/signals/active');
-    expect(items.map((r) => r.symbol).sort()).toEqual(['BBBUSDT', 'GGGUSDT']);
-    expect(new Set(items.map((r) => r.timeframe))).toEqual(new Set(['15m']));
-    expect((await get('/api/signals/active?direction=LONG&timeframe=15m')).count).toBe(2);
+    expect(items.map((r) => r.symbol).sort()).toEqual(['CCCUSDT']);
+    expect(new Set(items.map((r) => r.timeframe))).toEqual(new Set(['1h']));
+    expect((await get('/api/signals/active?direction=LONG&timeframe=1h')).count).toBe(1);
   });
 
-  it('POS-SIG-TF-002 timeframe di luar arah (LONG 5m/1h, SHORT 15m) → daftar kosong, bukan 400', async () => {
+  it('POS-SIG-TF-002 timeframe di luar arah (LONG 5m/15m, SHORT 1h) → daftar kosong, bukan 400', async () => {
     expect(await get('/api/signals/active?timeframe=5m')).toEqual({ items: [], count: 0 });
-    expect(await get('/api/signals/active?timeframe=1h')).toEqual({ items: [], count: 0 });
-    expect(await get('/api/signals/active?direction=SHORT&timeframe=15m')).toEqual({ items: [], count: 0 });
+    expect(await get('/api/signals/active?timeframe=15m')).toEqual({ items: [], count: 0 });
+    expect(await get('/api/signals/active?direction=SHORT&timeframe=1h')).toEqual({ items: [], count: 0 });
   });
 });

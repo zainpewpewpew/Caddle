@@ -1,12 +1,13 @@
 // Fixture SINTETIS (bukan data pasar) untuk tes E2E UI Reversal Radar: respons GET /api/reversal/candidates dan
 // GET /api/reversal/candidates/:id sesuai kontrak docs/19 §5 & §7, dimock di browser lewat page.route sehingga tes
-// hermetis dan tidak bergantung pada backend reversal. Satu kandidat per tahap × timeframe, satu provisional-only,
+// hermetis dan tidak bergantung pada backend reversal. Tiga kandidat 1h per tahap, satu provisional-only,
 // satu extended, satu terlambat, risiko & bukti lengkap, satu kandidat terbuka dengan tahap provisional lebih tinggi.
 
 export const REVERSAL_NOW = Date.UTC(2026, 9, 26, 12, 0, 0);
 const MIN = 60_000;
 const TF_MS = { '5m': 5 * MIN, '15m': 15 * MIN, '1h': 60 * MIN };
-export const REVERSAL_TIMEFRAMES = ['5m', '15m', '1h'];
+// Selaras REVERSAL_ACTIVE_TIMEFRAMES backend (LONG Scanner hanya 1h sejak 2026-11-15): server hanya mengembalikan 1h.
+export const REVERSAL_TIMEFRAMES = ['1h'];
 export const SENSITIVITY_FILTERS = {
   LOW: { minScore: 60, minEvidence: 4 }, MEDIUM: { minScore: 45, minEvidence: 3 }, HIGH: { minScore: 0, minEvidence: 0 },
 };
@@ -143,39 +144,39 @@ export function candidate({
   return base;
 }
 
-/** Sepuluh baris: 1 per tahap × timeframe (9) + 1 provisional-only (EARLY 15m). Urutan server: score DESC. */
+/** Sepuluh baris 1h (3 per tahap + 1 provisional-only EARLY). Urutan server: score DESC. */
 export function reversalCandidates() {
   const rows = [
-    candidate({ id: 1, symbol: 'ALPUSDT', timeframe: '5m', stage: 'EARLY_FORMATION', setupType: 'DOUBLE_BOTTOM', setupTypes: ['DOUBLE_BOTTOM', 'DIVERGENCE_BOTTOM'], price: 0.0825,
+    candidate({ id: 1, symbol: 'ALPUSDT', timeframe: '1h', stage: 'EARLY_FORMATION', setupType: 'DOUBLE_BOTTOM', setupTypes: ['DOUBLE_BOTTOM', 'DIVERGENCE_BOTTOM'], price: 0.0825,
       evidence: ['LL_SHALLOWER', 'LL_STOPPED', 'BOTTOM_HELD', 'RSI_DIVERGENCE', 'ATR_CONTRACTION', 'EMA_CONVERGENCE', 'ROUNDED_BOTTOM', 'VOLUME_DRY_UP'],
       risks: ['LOW_LIQUIDITY', 'HTF_DOWNTREND'], liquidityClass: 'THIN', movePct: 0.008, moveAtr: 0.4 }), // skor 50
-    candidate({ id: 2, symbol: 'BETUSDT', timeframe: '15m', stage: 'EARLY_FORMATION', setupType: 'COMPRESSION', price: 1.234,
+    candidate({ id: 2, symbol: 'BETUSDT', timeframe: '1h', stage: 'EARLY_FORMATION', setupType: 'COMPRESSION', price: 1.234,
       evidence: ['LL_SHALLOWER', 'DOWN_MOMENTUM_FADING', 'CVD_DIVERGENCE', 'RANGE_CONTRACTION', 'RISING_FLOOR', 'ATR_CONTRACTION', 'QUIET_RISE', 'VOLUME_DRY_UP'],
       risks: ['NEAR_INVALIDATION'], movePct: 0.004, moveAtr: 0.2 }), // skor 46
     candidate({ id: 3, symbol: 'GAMUSDT', timeframe: '1h', stage: 'EARLY_FORMATION', setupType: 'ROUNDED_BOTTOM', price: 15.72,
       evidence: ['LL_STOPPED', 'BOTTOM_HELD', 'RSI_DIVERGENCE', 'ROUNDED_BOTTOM', 'EMA_CONVERGENCE', 'RANGE_CONTRACTION', 'VOLUME_DRY_UP'],
       risks: ['HTF_UNKNOWN'], movePct: 0.011, moveAtr: 0.5 }), // skor 45
-    candidate({ id: 4, symbol: 'DELUSDT', timeframe: '5m', stage: 'DEVELOPING_REVERSAL', setupType: 'HIGHER_LOW_BASE', price: 0.4471,
+    candidate({ id: 4, symbol: 'DELUSDT', timeframe: '1h', stage: 'DEVELOPING_REVERSAL', setupType: 'HIGHER_LOW_BASE', price: 0.4471,
       evidence: ['LL_SHALLOWER', 'LL_STOPPED', 'BOTTOM_HELD', 'ATR_CONTRACTION', 'EMA_CONVERGENCE', 'HIGHER_LOW', 'EMA25_RECLAIM', 'EMA7_TURN_UP', 'VOLUME_DRY_UP', 'QUIET_RISE'],
       risks: [], movePct: 0.019, moveAtr: 0.9 }), // skor 63
-    candidate({ id: 5, symbol: 'EPSUSDT', timeframe: '15m', stage: 'DEVELOPING_REVERSAL', setupType: 'SPRING', setupTypes: ['SPRING', 'HIGHER_LOW_BASE'], price: 3.058,
+    candidate({ id: 5, symbol: 'EPSUSDT', timeframe: '1h', stage: 'DEVELOPING_REVERSAL', setupType: 'SPRING', setupTypes: ['SPRING', 'HIGHER_LOW_BASE'], price: 3.058,
       evidence: ['RSI_DIVERGENCE', 'BOTTOM_HELD', 'LL_STOPPED', 'ROUNDED_BOTTOM', 'ATR_CONTRACTION', 'HIGHER_LOW', 'CHOCH_BULLISH', 'EMA25_RECLAIM', 'QUIET_RISE'],
       risks: ['VOLATILITY_EXPANDING'], movePct: 0.024, moveAtr: 1.1,
-      // Candle 15m yang sedang berjalan sudah memenuhi syarat CONFIRMED (belum dikonfirmasi candle tutup).
+      // Candle 1h yang sedang berjalan sudah memenuhi syarat CONFIRMED (belum dikonfirmasi candle tutup).
       provisional: { stage: 'CONFIRMED_BREAKOUT', evidence: ['RSI_DIVERGENCE', 'BOTTOM_HELD', 'ROUNDED_BOTTOM', 'HIGHER_LOW', 'CHOCH_BULLISH', 'EMA25_RECLAIM', 'TRIGGER_BREAK', 'BREAK_VOLUME_SUPPORT'] } }), // skor 64
     candidate({ id: 6, symbol: 'ZETUSDT', timeframe: '1h', stage: 'DEVELOPING_REVERSAL', setupType: 'STAIRCASE', price: 0.000512,
       evidence: ['LL_SHALLOWER', 'CVD_DIVERGENCE', 'RISING_FLOOR', 'RANGE_CONTRACTION', 'HIGHER_LOW', 'STAIRCASE', 'EMA7_TURN_UP', 'VOLUME_DRY_UP'],
       risks: ['LOW_LIQUIDITY', 'HTF_UNKNOWN'], liquidityClass: 'THIN', movePct: 0.016, moveAtr: 0.8 }), // skor 50
-    candidate({ id: 7, symbol: 'ETAUSDT', timeframe: '5m', stage: 'CONFIRMED_BREAKOUT', setupType: 'HIGHER_LOW_BASE', price: 2.917,
+    candidate({ id: 7, symbol: 'ETAUSDT', timeframe: '1h', stage: 'CONFIRMED_BREAKOUT', setupType: 'HIGHER_LOW_BASE', price: 2.917,
       evidence: ['LL_STOPPED', 'BOTTOM_HELD', 'ATR_CONTRACTION', 'HIGHER_LOW', 'CHOCH_BULLISH', 'EMA25_RECLAIM', 'EMA7_TURN_UP', 'QUIET_RISE', 'TRIGGER_BREAK', 'BREAK_FOLLOW_THROUGH'],
       risks: ['EXTENDED', 'NO_VOLUME_SUPPORT'], extended: true, movePct: 0.094, moveAtr: 2.9 }), // skor 59, extended
-    candidate({ id: 8, symbol: 'THEUSDT', timeframe: '15m', stage: 'CONFIRMED_BREAKOUT', setupType: 'SPRING', price: 0.6612,
+    candidate({ id: 8, symbol: 'THEUSDT', timeframe: '1h', stage: 'CONFIRMED_BREAKOUT', setupType: 'SPRING', price: 0.6612,
       evidence: ['RSI_DIVERGENCE', 'LL_SHALLOWER', 'BOTTOM_HELD', 'ROUNDED_BOTTOM', 'EMA_CONVERGENCE', 'HIGHER_LOW', 'SPRING_RECLAIM', 'EMA25_RECLAIM', 'CHOCH_BULLISH', 'VOLUME_DRY_UP', 'QUIET_RISE', 'TRIGGER_BREAK', 'BREAK_VOLUME_SUPPORT', 'BREAK_FOLLOW_THROUGH'],
       risks: ['LATE_ENTRY'], movePct: 0.031, moveAtr: 1.2 }), // skor 87, terlambat
     candidate({ id: 9, symbol: 'IOTUSDT', timeframe: '1h', stage: 'CONFIRMED_BREAKOUT', setupType: 'HIGHER_LOW_BASE', price: 0.2108,
       evidence: ['LL_STOPPED', 'DOWN_MOMENTUM_FADING', 'RISING_FLOOR', 'RANGE_CONTRACTION', 'HIGHER_LOW', 'EMA25_RECLAIM', 'TRIGGER_BREAK', 'BREAK_VOLUME_SUPPORT'],
       risks: ['HTF_UNKNOWN'], movePct: 0.027, moveAtr: 1.0 }), // skor 46
-    candidate({ id: 10, symbol: 'KAPUSDT', timeframe: '15m', stage: 'EARLY_FORMATION', setupType: 'COMPRESSION', price: 7.41, provisionalOnly: true,
+    candidate({ id: 10, symbol: 'KAPUSDT', timeframe: '1h', stage: 'EARLY_FORMATION', setupType: 'COMPRESSION', price: 7.41, provisionalOnly: true,
       evidence: ['LL_SHALLOWER', 'RSI_DIVERGENCE', 'LL_STOPPED', 'ATR_CONTRACTION', 'EMA_CONVERGENCE', 'ROUNDED_BOTTOM', 'VOLUME_DRY_UP'],
       risks: [] }), // skor 47, provisional-only (id null)
   ];

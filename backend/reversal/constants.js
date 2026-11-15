@@ -6,8 +6,17 @@
 /** Versi metodologi; setiap perubahan perilaku deteksi/skor WAJIB menaikkan versi. */
 export const REVERSAL_VERSION = 1;
 
-/** Timeframe yang dipantau Reversal Radar — dievaluasi terpisah per timeframe. */
+/**
+ * Timeframe yang DIDUKUNG mesin Reversal Radar (parameter per timeframe, validasi repositori, replay/riset) — dievaluasi
+ * terpisah per timeframe.
+ */
 export const REVERSAL_TIMEFRAMES = Object.freeze(['5m', '15m', '1h']);
+
+/**
+ * Timeframe yang AKTIF di worker live, API, dan UI LONG Scanner (keputusan pengguna 2026-11-15: LONG Scanner hanya 1h).
+ * Kandidat terbuka di timeframe lain ditutup EXPIRED/MONITORING_STOPPED oleh pipeline (sekali per proses).
+ */
+export const REVERSAL_ACTIVE_TIMEFRAMES = Object.freeze(['1h']);
 
 /** Tahap kandidat (hanya maju; boleh melompat). */
 export const STAGES = Object.freeze(['EARLY_FORMATION', 'DEVELOPING_REVERSAL', 'CONFIRMED_BREAKOUT']);

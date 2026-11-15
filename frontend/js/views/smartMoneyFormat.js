@@ -151,7 +151,8 @@ export function safeExternalUrl(url) {
 /** Tautan grafik Symbol Intelligence untuk simbol futures — hanya untuk token MATCHED (selain itu null). */
 export function symbolChartHref(match) {
   if (!match || match.status !== 'MATCHED' || !FUTURES_SYMBOL_RE.test(match.futuresSymbol ?? '')) return null;
-  return `#/symbol?${new URLSearchParams({ s: match.futuresSymbol, tf: '15m', dir: 'LONG' }).toString()}`;
+  // Timeframe LONG Scanner (DIRECTION_TIMEFRAMES backend: LONG 1h).
+  return `#/symbol?${new URLSearchParams({ s: match.futuresSymbol, tf: '1h', dir: 'LONG' }).toString()}`;
 }
 
 // ---------------------------------------------------------------- angka

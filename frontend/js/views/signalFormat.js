@@ -1,7 +1,7 @@
 // Render bersama untuk data sinyal (screener, riwayat, overview). Semua via h() — aman XSS.
 import { badge, stage } from '../lib/components.js';
 import { h } from '../lib/dom.js';
-import { EMPTY, formatRelative, formatTime } from '../lib/format.js';
+import { DISPLAY_TZ_LABEL, DISPLAY_TZ_OFFSET_MS, EMPTY, formatRelative, formatTime } from '../lib/format.js';
 
 const ALIGNMENT_LABELS = {
   ALIGNED: ['Aligned', 'bull'],
@@ -208,37 +208,61 @@ const STALE_GRACE_MS = 2 * 60_000;
 /**
  * Kesegaran sinyal terbuka. `updatedAt` = waktu tutup candle terakhir yang dievaluasi worker (bukan jam klien):
  * selama scanner berjalan nilainya maju tiap candle timeframe sinyal tertutup, jadi umur normal < 1 candle.
- * Basi = lebih dari 2 candle + kelonggaran tanpa evaluasi baru — scanner mati, sedang mengejar data setelah
- * restart, atau seri ini tertinggal. Timeframe tak dikenal / updatedAt kosong → tidak pernah dinyatakan basi.
+ * Terbaru (`fresh`) = sudah dievaluasi pada candle terakhir yang tutup (umur ≤ 1 candle + kelonggaran) — candle 1h bisa
+ * berumur hingga ±1 jam dan tetap terbaru. Basi = lebih dari 2 candle + kelonggaran tanpa evaluasi baru — scanner mati,
+ * sedang mengejar data setelah restart, atau seri ini tertinggal. Timeframe tak dikenal / updatedAt kosong → tidak pernah
+ * dinyatakan terbaru maupun basi.
  * @param {{ updatedAt?: number|null, timeframe?: string }} row
  * @param {number} [now]
- * @returns {{ stale: boolean, ageMs: number|null, staleAfterMs: number|null }}
+ * @returns {{ stale: boolean, fresh: boolean, ageMs: number|null, staleAfterMs: number|null }}
  */
 export function signalFreshness(row, now = Date.now()) {
   const at = row?.updatedAt;
-  if (typeof at !== 'number' || !Number.isFinite(at)) return { stale: false, ageMs: null, staleAfterMs: null };
+  if (typeof at !== 'number' || !Number.isFinite(at)) return { stale: false, fresh: false, ageMs: null, staleAfterMs: null };
   const tfMs = UPDATE_TF_MS[row?.timeframe];
   const staleAfterMs = tfMs ? 2 * tfMs + STALE_GRACE_MS : null;
   const ageMs = Math.max(0, now - at);
-  return { stale: staleAfterMs !== null && ageMs > staleAfterMs, ageMs, staleAfterMs };
+  return {
+    stale: staleAfterMs !== null && ageMs > staleAfterMs,
+    fresh: tfMs !== undefined && ageMs <= tfMs + STALE_GRACE_MS,
+    ageMs,
+    staleAfterMs,
+  };
 }
 
-/** Mengisi ulang teks, judul, dan penanda basi sel "Update" dari data-* miliknya (dipakai render & ticker). */
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/**
+ * Jam:menit WIB tutup candle. closeTime candle = openTime + durasi − 1 ms (mis. 16:59:59.999), sehingga +1 ms
+ * menampilkan menit tutup yang dikenal pengguna (17:00).
+ */
+export function candleCloseClock(closeTime) {
+  const d = new Date(closeTime + 1 + DISPLAY_TZ_OFFSET_MS);
+  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+}
+
+/** Mengisi ulang teks, judul, dan penanda terbaru/basi sel "Update" dari data-* miliknya (dipakai render & ticker). */
 export function paintUpdatedCell(el, now = Date.now()) {
   const updatedAt = Number(el.dataset.updatedAt);
   const row = { updatedAt: el.dataset.updatedAt === '' ? null : updatedAt, timeframe: el.dataset.timeframe };
-  const { stale } = signalFreshness(row, now);
-  const text = formatRelative(row.updatedAt, now);
+  const { stale, fresh } = signalFreshness(row, now);
+  const closeClock = row.updatedAt === null ? null : candleCloseClock(row.updatedAt);
+  const text = fresh ? `Terbaru · ${closeClock}` : formatRelative(row.updatedAt, now);
   const label = el.firstChild;
   if (label.textContent !== text) label.textContent = text;
   const tag = el.querySelector('.updated-at__stale');
   tag.hidden = !stale;
   if (stale) el.dataset.stale = 'true';
   else delete el.dataset.stale;
+  if (fresh) el.dataset.fresh = 'true';
+  else delete el.dataset.fresh;
+  const tfMs = UPDATE_TF_MS[row.timeframe];
   el.title = row.updatedAt === null ? 'Belum ada evaluasi tercatat'
     : stale
       ? `Basi: evaluasi terakhir pada candle ${row.timeframe} yang tutup ${formatTime(row.updatedAt)}. Lebih dari 2 candle tanpa evaluasi baru — scanner mati, sedang mengejar data setelah restart, atau seri ini tertinggal.`
-      : `Evaluasi terakhir: candle ${row.timeframe} yang tutup ${formatTime(row.updatedAt)}. Diperbarui tiap candle tertutup selama scanner berjalan.`;
+      : fresh
+        ? `Terbaru: sudah dievaluasi pada candle ${row.timeframe} terakhir yang tutup ${closeClock} ${DISPLAY_TZ_LABEL} (${formatRelative(row.updatedAt, now)}). Candle ${row.timeframe} berikutnya tutup ${candleCloseClock(row.updatedAt + tfMs)} ${DISPLAY_TZ_LABEL}; kolom ini maju saat itu selama scanner berjalan.`
+        : `Evaluasi terakhir: candle ${row.timeframe} yang tutup ${formatTime(row.updatedAt)}. Candle terbaru belum dievaluasi — scanner berhenti atau sedang mengejar data.`;
 }
 
 /**

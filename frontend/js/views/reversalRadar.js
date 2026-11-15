@@ -3,27 +3,31 @@
 // backend/reversal (terpisah dari SA/PVA). Tiga panel bertumpuk urutan tetap — Early Formation, Developing Reversal,
 // Confirmed Breakout — dua pertama di atas agar tidak tertutup koin yang sudah pump. Klik baris → panel detail di
 // samping: mini-chart dengan level & penanda bukti, alasan masuk, level penting, konfirmasi berikutnya, batal bila,
-// risiko, skor & komponen, riwayat. Panel sekunder terlipat di bawah memuat tabel SA/PVA 15m lama apa adanya.
+// risiko, skor & komponen, riwayat. Panel sekunder terlipat di bawah memuat tabel SA/PVA LONG (1h) lama apa adanya.
+// Timeframe tetap 1h (REVERSAL_ACTIVE_TIMEFRAMES; keputusan pengguna 2026-11-15: LONG Scanner = 1h).
 // Skor = kecocokan aturan (0–100), bukan probabilitas. Tidak ada perintah entry/exit. Tidak ada data contoh.
 import { ApiError, api } from '../lib/api.js';
-import { callout, dataTable, emptyState, page, panel, refreshRowSelection, segmented, toggle } from '../lib/components.js';
+import { callout, dataTable, emptyState, page, panel, refreshRowSelection, toggle } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { formatPrice, formatTime } from '../lib/format.js';
 import {
-  DEFAULT_FILTERS, FILTER_STORAGE_KEY, REVERSAL_LIMIT, REVERSAL_TIMEFRAMES, SENSITIVITY_FILTERS, STAGES, STAGE_LABELS,
+  DEFAULT_FILTERS, FILTER_STORAGE_KEY, REVERSAL_ACTIVE_TIMEFRAMES, REVERSAL_LIMIT, SENSITIVITY_FILTERS, STAGES, STAGE_LABELS,
   applyFilters, buildReversalQuery, candleStatusBadge, candleStatusOf, countsByTimeframe, diffRows, effectiveStage,
   effectiveStatus, evidenceCell, evidenceLabel, evidencePreview, firstDetectedText, groupByStage, historyEntries,
   importantLevels, isProvisionalOnly, lastEvaluatedAtOf, levelsOf, liquidityBadge, markersOf, moveCell, moveInfo,
   normalizeFilters, readFilters, riskBadges, rowKey, scoreCell, scoreComponentBars, scoreValue, setupTypeLabel,
   snapshotOf, stageBadge, statusLabel, statusPill, timeframeLabel,
 } from './reversalFormat.js';
-import { createScannerSection, currentSort, decorateRows, focusedRowKey, restoreRowFocus, rowTextKey, scanRadar } from './screener.js';
+import {
+  START_BURST_MS, START_REFRESH_MS, createScannerSection, currentSort, decorateRows, focusedRowKey, restoreRowFocus, rowTextKey,
+  scanRadar,
+} from './screener.js';
 import { refreshUpdatedCells, updatedCell } from './signalFormat.js';
 import { createSymbolChartPanel, isValidSymbol, normalizeTimeframe } from './symbolChart.js';
 import { workerControlBar } from './workerControl.js';
 import { isWorkerActive } from './workerFormat.js';
 
-const SUBTITLE = 'Pelabel struktur 5m/15m/1h, deskriptif dan bukan prediksi: validasi data nyata belum menunjukkan keunggulan. Skor = kecocokan aturan, bukan probabilitas.';
+const SUBTITLE = 'Pelabel struktur 1h, deskriptif dan bukan prediksi: validasi data nyata belum menunjukkan keunggulan. Skor = kecocokan aturan, bukan probabilitas.';
 /** Penyegaran latar (hanya saat scanner benar-benar berjalan & halaman terlihat), pola screener.js. */
 const REFRESH_MS = 30_000;
 /** Teks relatif kolom "Update" dihitung ulang tiap interval ini. */
@@ -81,12 +85,11 @@ function rrSelect({ label, name, options, value, hint }) {
 
 function filterForm(filters) {
   return h('form', { class: 'toolbar rr-toolbar', 'aria-label': 'Filter Reversal Radar', 'data-testid': 'reversal-filters' },
-    h('div', { class: 'field rr-toolbar__tf' },
+    // Timeframe tetap (bukan filter), pola sama dengan tabel SA/PVA (screener.js): LONG Scanner hanya 1h.
+    h('div', { class: 'field rr-toolbar__tf', 'data-testid': 'reversal-timeframe' },
       h('span', { class: 'field__label' }, 'Timeframe'),
-      segmented({
-        name: 'timeframe', label: 'Timeframe', value: filters.timeframe,
-        options: [{ value: '', label: 'Semua' }, ...REVERSAL_TIMEFRAMES.map((tf) => ({ value: tf, label: timeframeLabel(tf) }))],
-      })),
+      h('span', { class: 'field__static' }, REVERSAL_ACTIVE_TIMEFRAMES.join(' · ')),
+      h('span', { class: 'field__hint' }, 'Tanpa konteks HTF')),
     rrSelect({
       label: 'Tahap', name: 'stage', value: filters.stage,
       options: [{ value: '', label: 'Semua' }, ...STAGES.map((s) => ({ value: s, label: STAGE_LABELS[s].title }))],
@@ -135,10 +138,10 @@ const COLUMNS = [
 
 /** Badge jumlah per timeframe: teks persis "5m 3 · 15m 2 · 1H 1" (chip per timeframe, 0 ditampilkan redup). */
 function renderCounts(el, counts) {
-  const chips = REVERSAL_TIMEFRAMES.map((tf) => h('span', { class: 'rr-count', 'data-tf': tf, 'data-zero': counts[tf] === 0 ? 'true' : undefined },
+  const chips = REVERSAL_ACTIVE_TIMEFRAMES.map((tf) => h('span', { class: 'rr-count', 'data-tf': tf, 'data-zero': counts[tf] === 0 ? 'true' : undefined },
     `${timeframeLabel(tf)} ${counts[tf]}`));
   el.replaceChildren(...chips.flatMap((chip, i) => (i === 0 ? [chip] : [' · ', chip])));
-  el.setAttribute('aria-label', `Jumlah kandidat per timeframe: ${REVERSAL_TIMEFRAMES.map((tf) => `${timeframeLabel(tf)} ${counts[tf]}`).join(', ')}`);
+  el.setAttribute('aria-label', `Jumlah kandidat per timeframe: ${REVERSAL_ACTIVE_TIMEFRAMES.map((tf) => `${timeframeLabel(tf)} ${counts[tf]}`).join(', ')}`);
 }
 
 function stagePanel(stage) {
@@ -161,7 +164,7 @@ function emptyFor(stage, filters) {
   const text = narrowed
     ? 'Longgarkan filter (timeframe, tahap, status, likuiditas, extended, provisional) untuk melihat kandidat lain.'
     : f.sensitivity === 'HIGH'
-      ? 'Kandidat muncul setelah worker mengingesti candle tertutup 5m/15m/1h dan mesin Reversal Radar menemukan bukti awal. Tidak ada data contoh yang ditampilkan.'
+      ? 'Kandidat muncul setelah worker mengingesti candle tertutup 1h dan mesin Reversal Radar menemukan bukti awal. Tidak ada data contoh yang ditampilkan.'
       : `Sensitivitas ${f.sensitivity === 'LOW' ? 'Rendah' : 'Sedang'} hanya menampilkan skor ≥ ${sens.minScore} dengan ≥ ${sens.minEvidence} bukti; pilih Tinggi untuk melihat kandidat dengan bukti lebih sedikit, termasuk Early Formation (belum terbukti lebih baik dari kebetulan — docs/21 §6.9). Tidak ada data contoh yang ditampilkan.`;
   return emptyState({ iconName: 'screener', title: `Belum ada kandidat ${STAGE_LABELS[stage].title} pada filter ini`, text });
 }
@@ -403,7 +406,7 @@ export async function reversalRadarView(ctx) {
   const statusHost = h('div', { class: 'rr-status', 'data-testid': 'reversal-status' });
   const radar = scanRadar('LONG');
 
-  // Panel sekunder: tabel SA/PVA 15m lama apa adanya (filter, kolom, test id, batas 500 — createScannerSection).
+  // Panel sekunder: tabel SA/PVA LONG 1h lama apa adanya (filter, kolom, test id, batas 500 — createScannerSection).
   const legacyCount = h('span', { class: 'rr-legacy__count num', 'data-testid': 'reversal-legacy-count' }, '…');
   let legacyAutoOpened = false;
   const legacy = createScannerSection(ctx, 'LONG', {
@@ -424,7 +427,7 @@ export async function reversalRadarView(ctx) {
       keydown: (e) => { if (e.key === 'Enter' || e.key === ' ') userToggle = true; },
     },
   },
-  h('span', { class: 'rr-legacy__title' }, 'Pola SA/PVA 15m (mesin lama)'),
+  h('span', { class: 'rr-legacy__title' }, 'Pola SA/PVA 1h (mesin lama)'),
   legacyCount,
   h('span', { class: 'rr-legacy__hint' }, 'Tabel LONG Scanner sebelumnya, tanpa perubahan'));
   const details = h('details', { class: 'rr-legacy', 'data-testid': 'reversal-legacy', open: readStored(LEGACY_OPEN_KEY) === '1' },
@@ -442,6 +445,7 @@ export async function reversalRadarView(ctx) {
   let refreshTimer = null;
   let clockTimer = null;
   let disposed = false;
+  let burstUntil = 0;
   const lastFlashAt = new Map();
 
   function showError(err) {
@@ -530,8 +534,15 @@ export async function reversalRadarView(ctx) {
     status,
     onState: (s) => {
       radar.set(s);
-      workerActive = isWorkerActive(s);
+      const next = isWorkerActive(s);
+      const justStarted = next && !workerActive;
+      workerActive = next;
       legacy.setWorkerActive(workerActive);
+      // Scanner baru dinyalakan: muat ulang cepat sebentar agar kolom "Update" langsung maju (pola screener.js).
+      if (justStarted && !disposed) {
+        burstUntil = Date.now() + START_BURST_MS;
+        scheduleRefresh();
+      }
     },
   });
 
@@ -561,7 +572,7 @@ export async function reversalRadarView(ctx) {
       if (disposed || !el.isConnected) return;
       if (workerActive && !document.hidden) await load({ background: true });
       if (!disposed && el.isConnected) scheduleRefresh();
-    }, REFRESH_MS);
+    }, Date.now() < burstUntil ? START_REFRESH_MS : REFRESH_MS);
   }
 
   function startClock() {

@@ -13,6 +13,7 @@ import { reversalRoutes } from '../api/reversalRoutes.js';
 import { settingsRoutes } from '../api/settingsRoutes.js';
 import { signalRoutes } from '../api/signalRoutes.js';
 import { DIRECTION_TIMEFRAMES } from '../market/contracts.js';
+import { REVERSAL_ACTIVE_TIMEFRAMES } from '../reversal/constants.js';
 import { smartMoneyRoutes } from '../api/smartMoneyRoutes.js';
 import { systemRoutes } from '../api/systemRoutes.js';
 import { workerRoutes } from '../api/workerRoutes.js';
@@ -71,6 +72,7 @@ const CHART_VENDOR_DIR = resolveChartVendorDir();
 export async function buildApp({
   config, db, clock = Date.now, hasherOptions, logger, workerSupervisor, workerScriptPath, workerRestartCooldownMs,
   smartMoneyRegistry, smartMoneySync, directionTimeframes = DIRECTION_TIMEFRAMES,
+  reversalTimeframes = REVERSAL_ACTIVE_TIMEFRAMES,
 }) {
   const app = Fastify({
     logger: logger ?? {
@@ -192,7 +194,7 @@ export async function buildApp({
   await app.register(signalRoutes, { signals: repos.signals, candles: repos.candles, directionTimeframes });
   await app.register(marketRoutes, { candles: repos.candles });
   // Reversal Radar (docs/19 §7): baca saja, gerbang auth sama dengan /api/signals/* (default registerAuth).
-  await app.register(reversalRoutes, { reversal: repos.reversal, candles: repos.candles });
+  await app.register(reversalRoutes, { reversal: repos.reversal, candles: repos.candles, timeframes: reversalTimeframes });
   await app.register(smartMoneyRoutes, {
     repo: repos.smartMoney, signals: repos.signals, registry: smRegistry, config: config.smartMoney, clock, audit: repos.audit,
     syncRunner: smSync,

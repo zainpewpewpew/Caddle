@@ -9,12 +9,35 @@ import { createTestApp, login } from '../helpers/testApp.js';
 const H1 = 3_600_000;
 const symbols = (res) => res.json().items.map((i) => i.symbol);
 
+describe('API Reversal Radar — timeframe aktif produksi (LONG Scanner hanya 1h)', () => {
+  it('POS-RR-TF-001 default hanya kandidat 1h; ?timeframe=5m/15m → daftar kosong (bukan 400); riwayat tetap lengkap', async () => {
+    const app = await createTestApp();
+    const cookie = (await login(app.app)).cookie;
+    const fetchJson = async (url) => (await app.app.inject({ url, headers: { cookie } })).json();
+    try {
+      await seedReversalCandidates(app.app.services.repos);
+      const res = await fetchJson('/api/reversal/candidates');
+      expect(res.meta.timeframes).toEqual(['1h']);
+      expect(res.items.map((i) => `${i.symbol} ${i.timeframe}`)).toEqual(['CCCUSDT 1h']);
+      expect(await fetchJson('/api/reversal/candidates?timeframe=5m')).toMatchObject({ items: [], count: 0, meta: { timeframes: ['1h'] } });
+      expect(await fetchJson('/api/reversal/candidates?timeframe=15m')).toMatchObject({ items: [], count: 0 });
+      expect((await fetchJson('/api/reversal/candidates?timeframe=1h')).count).toBe(1);
+      // Kandidat lama 5m/15m tetap dapat ditelusuri di riwayat.
+      expect(new Set((await fetchJson('/api/reversal/history')).items.map((i) => i.timeframe))).toEqual(new Set(['5m', '15m', '1h']));
+    } finally {
+      await app.app.close();
+    }
+  });
+});
+
+// Mekanika filter API diuji pada SEMUA timeframe yang didukung mesin (reversalTimeframes: null); pembatasan produksi
+// (hanya 1h) diuji POS-RR-TF-001.
 describe('API Reversal Radar — alur positif', () => {
   let ctx;
   let auth;
   let repos;
   beforeEach(async () => {
-    ctx = await createTestApp();
+    ctx = await createTestApp({ appOptions: { reversalTimeframes: null } });
     auth = await login(ctx.app);
     repos = ctx.app.services.repos;
   });

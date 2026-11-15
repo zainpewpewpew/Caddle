@@ -202,7 +202,8 @@ export async function overviewView(ctx) {
     short: kpi({ label: 'Kandidat SHORT aktif', hint: 'QUIET → BREAKDOWN', testId: 'kpi-active-short', tone: 'bear' }),
     // earlySignals & alignedSignals dari server tetap hitungan LONG (rincian per arah: earlyByDirection/alignedByDirection).
     early: kpi({ label: 'Sinyal tahap awal', hint: 'EARLY_BULLISH' }),
-    aligned: kpi({ label: 'Konfirmasi multi-TF', hint: 'Sinyal LONG aktif ALIGNED' }),
+    // LONG kini 1h tanpa HTF (Alignment selalu UNCONFIRMED) → konfirmasi multi-TF hanya bermakna untuk SHORT 15m (konteks 1h).
+    aligned: kpi({ label: 'Konfirmasi multi-TF', hint: 'Sinyal SHORT 15m ALIGNED (konteks 1h)' }),
   };
   const ingestEl = stat({ label: 'Ingesti terakhir', value: '—', muted: true, hint: 'Belum ada candle tersimpan' });
   ingestEl.classList.add('ov-kpi');
@@ -228,7 +229,10 @@ export async function overviewView(ctx) {
     k.short.el.hidden = !byDirection;
     if (byDirection) k.short.set(byDirection.SHORT);
     k.early.set(d.earlySignals);
-    k.aligned.set(d.alignedSignals);
+    // Hanya bila server melaporkan rincian per arah; tanpa itu angka LONG tidak ditampilkan dengan label SHORT.
+    const alignedShort = d.alignedByDirection?.SHORT;
+    k.aligned.el.hidden = !Number.isFinite(alignedShort);
+    if (Number.isFinite(alignedShort)) k.aligned.set(alignedShort);
     const ingestValue = ingestEl.querySelector('.stat__value');
     // Angka mono, kata satuan sans (figureValue) — aturan angka yang sama dengan tile KPI lain.
     const ingestText = figureValue(d.lastIngestionAt ? formatRelative(d.lastIngestionAt) : '—');

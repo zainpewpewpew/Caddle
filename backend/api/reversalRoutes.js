@@ -4,7 +4,11 @@
 // `sensitivity` (LOW/MEDIUM/HIGH) adalah FILTER TAMPILAN (skor & jumlah bukti minimum, SENSITIVITY_FILTERS) yang
 // diterapkan di server SEBELUM limit — bukan parameter mesin, sehingga histori tidak bergantung pilihan UI.
 // Skor kandidat = skor aturan yang dapat dijelaskan, BUKAN probabilitas; tidak ada perintah transaksi.
-import { LIQUIDITY_CLASSES, OPEN_STATUSES, REVERSAL_TIMEFRAMES, SENSITIVITIES, SENSITIVITY_FILTERS, STAGES } from '../reversal/constants.js';
+// Kandidat aktif hanya untuk timeframe radar AKTIF (REVERSAL_ACTIVE_TIMEFRAMES, saat ini 1h): kandidat lama 5m/15m yang
+// belum ditutup worker tidak pernah tampil; ?timeframe= di luar daftar aktif → daftar kosong (bukan 400).
+import {
+  LIQUIDITY_CLASSES, OPEN_STATUSES, REVERSAL_ACTIVE_TIMEFRAMES, REVERSAL_TIMEFRAMES, SENSITIVITIES, SENSITIVITY_FILTERS, STAGES,
+} from '../reversal/constants.js';
 
 // limit 1..500 (sama dengan batas listActive/history di repositori). Di luar rentang → 400, tidak dipotong diam-diam.
 const LIMIT = { type: 'string', pattern: '^([1-9][0-9]?|[1-4][0-9]{2}|500)$' };
@@ -52,10 +56,15 @@ const candidateParamsSchema = {
 const toInt = (value, fallback) => (value === undefined ? fallback : Number.parseInt(value, 10));
 
 /**
- * @param {{ reversal: object, candles: object }} deps repositori reversal (§5) & candle (harga terakhir per seri)
+ * @param {{ reversal: object, candles: object, timeframes?: readonly string[]|null }} deps repositori reversal (§5) &
+ *   candle (harga terakhir per seri). `timeframes`: timeframe radar aktif (default REVERSAL_ACTIVE_TIMEFRAMES); null =
+ *   semua REVERSAL_TIMEFRAMES (tanpa pembatasan, dipakai tes mekanika).
  */
-export async function reversalRoutes(app, { reversal, candles }) {
+export async function reversalRoutes(app, { reversal, candles, timeframes = REVERSAL_ACTIVE_TIMEFRAMES }) {
   if (!reversal || !candles) throw new TypeError('reversal dan candles wajib ada');
+  if (timeframes !== null && !Array.isArray(timeframes)) throw new TypeError('timeframes harus array atau null');
+  const active = timeframes === null ? [...REVERSAL_TIMEFRAMES] : REVERSAL_TIMEFRAMES.filter((tf) => timeframes.includes(tf));
+  const allActive = active.length === REVERSAL_TIMEFRAMES.length;
 
   /** Menambahkan lastPrice/lastCandleAt (candle tutup terakhir seri) ke setiap baris; tanpa candle → null, tidak dikarang. */
   async function withLastPrice(rows) {
@@ -71,8 +80,12 @@ export async function reversalRoutes(app, { reversal, candles }) {
     const q = request.query;
     const sensitivity = q.sensitivity ?? DEFAULT_SENSITIVITY;
     const filter = SENSITIVITY_FILTERS[sensitivity];
+    const meta = { timeframes: active, sensitivity, filters: SENSITIVITY_FILTERS };
+    if (q.timeframe !== undefined && !active.includes(q.timeframe)) return { items: [], count: 0, meta };
+    // Satu timeframe aktif → disaring di query (sebelum limit); beberapa (bukan semua) → disaring setelah query.
+    const timeframe = q.timeframe ?? (allActive ? null : active.length === 1 ? active[0] : null);
     const rows = await reversal.listActive({
-      timeframe: q.timeframe ?? null,
+      timeframe,
       stage: q.stage ?? null,
       status: q.status ?? null,
       liquidity: q.liquidity ?? null,
@@ -83,8 +96,9 @@ export async function reversalRoutes(app, { reversal, candles }) {
       includeProvisional: q.includeProvisional !== '0',
       limit: toInt(q.limit, DEFAULT_ACTIVE_LIMIT),
     });
-    const items = await withLastPrice(rows);
-    return { items, count: items.length, meta: { timeframes: [...REVERSAL_TIMEFRAMES], sensitivity, filters: SENSITIVITY_FILTERS } };
+    const scoped = timeframe === null && !allActive ? rows.filter((r) => active.includes(r.timeframe)) : rows;
+    const items = await withLastPrice(scoped);
+    return { items, count: items.length, meta };
   });
 
   app.get('/api/reversal/history', { schema: { querystring: historyQuerySchema } }, async (request) => {

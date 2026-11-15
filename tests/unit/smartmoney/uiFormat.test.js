@@ -136,7 +136,7 @@ describe('Smart Money UI — format', () => {
   });
 
   it('UNIT-SM-UI-016 symbolChartHref hanya untuk MATCHED dengan simbol futures valid', () => {
-    expect(symbolChartHref({ status: 'MATCHED', futuresSymbol: 'PEPEUSDT' })).toBe('#/symbol?s=PEPEUSDT&tf=15m&dir=LONG');
+    expect(symbolChartHref({ status: 'MATCHED', futuresSymbol: 'PEPEUSDT' })).toBe('#/symbol?s=PEPEUSDT&tf=1h&dir=LONG');
     expect(symbolChartHref({ status: 'SYMBOL_ONLY', futuresSymbol: 'PEPEUSDT' })).toBeNull();
     expect(symbolChartHref({ status: 'MATCHED', futuresSymbol: '<script>' })).toBeNull();
     expect(symbolChartHref({ status: 'MATCHED', futuresSymbol: null })).toBeNull();

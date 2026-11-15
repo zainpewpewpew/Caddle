@@ -7,7 +7,7 @@ export const ALERT_STAGES = Object.freeze(['EARLY_BULLISH', 'MOMENTUM_BUILDING',
 
 export const DEFAULT_SCANNER_SETTINGS = Object.freeze({
   symbols: { mode: 'auto', maxAuto: 40, manual: [] },
-  // Informasi saja sejak 2026-10-26: worker memakai timeframe tetap per arah (LONG 15m, SHORT 1h — DIRECTION_TIMEFRAMES).
+  // Informasi saja sejak 2026-10-26: worker memakai timeframe tetap per arah (LONG 1h, SHORT 15m sejak 2026-11-15 — DIRECTION_TIMEFRAMES).
   timeframes: ['15m', '1h'],
   liquidity: { minQuoteVolume24h: 50_000_000, maxSpreadBps: 10 },
   refresh: { bootstrapCandles: 500, restBackfillIntervalSec: 300 },

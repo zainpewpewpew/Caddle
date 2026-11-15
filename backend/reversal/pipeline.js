@@ -126,10 +126,30 @@ export function createReversalPipeline({
     return higher;
   }
 
+  // Seri yang candle-nya masih diingesti (mis. 5m untuk grafik, 15m untuk SHORT) tetapi timeframe-nya tidak lagi
+  // dievaluasi radar (REVERSAL_ACTIVE_TIMEFRAMES): kandidat terbuka & provisional-nya ditutup EXPIRED/MONITORING_STOPPED
+  // sekali per proses, agar tidak menggantung selamanya (pola closeLeftovers di analysis/pipeline.js).
+  const leftoverChecked = new Set();
+  async function closeLeftovers(symbol, timeframe) {
+    const key = seriesKey(symbol, timeframe);
+    if (!REVERSAL_TIMEFRAMES.includes(timeframe) || leftoverChecked.has(key)) return;
+    leftoverChecked.add(key);
+    const [last] = await repos.candles.getLatest({ symbol, timeframe, limit: 1 });
+    if (!last) return;
+    const result = await reversal.closeOpenForSymbol({ symbol, timeframes: [timeframe], reason: 'MONITORING_STOPPED', at: last.closeTime });
+    pendingNone.delete(key);
+    if (result.closed.length > 0) {
+      logger?.info?.({ symbol, timeframe, closed: result.closed.length }, 'kandidat reversal ditutup: timeframe tidak lagi dievaluasi Reversal Radar');
+    }
+  }
+
   async function evaluateSeries({ symbol, timeframe }) {
     if (!TIMEFRAMES.includes(timeframe)) throw new RangeError(`Timeframe tidak didukung: ${String(timeframe)}`);
     if (typeof symbol !== 'string' || symbol.length === 0) throw new TypeError('symbol wajib string');
-    if (!activeTimeframes.includes(timeframe)) return { symbol, timeframe, skipped: 'NOT_SCANNED' };
+    if (!activeTimeframes.includes(timeframe)) {
+      await closeLeftovers(symbol, timeframe);
+      return { symbol, timeframe, skipped: 'NOT_SCANNED' };
+    }
     const key = seriesKey(symbol, timeframe);
     const base = await repos.candles.getLatest({ symbol, timeframe, limit: lookback + maxReplay });
     if (!base.length) return { symbol, timeframe, skipped: 'NO_DATA' };

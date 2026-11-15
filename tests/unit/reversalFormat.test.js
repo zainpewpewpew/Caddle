@@ -69,8 +69,12 @@ describe('reversalFormat — pengelompokan & jumlah', () => {
 describe('reversalFormat — filter & query (docs/19 §7–§8.3)', () => {
   it('UNIT-RRF-004 buildReversalQuery: default eksplisit; semua filter dikirim; nilai tak dikenal → default', () => {
     expect(buildReversalQuery(DEFAULT_FILTERS)).toBe('/api/reversal/candidates?sensitivity=MEDIUM&includeExtended=1&includeProvisional=1&limit=500');
-    expect(buildReversalQuery({ timeframe: '5m', stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING', liquidity: 'THIN', sensitivity: 'LOW', hideExtended: true, showProvisional: false }))
-      .toBe('/api/reversal/candidates?timeframe=5m&stage=DEVELOPING_REVERSAL&status=DEVELOPING&liquidity=THIN&sensitivity=LOW&includeExtended=0&includeProvisional=0&limit=500');
+    expect(buildReversalQuery({ timeframe: '1h', stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING', liquidity: 'THIN', sensitivity: 'LOW', hideExtended: true, showProvisional: false }))
+      .toBe('/api/reversal/candidates?timeframe=1h&stage=DEVELOPING_REVERSAL&status=DEVELOPING&liquidity=THIN&sensitivity=LOW&includeExtended=0&includeProvisional=0&limit=500');
+    // Filter tersimpan dari masa radar 5m/15m/1h: timeframe yang tidak lagi aktif (LONG Scanner hanya 1h) dibuang.
+    expect(normalizeFilters({ timeframe: '5m' }).timeframe).toBe('');
+    expect(normalizeFilters({ timeframe: '15m' }).timeframe).toBe('');
+    expect(buildReversalQuery({ timeframe: '5m' })).not.toContain('timeframe=');
     expect(normalizeFilters({ timeframe: '4h', stage: 'X', status: 'CANCELLED', liquidity: 'ILLIQUID', sensitivity: 'ULTRA', hideExtended: 'true', showProvisional: 'false' }))
       .toEqual({ timeframe: '', stage: '', status: '', liquidity: '', sensitivity: 'MEDIUM', hideExtended: true, showProvisional: false });
     expect(normalizeFilters('rusak')).toEqual(DEFAULT_FILTERS);
@@ -89,7 +93,7 @@ describe('reversalFormat — filter & query (docs/19 §7–§8.3)', () => {
 
   it('UNIT-RRF-005 applyFilters = penjaga kontrak: timeframe, tahap, status, likuiditas minimum, extended, provisional', () => {
     const rows = [
-      row({ symbol: 'A', timeframe: '5m' }),
+      row({ symbol: 'A', timeframe: '1h' }),
       row({ symbol: 'B', stage: 'CONFIRMED_BREAKOUT', status: 'CONFIRMED', extended: true }),
       row({ symbol: 'C', liquidityClass: 'THIN', risks: ['EXTENDED'] }),
       row({ symbol: 'D', liquidityClass: 'ILLIQUID' }),
@@ -97,7 +101,7 @@ describe('reversalFormat — filter & query (docs/19 §7–§8.3)', () => {
     ];
     const names = (list) => list.map((r) => r.symbol);
     expect(names(applyFilters(rows, DEFAULT_FILTERS))).toEqual(['A', 'B', 'C', 'D', 'P']);
-    expect(names(applyFilters(rows, { timeframe: '5m' }))).toEqual(['A']);
+    expect(names(applyFilters(rows, { timeframe: '1h' }))).toEqual(['A']);
     expect(names(applyFilters(rows, { stage: 'CONFIRMED_BREAKOUT' }))).toEqual(['B']);
     expect(names(applyFilters(rows, { status: 'DEVELOPING' }))).toEqual(['P']);
     expect(names(applyFilters(rows, { liquidity: 'THIN' }))).toEqual(['A', 'B', 'C', 'P']);

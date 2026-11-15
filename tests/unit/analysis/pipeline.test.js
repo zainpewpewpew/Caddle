@@ -572,15 +572,18 @@ describe('createAnalysisPipeline (SQLite)', () => {
   });
 });
 
-describe('timeframe tetap per arah (LONG 15m, SHORT 1h)', () => {
+describe('timeframe tetap per arah (produksi LONG 1h, SHORT 15m; mekanika memakai pemetaan eksplisit)', () => {
+  // Pemetaan eksplisit untuk menguji MEKANIKA filter arah × timeframe (data uji SA 15m/1h); produksi: UNIT-PIPE-TF-001.
   const FIXED = Object.freeze({ LONG: ['15m'], SHORT: ['1h'] });
 
-  it('UNIT-PIPE-TF-001 DIRECTION_TIMEFRAMES = LONG 15m, SHORT 1h; scannedTimeframes → [15m, 1h]', async () => {
-    const { DIRECTION_TIMEFRAMES, scannedTimeframes } = await import('../../../backend/market/contracts.js');
-    expect(DIRECTION_TIMEFRAMES).toEqual({ LONG: ['15m'], SHORT: ['1h'] });
+  it('UNIT-PIPE-TF-001 DIRECTION_TIMEFRAMES = LONG 1h, SHORT 15m (keputusan pengguna 2026-11-15); scannedTimeframes → [15m, 1h]', async () => {
+    const { CHART_TIMEFRAMES, DIRECTION_TIMEFRAMES, TIMEFRAMES, scannedTimeframes } = await import('../../../backend/market/contracts.js');
+    expect(DIRECTION_TIMEFRAMES).toEqual({ LONG: ['1h'], SHORT: ['15m'] });
     expect(scannedTimeframes()).toEqual(['15m', '1h']);
-    expect(scannedTimeframes(['LONG'])).toEqual(['15m']);
-    expect(scannedTimeframes(['SHORT'])).toEqual(['1h']);
+    expect(scannedTimeframes(['LONG'])).toEqual(['1h']);
+    expect(scannedTimeframes(['SHORT'])).toEqual(['15m']);
+    // Grafik Symbol Intelligence tetap 5m/15m/1h → worker tetap mengingesti ketiganya.
+    expect(CHART_TIMEFRAMES).toEqual(TIMEFRAMES);
   });
 
   it('UNIT-PIPE-TF-002 seri 5m tidak dievaluasi arah mana pun (NO_DIRECTION), tanpa sinyal & tanpa kursor', async () => {

@@ -25,14 +25,22 @@ export const DIRECTIONS = Object.freeze(['LONG', 'SHORT']);
 export const DEFAULT_DIRECTION = 'LONG';
 
 /**
- * Timeframe yang dipindai per arah (keputusan pengguna 2026-10-26): LONG Scanner hanya 15m (konteks HTF 1h),
- * SHORT Scanner hanya 1h (tanpa HTF di sistem). Worker live hanya mengevaluasi arah pada timeframe-nya, API
- * daftar sinyal per arah hanya mengembalikan timeframe ini, dan UI menampilkan timeframe tetap.
+ * Timeframe yang dipindai per arah (keputusan pengguna 2026-11-15, menggantikan LONG 15m / SHORT 1h sejak
+ * 2026-10-26): LONG Scanner hanya 1h (tanpa HTF di sistem → Alignment selalu UNCONFIRMED, komponen HTF keluar dari
+ * penyebut confluence sehingga tier A tetap mungkin), SHORT Scanner hanya 15m (konteks HTF 1h). Worker live hanya
+ * mengevaluasi arah pada timeframe-nya (sinyal lama di timeframe lain ditutup MONITORING_STOPPED), API daftar sinyal
+ * per arah hanya mengembalikan timeframe ini, dan UI menampilkan timeframe tetap.
  */
 export const DIRECTION_TIMEFRAMES = Object.freeze({
-  LONG: Object.freeze(['15m']),
-  SHORT: Object.freeze(['1h']),
+  LONG: Object.freeze(['1h']),
+  SHORT: Object.freeze(['15m']),
 });
+
+/**
+ * Timeframe grafik Symbol Intelligence (selaras CHART_TIMEFRAMES frontend symbolChart.js). Worker selalu mengingesti
+ * timeframe ini walau tidak semuanya dianalisis (mis. 5m hanya untuk grafik sejak Reversal Radar hanya 1h).
+ */
+export const CHART_TIMEFRAMES = TIMEFRAMES;
 
 /** Timeframe yang dianalisis untuk daftar arah (gabungan DIRECTION_TIMEFRAMES, urut TIMEFRAMES). */
 export function scannedTimeframes(directions = DIRECTIONS) {

@@ -199,7 +199,7 @@ test('E2E-SM-004 detail token: kecocokan Binance; tautan #/symbol hanya untuk ko
   await expect(binance.locator('.sm-match')).toHaveAttribute('data-status', 'MATCHED');
   await expect(binance.locator('.sm-match')).toHaveText(X.pepe.futuresSymbol);
   await expect(binance).toContainText('1 kontrak = 1000 token');
-  await expect(page.getByTestId('sm-open-chart')).toHaveAttribute('href', `#/symbol?s=${X.pepe.futuresSymbol}&tf=15m&dir=LONG`);
+  await expect(page.getByTestId('sm-open-chart')).toHaveAttribute('href', `#/symbol?s=${X.pepe.futuresSymbol}&tf=1h&dir=LONG`);
   await expect(page.locator('a[href^="#/symbol?"]')).toHaveCount(1);
 
   // Kontrak B bersimbol sama tetapi tidak terverifikasi → peringatan, tanpa tautan chart/sinyal.

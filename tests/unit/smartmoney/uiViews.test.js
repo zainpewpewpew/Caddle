@@ -81,7 +81,7 @@ describe('Smart Money UI — Radar', () => {
     expect(unknown.length).toBeGreaterThan(0);
     expect(unknown[0].getAttribute('title')).toBe('nilai USD tidak diketahui');
     // Buka chart hanya untuk MATCHED.
-    const charts = el.querySelectorAll('a[href="#/symbol?s=1000PEPEUSDT&tf=15m&dir=LONG"]');
+    const charts = el.querySelectorAll('a[href="#/symbol?s=1000PEPEUSDT&tf=1h&dir=LONG"]');
     expect(charts).toHaveLength(1);
 
     // Bukti dimuat saat tombol diperluas.
@@ -338,7 +338,7 @@ describe('Smart Money UI — Token', () => {
   it('UNIT-SM-UI-080 Buka chart hanya bila MATCHED; SYMBOL_ONLY tidak ditautkan ke sinyal', async () => {
     dom = installFakeDom({ hash: `#/smart-token?c=ethereum&a=${TOKEN}`, responses: jsonRoute({ [`/api/smart-money/tokens/ethereum/${TOKEN}`]: tokenDetail(radarItem().binance) }) });
     let el = await smartTokenView();
-    expect(el.querySelector('[data-testid="sm-open-chart"]').getAttribute('href')).toBe('#/symbol?s=1000PEPEUSDT&tf=15m&dir=LONG');
+    expect(el.querySelector('[data-testid="sm-open-chart"]').getAttribute('href')).toBe('#/symbol?s=1000PEPEUSDT&tf=1h&dir=LONG');
     expect(el.querySelector('[data-testid="sm-token-contract"]').textContent).toBe(TOKEN);
     expect(texts(el)).toContain('Swap jual');
     expect(el.querySelector(`a[href="#/smart-wallet?c=ethereum&a=${W1}"]`)).not.toBeNull();

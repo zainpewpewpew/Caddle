@@ -9,7 +9,9 @@ import { EMPTY, formatPercent, formatPrice, formatTime } from '../lib/format.js'
 // ---------- Konstanta (selaras dengan backend/reversal/constants.js; frontend tidak mengimpor modul backend) ----------
 
 export const REVERSAL_TIMEFRAMES = Object.freeze(['5m', '15m', '1h']);
-export const STAGES = Object.freeze(['EARLY_FORMATION', 'DEVELOPING_REVERSAL', 'CONFIRMED_BREAKOUT']);
+/** Timeframe radar yang aktif di LONG Scanner (selaras REVERSAL_ACTIVE_TIMEFRAMES backend): hanya 1h sejak 2026-11-15. */
+export const REVERSAL_ACTIVE_TIMEFRAMES = Object.freeze(['1h']);
+export const STAGES =Object.freeze(['EARLY_FORMATION', 'DEVELOPING_REVERSAL', 'CONFIRMED_BREAKOUT']);
 export const STAGE_RANK = Object.freeze({ EARLY_FORMATION: 1, DEVELOPING_REVERSAL: 2, CONFIRMED_BREAKOUT: 3 });
 export const STATUSES = Object.freeze(['NEW', 'DEVELOPING', 'CONFIRMED', 'CANCELLED', 'EXPIRED']);
 export const OPEN_STATUSES = Object.freeze(['NEW', 'DEVELOPING', 'CONFIRMED']);
@@ -266,7 +268,8 @@ const pick = (value, allowed) => (allowed.includes(value) ? value : '');
 export function normalizeFilters(raw) {
   const src = raw && typeof raw === 'object' ? raw : {};
   return {
-    timeframe: pick(src.timeframe, REVERSAL_TIMEFRAMES),
+    // Filter tersimpan dari masa radar 5m/15m/1h (mis. '5m') tidak lagi berlaku → semua timeframe aktif.
+    timeframe: pick(src.timeframe, REVERSAL_ACTIVE_TIMEFRAMES),
     stage: pick(src.stage, STAGES),
     status: pick(src.status, OPEN_STATUSES),
     liquidity: pick(src.liquidity, ['LIQUID', 'THIN']),

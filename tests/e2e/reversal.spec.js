@@ -101,9 +101,9 @@ test('E2E-RR-001 tiga panel tahap urut tetap dengan jumlah per timeframe; filter
   // Urutan tetap: dua tahap awal di atas, Confirmed Breakout paling bawah.
   expect(await page.locator('.rr-stage').evaluateAll((els) => els.map((el) => el.dataset.stage)))
     .toEqual(['EARLY_FORMATION', 'DEVELOPING_REVERSAL', 'CONFIRMED_BREAKOUT']);
-  await expect(page.getByTestId('reversal-early-counts')).toHaveText('5m 1 · 15m 2 · 1H 1');
-  await expect(page.getByTestId('reversal-developing-counts')).toHaveText('5m 1 · 15m 1 · 1H 1');
-  await expect(page.getByTestId('reversal-confirmed-counts')).toHaveText('5m 1 · 15m 1 · 1H 1');
+  await expect(page.getByTestId('reversal-early-counts')).toHaveText('1H 4');
+  await expect(page.getByTestId('reversal-developing-counts')).toHaveText('1H 3');
+  await expect(page.getByTestId('reversal-confirmed-counts')).toHaveText('1H 3');
   await expect(page.getByTestId('reversal-summary')).toContainText('10 kandidat · Early 4 · Developing 3 · Confirmed 3 · 1 provisional');
 
   // Baris berada di panel tahapnya; kolom sesuai §8.4.
@@ -137,12 +137,12 @@ test('E2E-RR-001 tiga panel tahap urut tetap dengan jumlah per timeframe; filter
   // Panel sekunder SA/PVA: terlipat (server kosong → 0 kandidat lama), isinya tabel LONG lama apa adanya.
   const legacy = page.getByTestId('reversal-legacy');
   await expect(legacy).toBeVisible();
-  await expect(legacy.locator('summary')).toContainText('Pola SA/PVA 15m (mesin lama)');
+  await expect(legacy.locator('summary')).toContainText('Pola SA/PVA 1h (mesin lama)');
   await expect(legacy.getByTestId('reversal-legacy-count')).toHaveText('0 kandidat');
   expect(await legacy.evaluate((el) => el.open)).toBe(false);
   await expect(legacy.getByTestId('screener-results')).toBeAttached();
   await legacy.locator('summary').click();
-  await expect(legacy.getByTestId('scanner-timeframe')).toContainText('15m');
+  await expect(legacy.getByTestId('scanner-timeframe')).toContainText('1h');
   await expect(legacy.getByTestId('screener-results').getByText('Belum ada kandidat LONG')).toBeVisible();
   await expect(legacy.locator('.panel__actions .badge')).toHaveText('0 hasil');
 
@@ -150,37 +150,37 @@ test('E2E-RR-001 tiga panel tahap urut tetap dengan jumlah per timeframe; filter
   expect(errors).toEqual([]);
 });
 
-test('E2E-RR-002 filter timeframe/tahap/sensitivitas/likuiditas dikirim ke server sebagai query dan disimpan di localStorage', async ({ page }) => {
+test('E2E-RR-002 timeframe tetap 1h (label, bukan filter; filter timeframe lama tersimpan diabaikan); filter tahap/sensitivitas/likuiditas dikirim ke server sebagai query dan disimpan di localStorage', async ({ page }) => {
   const errors = watchErrors(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await mockReversal(page);
+  const requests = await mockReversal(page);
   await signIn(page);
+  // Preferensi tersimpan dari masa radar 5m/15m/1h: timeframe '5m' tidak lagi berlaku dan tidak pernah dikirim ke server.
+  await page.evaluate(() => window.localStorage.setItem('lr.reversal.filters', JSON.stringify({ timeframe: '5m', sensitivity: 'MEDIUM' })));
   await gotoRadar(page);
   const form = filterForm(page);
+  await expect(page.getByTestId('reversal-timeframe')).toContainText('1h');
+  await expect(form.getByRole('radio')).toHaveCount(0);
+  await expect(page.getByTestId('reversal-early-counts')).toHaveText('1H 4');
+  expect(requests.length).toBeGreaterThan(0);
+  expect(requests.every((p) => p.get('timeframe') === null)).toBe(true);
 
-  const req15 = waitForList(page, (p) => p.get('timeframe') === '15m');
-  await form.getByRole('radio', { name: '15m' }).check();
-  await req15;
-  await expect(page.getByTestId('reversal-early-counts')).toHaveText('5m 0 · 15m 2 · 1H 0');
-  await expect(panelRow(page, 'reversal-early', 'ALPUSDT')).toHaveCount(0);
-
-  const reqStage = waitForList(page, (p) => p.get('timeframe') === '15m' && p.get('stage') === 'DEVELOPING_REVERSAL');
+  const reqStage = waitForList(page, (p) => p.get('stage') === 'DEVELOPING_REVERSAL');
   await form.getByLabel('Tahap').selectOption('DEVELOPING_REVERSAL');
   await reqStage;
   await expect(page.getByTestId('reversal-early').getByText('Belum ada kandidat Early Formation pada filter ini')).toBeVisible();
   await expect(panelRow(page, 'reversal-developing', 'EPSUSDT')).toBeVisible();
 
-  // Kembali ke Semua timeframe & tahap, lalu sensitivitas Rendah: hanya skor ≥ 60 dengan ≥ 4 bukti.
+  // Kembali ke Semua tahap, lalu sensitivitas Rendah: hanya skor ≥ 60 dengan ≥ 4 bukti.
+  const reqAll = waitForList(page, (p) => p.get('stage') === null);
   await form.getByLabel('Tahap').selectOption('');
-  const reqAll = waitForList(page, (p) => p.get('timeframe') === null && p.get('stage') === null);
-  await form.getByRole('radio', { name: 'Semua' }).check();
   await reqAll;
   const reqLow = waitForList(page, (p) => p.get('sensitivity') === 'LOW');
   await form.getByLabel('Sensitivitas').selectOption('LOW');
   await reqLow;
-  await expect(page.getByTestId('reversal-early-counts')).toHaveText('5m 0 · 15m 0 · 1H 0');
-  await expect(page.getByTestId('reversal-developing-counts')).toHaveText('5m 1 · 15m 1 · 1H 0');
-  await expect(page.getByTestId('reversal-confirmed-counts')).toHaveText('5m 0 · 15m 1 · 1H 0');
+  await expect(page.getByTestId('reversal-early-counts')).toHaveText('1H 0');
+  await expect(page.getByTestId('reversal-developing-counts')).toHaveText('1H 2');
+  await expect(page.getByTestId('reversal-confirmed-counts')).toHaveText('1H 1');
   await expect(page.getByTestId('reversal-early').getByText('Belum ada kandidat Early Formation pada filter ini')).toBeVisible();
 
   const reqLiquid = waitForList(page, (p) => p.get('liquidity') === 'LIQUID' && p.get('sensitivity') === 'LOW');
@@ -213,7 +213,7 @@ test('E2E-RR-003 toggle "Sembunyikan yang sudah extended" mengirim includeExtend
   await filterForm(page).getByRole('switch', { name: 'Sembunyikan yang sudah extended' }).check();
   await hidden;
   await expect(eta).toHaveCount(0);
-  await expect(page.getByTestId('reversal-confirmed-counts')).toHaveText('5m 0 · 15m 1 · 1H 1');
+  await expect(page.getByTestId('reversal-confirmed-counts')).toHaveText('1H 2');
 
   const shown = waitForList(page, (p) => p.get('includeExtended') === '1');
   await filterForm(page).getByRole('switch', { name: 'Sembunyikan yang sudah extended' }).uncheck();
@@ -238,8 +238,8 @@ test('E2E-RR-004 klik baris membuka panel detail: mini-chart berlevel, alasan ma
   await expect(row).toHaveAttribute('aria-current', 'true');
   const detail = page.getByTestId('reversal-detail');
   await expect(detail).toBeVisible();
-  await expect(detail.locator('.panel__title')).toHaveText('DELUSDT · 5m');
-  await expect(detail.getByRole('link', { name: 'Buka detail' })).toHaveAttribute('href', '#/symbol?s=DELUSDT&tf=5m&dir=LONG');
+  await expect(detail.locator('.panel__title')).toHaveText('DELUSDT · 1h');
+  await expect(detail.getByRole('link', { name: 'Buka detail' })).toHaveAttribute('href', '#/symbol?s=DELUSDT&tf=1h&dir=LONG');
 
   // Bagian detail (docs/19 §8.5) dengan teks dari API, bukan data contoh.
   const body = detail.getByTestId('reversal-detail-body');
@@ -252,7 +252,7 @@ test('E2E-RR-004 klik baris membuka panel detail: mini-chart berlevel, alasan ma
   await expect(body.getByTestId('reversal-levels')).toContainText('Invalidasi');
   await expect(body.getByTestId('reversal-levels')).toContainText('Level pemicu (trigger)');
   await expect(body.getByTestId('reversal-next')).toContainText('Close di atas level pemicu');
-  await expect(body.getByTestId('reversal-cancel')).toContainText('Close candle 5m di bawah level invalidasi');
+  await expect(body.getByTestId('reversal-cancel')).toContainText('Close candle 1h di bawah level invalidasi');
   await expect(body.getByTestId('reversal-risks')).toContainText('Tidak ada risiko tercatat');
   await expect(body.locator('.rr-bar')).toHaveCount(5);
   await expect(body.locator('.rr-bar[data-group="STRUCTURE"] .rr-bar__value')).toHaveText('20/30');
@@ -276,7 +276,7 @@ test('E2E-RR-004 klik baris membuka panel detail: mini-chart berlevel, alasan ma
   // Kandidat lain (Confirmed, risiko lengkap) menggantikan isi panel; Esc pada baris menutup panel dan fokus tetap di baris.
   const the = panelRow(page, 'reversal-confirmed', 'THEUSDT');
   await the.click();
-  await expect(detail.locator('.panel__title')).toHaveText('THEUSDT · 15m');
+  await expect(detail.locator('.panel__title')).toHaveText('THEUSDT · 1h');
   await expect(detail.getByTestId('reversal-risks').locator('[data-risk="LATE_ENTRY"]')).toHaveText('Terlambat (jauh dari bottom)');
   await expect(detail.getByTestId('reversal-history').locator('li')).toHaveCount(3);
   await the.focus();
@@ -319,7 +319,7 @@ test('E2E-RR-005 kandidat provisional-only ditandai (is-provisional + label), de
   await filterForm(page).getByRole('switch', { name: 'Tampilkan candle berjalan (provisional)' }).uncheck();
   await hidden;
   await expect(kap).toHaveCount(0);
-  await expect(page.getByTestId('reversal-early-counts')).toHaveText('5m 1 · 15m 1 · 1H 1');
+  await expect(page.getByTestId('reversal-early-counts')).toHaveText('1H 3');
   expect(errors).toEqual([]);
 });
 
@@ -349,13 +349,13 @@ test('E2E-RR-007 scanner berjalan: penyegaran latar 30 s menyorot baris baru & n
     return route.fulfill({ response, json: { ...(await response.json()), worker: WORKER_RUNNING } });
   });
   const base = reversalCandidates();
-  // Muatan kedua: ALPUSDT naik tahap (Developing), NEWUSDT baru masuk (Early 5m).
+  // Muatan kedua: ALPUSDT naik tahap (Developing), NEWUSDT baru masuk (Early 1h).
   const later = base.map((r) => (r.symbol !== 'ALPUSDT' ? r : candidate({
-    id: 1, symbol: 'ALPUSDT', timeframe: '5m', stage: 'DEVELOPING_REVERSAL', setupType: 'DOUBLE_BOTTOM', price: 0.0831,
+    id: 1, symbol: 'ALPUSDT', timeframe: '1h', stage: 'DEVELOPING_REVERSAL', setupType: 'DOUBLE_BOTTOM', price: 0.0831,
     evidence: ['LL_SHALLOWER', 'LL_STOPPED', 'BOTTOM_HELD', 'RSI_DIVERGENCE', 'ATR_CONTRACTION', 'EMA_CONVERGENCE', 'ROUNDED_BOTTOM', 'HIGHER_LOW', 'VOLUME_DRY_UP'],
     risks: ['LOW_LIQUIDITY'], liquidityClass: 'THIN', movePct: 0.015, moveAtr: 0.7,
   }))).concat([candidate({
-    id: 11, symbol: 'NEWUSDT', timeframe: '5m', stage: 'EARLY_FORMATION', setupType: 'COMPRESSION', price: 0.9,
+    id: 11, symbol: 'NEWUSDT', timeframe: '1h', stage: 'EARLY_FORMATION', setupType: 'COMPRESSION', price: 0.9,
     evidence: ['LL_SHALLOWER', 'LL_STOPPED', 'RSI_DIVERGENCE', 'ATR_CONTRACTION', 'EMA_CONVERGENCE', 'RANGE_CONTRACTION', 'VOLUME_DRY_UP', 'QUIET_RISE'],
     risks: [], movePct: 0.002, moveAtr: 0.1,
   })]);
@@ -380,8 +380,8 @@ test('E2E-RR-007 scanner berjalan: penyegaran latar 30 s menyorot baris baru & n
   await expect(alp).toHaveAttribute('data-flash', 'up');
   await expect(panelRow(page, 'reversal-early', 'NEWUSDT')).toHaveAttribute('data-flash', 'new');
   await expect(panelRow(page, 'reversal-early', 'ALPUSDT')).toHaveCount(0);
-  await expect(page.getByTestId('reversal-early-counts')).toHaveText('5m 1 · 15m 2 · 1H 1');
-  await expect(page.getByTestId('reversal-developing-counts')).toHaveText('5m 2 · 15m 1 · 1H 1');
+  await expect(page.getByTestId('reversal-early-counts')).toHaveText('1H 4');
+  await expect(page.getByTestId('reversal-developing-counts')).toHaveText('1H 4');
   await expect(del).toBeFocused();
   expect(errors).toEqual([]);
 });

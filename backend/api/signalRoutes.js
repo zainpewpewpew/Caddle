@@ -3,7 +3,7 @@
 // Arah (Short Scanner): `direction` LONG | SHORT. /active tanpa direction = LONG (perilaku lama);
 // /history tanpa direction = kedua arah. Setiap item memuat field `direction`. Sinyal SHORT adalah
 // kandidat riset, bukan rekomendasi jual/short.
-// Timeframe per arah tetap (DIRECTION_TIMEFRAMES: LONG 15m, SHORT 1h): /active hanya mengembalikan sinyal arah itu
+// Timeframe per arah tetap (DIRECTION_TIMEFRAMES: LONG 1h, SHORT 15m): /active hanya mengembalikan sinyal arah itu
 // pada timeframe-nya — sinyal lama dari timeframe lain tidak ditampilkan; filter timeframe lain → daftar kosong.
 import { ALIGNMENTS, CONFIDENCE_TIERS, DIRECTIONS, DIRECTION_TIMEFRAMES, TIMEFRAMES } from '../market/contracts.js';
 import { PATTERN_STATES } from '../signals/index.js';

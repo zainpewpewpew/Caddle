@@ -4,12 +4,12 @@
 // repositori (validasi "tertutup" candle), klien REST (isClosed kline), dan scanner.
 //
 // Dua pipeline berjalan berdampingan atas candle tertutup yang sama (docs/19 §6):
-// - pipeline analisis SA/PVA (LONG 15m) & SD/PVD (SHORT 1h) — DIRECTION_TIMEFRAMES, tidak berubah;
-// - pipeline Reversal Radar (LONG Scanner; 5m, 15m, 1h — REVERSAL_TIMEFRAMES) + evaluasi provisional candle berjalan.
+// - pipeline analisis SA/PVA (LONG 1h) & SD/PVD (SHORT 15m, konteks HTF 1h) — DIRECTION_TIMEFRAMES;
+// - pipeline Reversal Radar (LONG Scanner; hanya 1h — REVERSAL_ACTIVE_TIMEFRAMES) + evaluasi provisional candle berjalan.
 // Keduanya dipanggil dari onClosedCandles scanner secara berurutan (SA/PVA dulu — jeda settle HTF-nya sekaligus memberi
 // waktu candle HTF tersimpan sebelum reversal); gagal satu tidak membatalkan yang lain, error diteruskan ke scanner
-// (tercatat sebagai error ingesti sumber 'analysis'). Timeframe ingesti = gabungan keduanya (5m kembali diingesti dan
-// dianalisis HANYA oleh pipeline reversal; pipeline SA/PVA melewati 5m sebagai NO_DIRECTION).
+// (tercatat sebagai error ingesti sumber 'analysis'). Timeframe ingesti = gabungan keduanya ∪ CHART_TIMEFRAMES (5m tetap
+// diingesti HANYA untuk grafik Symbol Intelligence; kedua pipeline melewatinya).
 
 import { createAnalysisPipeline } from '../backend/analysis/pipeline.js';
 import { createRepositories } from '../backend/database/repositories/index.js';
@@ -18,8 +18,8 @@ import { createKlineStream } from '../backend/ingestion/binance/wsClient.js';
 import { CLOSE_MARGIN_MS } from '../backend/ingestion/backfill.js';
 import { createServerClock } from '../backend/ingestion/serverClock.js';
 import { discoverSymbols } from '../backend/ingestion/symbolDiscovery.js';
-import { DIRECTIONS, DIRECTION_TIMEFRAMES, TIMEFRAMES, scannedTimeframes } from '../backend/market/contracts.js';
-import { REVERSAL_TIMEFRAMES } from '../backend/reversal/constants.js';
+import { CHART_TIMEFRAMES, DIRECTIONS, DIRECTION_TIMEFRAMES, TIMEFRAMES, scannedTimeframes } from '../backend/market/contracts.js';
+import { REVERSAL_ACTIVE_TIMEFRAMES } from '../backend/reversal/constants.js';
 import { createReversalPipeline } from '../backend/reversal/pipeline.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY } from '../backend/settings/scannerSettings.js';
 import { createScanner } from './scanner.js';
@@ -29,10 +29,13 @@ export const WORKER_SETTLE_MS = 3_000;
 
 const NOOP_LOGGER = Object.freeze({ debug() {}, info() {}, warn() {}, error() {} });
 
-/** Timeframe yang diingesti & dianalisis worker: gabungan timeframe per arah (SA/PVA, SD/PVD) ∪ timeframe Reversal Radar. */
-export function workerTimeframes(directions = DIRECTIONS, reversalTimeframes = REVERSAL_TIMEFRAMES) {
+/**
+ * Timeframe yang diingesti worker: gabungan timeframe per arah (SA/PVA, SD/PVD) ∪ timeframe Reversal Radar aktif ∪
+ * timeframe grafik (CHART_TIMEFRAMES). Analisis tetap hanya pada timeframe aktif tiap pipeline.
+ */
+export function workerTimeframes(directions = DIRECTIONS, reversalTimeframes = REVERSAL_ACTIVE_TIMEFRAMES, chartTimeframes = CHART_TIMEFRAMES) {
   const scanned = scannedTimeframes(directions);
-  return TIMEFRAMES.filter((tf) => scanned.includes(tf) || reversalTimeframes.includes(tf));
+  return TIMEFRAMES.filter((tf) => scanned.includes(tf) || reversalTimeframes.includes(tf) || chartTimeframes.includes(tf));
 }
 
 /** Gabungan dua daftar seri { symbol, timeframe } tanpa duplikat, urut simbol lalu timeframe. */
@@ -68,7 +71,7 @@ function mergeSeries(...lists) {
  *   reversalEngine?: { evaluate?: Function, transition?: Function, resolveParams?: Function },
  *   reversalOptions?: object,
  * }} deps
- *   directionTimeframes: timeframe per arah (default DIRECTION_TIMEFRAMES: LONG 15m, SHORT 1h); null = semua (tes).
+ *   directionTimeframes: timeframe per arah (default DIRECTION_TIMEFRAMES: LONG 1h, SHORT 15m); null = semua (tes).
  *   clock: jam LOKAL host (default Date.now). Jam server (`serverClock.now` = jam lokal + offset terukur)
  *   dibuat di sini dan menjadi jam repositori, klien REST, dan scanner (`clock`); jam lokal menjadi
  *   `localClock` scanner untuk stempel operasional (heartbeat, run, error, lastIngestionAt) dan throttle provisional reversal.
@@ -83,7 +86,8 @@ function mergeSeries(...lists) {
  *   analysisParams: `params` pipeline analisis (override pola/sinyal/konfluensi + `calibration` hasil backtest;
  *   lihat analyzeDirectionsAt). Default {} = parameter bawaan v3 (gerbang tier EARLY minEarlyTier 'B').
  *   reversalParams: override parsial DEFAULT_REVERSAL_PARAMS pipeline reversal (default {} = bawaan).
- *   reversalTimeframes: timeframe Reversal Radar (default REVERSAL_TIMEFRAMES = 5m, 15m, 1h); ikut menentukan timeframe ingesti.
+ *   reversalTimeframes: timeframe Reversal Radar yang dievaluasi (default REVERSAL_ACTIVE_TIMEFRAMES = 1h; subset
+ *   REVERSAL_TIMEFRAMES); ikut menentukan timeframe ingesti.
  *   reversalEngine: KHUSUS tes — evaluate/transition/resolveParams palsu untuk pipeline reversal (default mesin asli).
  *   reversalOptions: opsi lain createReversalPipeline (mis. provisionalMinIntervalMs, maxReplay) — KHUSUS tes.
  * @returns {{ serverClock: object, repos: object, rest: object, pipeline: object, reversal: object, scanner: object,
@@ -112,7 +116,7 @@ export function assembleWorker({
   directionTimeframes = DIRECTION_TIMEFRAMES,
   analysisParams = {},
   reversalParams = {},
-  reversalTimeframes = REVERSAL_TIMEFRAMES,
+  reversalTimeframes = REVERSAL_ACTIVE_TIMEFRAMES,
   reversalEngine,
   reversalOptions,
 } = {}) {
@@ -147,7 +151,7 @@ export function assembleWorker({
     logger,
     onAlert,
     directions,
-    // LONG hanya 15m, SHORT hanya 1h (keputusan pengguna); seri lain hanya konteks/tidak diingesti.
+    // LONG hanya 1h, SHORT hanya 15m (keputusan pengguna 2026-11-15); seri lain hanya konteks HTF/grafik.
     directionTimeframes,
     params: analysisParams,
   });
@@ -237,7 +241,7 @@ export function assembleWorker({
     logger,
     setTimer,
     clearTimer,
-    // Timeframe analisis tetap = DIRECTION_TIMEFRAMES arah aktif ∪ REVERSAL_TIMEFRAMES (pengaturan `timeframes` lama diabaikan).
+    // Timeframe ingesti tetap = DIRECTION_TIMEFRAMES arah aktif ∪ radar aktif ∪ CHART_TIMEFRAMES (pengaturan `timeframes` lama diabaikan).
     options: { timeframes: workerTimeframes(directions, reversalTimeframes), ...scannerOptions, closeMarginMs },
     heartbeatOwner,
   });

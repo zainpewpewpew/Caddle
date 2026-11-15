@@ -271,7 +271,7 @@ export function patternDefinitions(params = {}, { maxWarmup, directions = ['LONG
  * Panggilan repositori untuk LONG tidak membawa argumen `direction` (bentuk lama); SHORT memakai
  * `direction: 'SHORT'`.
  *
- * `directionTimeframes` (worker: DIRECTION_TIMEFRAMES = LONG 15m, SHORT 1h): arah hanya dievaluasi pada timeframe-nya;
+ * `directionTimeframes` (worker: DIRECTION_TIMEFRAMES = LONG 1h, SHORT 15m): arah hanya dievaluasi pada timeframe-nya;
  * seri tanpa arah yang berlaku dilewati (skipped 'NO_DIRECTION'). Sinyal terbuka lama dari arah yang tidak lagi dipindai
  * pada timeframe itu ditutup EXPIRED (MONITORING_STOPPED) saat seri itu pertama kali dievaluasi. null = semua timeframe.
  *
@@ -303,7 +303,7 @@ export function createAnalysisPipeline({
   if (!Number.isInteger(yieldEvery) || yieldEvery < 1 || yieldEvery > 5000) throw new RangeError('yieldEvery harus 1..5000');
   const activeDirections = resolveDirections(directions);
   const allowedTimeframes = resolveDirectionTimeframes(directionTimeframes, activeDirections);
-  // Arah yang dievaluasi pada satu timeframe (worker: LONG hanya 15m, SHORT hanya 1h — DIRECTION_TIMEFRAMES).
+  // Arah yang dievaluasi pada satu timeframe (worker: LONG hanya 1h, SHORT hanya 15m — DIRECTION_TIMEFRAMES).
   const directionsFor = (timeframe) => activeDirections.filter((d) => allowedTimeframes[d].includes(timeframe));
   // Seri × arah yang sinyal terbuka lamanya (dari timeframe yang kini tidak dipindai arah itu) sudah diperiksa.
   const leftoverChecked = new Set();
@@ -396,8 +396,8 @@ export function createAnalysisPipeline({
   }
 
   /**
-   * Sinyal terbuka arah yang tidak lagi dipindai pada timeframe ini (mis. LONG 1h / SHORT 15m dari versi sebelum
-   * DIRECTION_TIMEFRAMES) ditutup EXPIRED/MONITORING_STOPPED sekali per proses, agar tidak menggantung selamanya.
+   * Sinyal terbuka arah yang tidak lagi dipindai pada timeframe ini (mis. LONG 15m / SHORT 1h dari pemetaan sebelum
+   * 2026-11-15) ditutup EXPIRED/MONITORING_STOPPED sekali per proses, agar tidak menggantung selamanya.
    */
   async function closeLeftovers(symbol, timeframe, at) {
     for (const direction of activeDirections) {

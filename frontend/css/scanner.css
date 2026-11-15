@@ -114,6 +114,16 @@
   color: var(--lr-warn);
 }
 
+/* Terbaru = sudah dievaluasi pada candle terakhir yang tutup. Penanda kecil (Small Marker): titik status, teks tetap netral. */
+.updated-at[data-fresh="true"]::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--lr-live-color, var(--lr-bull));
+}
+
 .updated-at__stale:not([hidden]) {
   display: inline-block;
   padding: 0 5px;

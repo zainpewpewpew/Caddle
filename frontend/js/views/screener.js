@@ -85,10 +85,11 @@ const MIN_SCORE_OPTIONS = [ALL, { value: '50', label: '≥ 50' }, { value: '70',
 const SCANNERS = {
   LONG: {
     title: 'LONG Scanner',
-    // Timeframe tetap per arah (selaras DIRECTION_TIMEFRAMES backend): LONG hanya 15m dengan konteks 1h.
-    timeframe: '15m',
-    timeframeHint: 'Konteks HTF: 1h',
-    subtitle: 'Kandidat struktur bullish pada timeframe 15m (konteks 1h). Skor mengukur kemiripan dengan aturan pola, bukan probabilitas profit.',
+    // Timeframe tetap per arah (selaras DIRECTION_TIMEFRAMES backend): LONG hanya 1h; tidak ada timeframe lebih tinggi
+    // di sistem, sehingga alignment selalu Unconfirmed.
+    timeframe: '1h',
+    timeframeHint: 'Tanpa konteks HTF',
+    subtitle: 'Kandidat struktur bullish pada timeframe 1h. Skor mengukur kemiripan dengan aturan pola, bukan probabilitas profit.',
     queryDirection: null,
     filterLabel: 'Filter LONG scanner',
     patterns: [ALL, { value: 'SA', label: 'SA' }, { value: 'PVA', label: 'PVA' }, { value: 'BOTH', label: 'BOTH' }],
@@ -99,14 +100,14 @@ const SCANNERS = {
     iconName: 'screener',
     emptyTitle: 'Belum ada kandidat LONG',
     emptyText: 'Kandidat muncul setelah worker mengingesti candle tertutup Binance dan detektor SA/PVA menemukan pola. Tidak ada data contoh yang ditampilkan.',
-    footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup 15m. Alignment = konteks timeframe 1h, tidak membuang pola.',
+    footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup 1h. Tidak ada timeframe di atas 1h yang dipantau, jadi kolom Alignment selalu Unconfirmed.',
   },
   SHORT: {
     title: 'SHORT Scanner',
-    // SHORT hanya 1h; tidak ada timeframe lebih tinggi di sistem, sehingga alignment selalu Unconfirmed.
-    timeframe: '1h',
-    timeframeHint: 'Tanpa konteks HTF',
-    subtitle: 'Kandidat struktur bearish (distribusi) pada timeframe 1h — hanya riset, tanpa eksekusi order. Skor mengukur kemiripan dengan aturan pola, bukan probabilitas profit.',
+    // SHORT hanya 15m dengan konteks 1h (selaras DIRECTION_TIMEFRAMES backend).
+    timeframe: '15m',
+    timeframeHint: 'Konteks HTF: 1h',
+    subtitle: 'Kandidat struktur bearish (distribusi) pada timeframe 15m (konteks 1h) — hanya riset, tanpa eksekusi order. Skor mengukur kemiripan dengan aturan pola, bukan probabilitas profit.',
     queryDirection: 'SHORT',
     filterLabel: 'Filter SHORT scanner',
     patterns: [ALL, { value: 'SD', label: 'SD' }, { value: 'PVD', label: 'PVD' }, { value: 'BOTH', label: 'BOTH' }],
@@ -117,7 +118,7 @@ const SCANNERS = {
     iconName: 'screener-short',
     emptyTitle: 'Belum ada kandidat SHORT',
     emptyText: 'Kandidat muncul setelah worker mengingesti candle tertutup Binance dan detektor SD/PVD menemukan pola distribusi. Tidak ada data contoh yang ditampilkan.',
-    footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup 1h. Tidak ada timeframe di atas 1h yang dipantau, jadi kolom Alignment selalu Unconfirmed. Riset saja — tidak ada eksekusi order.',
+    footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup 15m. Alignment = konteks timeframe 1h, tidak membuang pola. Riset saja — tidak ada eksekusi order.',
   },
 };
 
@@ -136,6 +137,12 @@ const SCREENER_LIMIT = 500;
  * Hasilnya dibandingkan dengan muatan sebelumnya pada filter yang sama: baris baru / skor berubah disorot sesaat.
  */
 const REFRESH_MS = 30_000;
+/**
+ * Setelah scanner baru dinyalakan, worker butuh ±15–60 dtk untuk mengejar candle yang tertinggal: selama START_BURST_MS
+ * tabel dimuat ulang tiap START_REFRESH_MS agar kolom "Update" langsung maju, lalu kembali ke REFRESH_MS.
+ */
+export const START_REFRESH_MS = 5_000;
+export const START_BURST_MS = 120_000;
 /** Teks relatif kolom "Update" dihitung ulang tiap interval ini, juga saat penyegaran data tidak berjalan. */
 const CLOCK_TICK_MS = 15_000;
 /** Durasi sorotan baris (harus ≥ durasi animasi flash 1.2s di scanner.css). */
@@ -347,7 +354,7 @@ export function createScannerSection(ctx, direction, { onLoaded } = {}) {
     : Promise.resolve(null);
 
   const filters = h('form', { class: 'toolbar', 'aria-label': cfg.filterLabel },
-    // Timeframe tetap (bukan filter): LONG 15m, SHORT 1h.
+    // Timeframe tetap (bukan filter): LONG 1h, SHORT 15m.
     h('div', { class: 'field', 'data-testid': 'scanner-timeframe' },
       h('span', { class: 'field__label' }, 'Timeframe'),
       h('span', { class: 'field__static' }, cfg.timeframe),
@@ -372,6 +379,9 @@ export function createScannerSection(ctx, direction, { onLoaded } = {}) {
   let refreshTimer = null;
   let clockTimer = null;
   let disposed = false;
+  // start() sudah dipanggil (status awal scanner bukan "baru dinyalakan") & batas jendela muat ulang cepat.
+  let sectionStarted = false;
+  let burstUntil = 0;
   const lastFlashAt = new Map();
   const el = panel({ title: cfg.panelTitle, actions: count, flush: true, footer: cfg.footer }, filters, chartSide.el);
 
@@ -453,7 +463,7 @@ export function createScannerSection(ctx, direction, { onLoaded } = {}) {
       if (disposed || !el.isConnected) return;
       if (workerActive && !document.hidden) await load({ background: true });
       if (!disposed && el.isConnected) scheduleRefresh();
-    }, REFRESH_MS);
+    }, Date.now() < burstUntil ? START_REFRESH_MS : REFRESH_MS);
   }
 
   /** "x menit lalu" + penanda Basi dihitung ulang terhadap jam sekarang, juga saat scanner berhenti. */
@@ -474,10 +484,18 @@ export function createScannerSection(ctx, direction, { onLoaded } = {}) {
     ready,
     load,
     setWorkerActive(active) {
-      workerActive = Boolean(active);
+      const next = Boolean(active);
+      const justStarted = next && !workerActive && sectionStarted;
+      workerActive = next;
+      // Scanner baru dinyalakan (tombol di halaman ini atau halaman lain): muat ulang cepat sebentar (START_BURST_MS).
+      if (justStarted && !disposed) {
+        burstUntil = Date.now() + START_BURST_MS;
+        scheduleRefresh();
+      }
     },
     start() {
       if (disposed) return;
+      sectionStarted = true;
       scheduleRefresh();
       startClock();
     },

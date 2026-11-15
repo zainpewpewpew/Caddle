@@ -40,14 +40,16 @@ test('E2E-RR-009 server seeded: kandidat dari API asli per tahap, sensitivitas d
   await expect(page.getByTestId('reversal-early')).toBeVisible();
   await expect(page.getByTestId('reversal-summary')).not.toHaveText('Memuat kandidat…');
 
-  // Sensitivitas default Sedang (skor ≥ 45 & ≥ 3 bukti, disaring di server): AAA 5m Early (54), BBB 15m Developing (70),
-  // CCC 1h Confirmed (88, extended) tampil; FFF 15m Early (23, ILLIQUID) tidak; DDD (CANCELLED) tidak pernah di daftar aktif.
+  // Radar produksi hanya 1h (server E2E menanam matriks di 1h). Sensitivitas default Sedang (skor ≥ 45 & ≥ 3 bukti,
+  // disaring di server): AAA Early (54), BBB Developing (70),
+  // CCC Confirmed (88, extended) tampil; FFF Early (23, ILLIQUID) tidak; DDD (CANCELLED) tidak pernah di daftar aktif.
   await expect(panelRow(page, 'reversal-early', 'AAAUSDT')).toBeVisible();
   await expect(panelRow(page, 'reversal-developing', 'BBBUSDT')).toBeVisible();
   await expect(panelRow(page, 'reversal-confirmed', 'CCCUSDT')).toBeVisible();
   await expect(page.locator('.rr-stages tbody tr', { hasText: 'FFFUSDT' })).toHaveCount(0);
   await expect(page.locator('.rr-stages tbody tr', { hasText: 'DDDUSDT' })).toHaveCount(0);
-  await expect(page.getByTestId('reversal-early-counts')).toContainText('5m');
+  // Early: AAA (54) + EEE provisional-only (48, 7 bukti) lolos sensitivitas Sedang.
+  await expect(page.getByTestId('reversal-early-counts')).toHaveText('1H 2');
   await expect(page.getByTestId('reversal-confirmed-counts')).toContainText('1H 1');
 
   // Sensitivitas Tinggi → permintaan baru ke server, FFF ikut tampil (bukan disaring di klien).
@@ -71,7 +73,7 @@ test('E2E-RR-009 server seeded: kandidat dari API asli per tahap, sensitivitas d
   await expect(history.locator('li').first()).toHaveAttribute('data-type', 'OPENED');
   await expect(history.locator('li').last()).toHaveAttribute('data-type', 'STAGE_UP');
 
-  // Panel sekunder SA/PVA 15m (mesin lama) tetap memuat sinyal seeded dari pipeline SA/PVA asli.
+  // Panel sekunder SA/PVA 1h (mesin lama) tetap memuat sinyal seeded dari pipeline SA/PVA asli.
   await expect(page.getByTestId('screener-results').getByRole('cell', { name: 'SYNUSDT' })).toBeVisible();
   expect(errors).toEqual([]);
 });

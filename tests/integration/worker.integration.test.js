@@ -20,6 +20,7 @@ import { openDatabase } from '../../backend/database/connection.js';
 import { migrate } from '../../backend/database/migrate.js';
 import { createKlineStream } from '../../backend/ingestion/binance/wsClient.js';
 import { DIRECTION_TIMEFRAMES, HIGHER_TIMEFRAMES, TIMEFRAME_MS } from '../../backend/market/contracts.js';
+import { REVERSAL_ACTIVE_TIMEFRAMES, REVERSAL_TIMEFRAMES } from '../../backend/reversal/constants.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY, normalizeScannerSettings } from '../../backend/settings/scannerSettings.js';
 import { HEARTBEAT_STALE_MS, summarizeWorker } from '../../backend/system/workerStatus.js';
 import { assembleWorker, workerTimeframes } from '../../worker/assemble.js';
@@ -496,7 +497,7 @@ const LEGACY_SETTINGS = Object.freeze({ ...DEFAULT_SCANNER_SETTINGS, timeframes:
 
 async function createWorker({
   timers, db, binance, settings = LEGACY_SETTINGS, settleMs = 0, restSleep = unexpectedSleep, scannerOptions = {}, directionTimeframes = null,
-  reversalEngine = createFakeReversalEngine(),
+  reversalEngine = createFakeReversalEngine(), reversalTimeframes = REVERSAL_TIMEFRAMES,
 }) {
   const { logger, entries: logs } = createLogger();
   const hub = createFakeWebSocketHub();
@@ -516,9 +517,10 @@ async function createWorker({
     // Mesin Reversal Radar palsu (lihat createFakeReversalEngine): perakitan & aliran candle-nya yang diuji di sini.
     reversalEngine,
     onReversalAlert: (alert) => reversalAlerts.push(alert),
-    // Mekanika ingesti/replay diuji pada 5m dengan semua arah di semua timeframe; timeframe tetap produksi
-    // (LONG 15m, SHORT 1h) diuji INT-WRK-TF-*.
+    // Mekanika ingesti/replay diuji pada 5m dengan semua arah & radar di semua timeframe; timeframe tetap produksi
+    // (LONG 1h, SHORT 15m, radar 1h) diuji INT-WRK-RR-003 dan UNIT-PIPE-TF-001.
     directionTimeframes,
+    reversalTimeframes,
     clock: timers.clock,
     fetch: binance.fetch,
     restSleep,
@@ -563,6 +565,7 @@ async function createWorker({
 /** `serverSkewMs`: jam server Binance palsu berada sekian ms di depan jam lokal worker (negatif = di belakang). */
 async function setup({
   settings, configure, skip, delayOf, market = MARKET, settleMs, restSleep, serverSkewMs = 0, scannerOptions, reversalEngine, directionTimeframes,
+  reversalTimeframes,
 } = {}) {
   const timers = createFakeTimers(START);
   const db = openDatabase(':memory:');
@@ -574,6 +577,7 @@ async function setup({
     timers, db, binance, settings, settleMs, restSleep: restSleep?.(timers), scannerOptions,
     ...(reversalEngine ? { reversalEngine } : {}),
     ...(directionTimeframes !== undefined ? { directionTimeframes } : {}),
+    ...(reversalTimeframes !== undefined ? { reversalTimeframes } : {}),
   });
   const driver = createMarketDriver({ timers, hub: worker.hub, from: START, market, skip, delayOf });
   return { timers, db, binance, driver, ...worker };
@@ -1735,9 +1739,9 @@ describe('worker end-to-end — Reversal Radar: 5m ikut diingesti, dua pipeline 
     FROM reversal_provisional p JOIN symbols s ON s.id = p.symbol_id ORDER BY s.symbol, p.timeframe`).all();
   const htfClosedBy = (index, base, higher) => Math.floor(((index + 1) * TIMEFRAME_MS[base]) / TIMEFRAME_MS[higher]);
 
-  it('INT-WRK-RR-001 timeframe produksi (DIRECTION_TIMEFRAMES ∪ REVERSAL_TIMEFRAMES = 5m/15m/1h): 5m diingesti & distream; pipeline SA/PVA melewati 5m (NO_DIRECTION); pipeline reversal mengevaluasi tiap candle tertutup 5m/15m/1h sekali (HTF tanpa lookahead, snapshot NONE dibawa antar candle, kursor maju); kline berjalan → evaluasi provisional yang dibersihkan saat candle tutup', async () => {
+  it('INT-WRK-RR-001 ingesti produksi (workerTimeframes = 5m/15m/1h) + mekanika radar di semua REVERSAL_TIMEFRAMES: 5m diingesti & distream; pipeline SA/PVA melewati 5m (NO_DIRECTION); pipeline reversal mengevaluasi tiap candle tertutup 5m/15m/1h sekali (HTF tanpa lookahead, snapshot NONE dibawa antar candle, kursor maju); kline berjalan → evaluasi provisional yang dibersihkan saat candle tutup', async () => {
     const { scanner, repos, driver, db, analysed, reversalEngine, logs } = await setup({
-      scannerOptions: { timeframes: workerTimeframes() }, directionTimeframes: DIRECTION_TIMEFRAMES,
+      scannerOptions: { timeframes: workerTimeframes() }, directionTimeframes: DIRECTION_TIMEFRAMES, reversalTimeframes: REVERSAL_TIMEFRAMES,
     });
     expect(workerTimeframes()).toEqual(['5m', '15m', '1h']);
     await scanner.start();
@@ -1764,7 +1768,7 @@ describe('worker end-to-end — Reversal Radar: 5m ikut diingesti, dua pipeline 
     expect(count(db, 'reversal_provisional')).toBe(0); // semua candle berjalan sudah tutup → dibersihkan
     expect(count(db, 'reversal_candidates')).toBe(0); // mesin palsu tidak pernah membuka kandidat
 
-    // Pipeline SA/PVA: 5m tanpa arah (LONG 15m, SHORT 1h) → dilewati; 15m & 1h dianalisis seperti sebelumnya.
+    // Pipeline SA/PVA: 5m tanpa arah (LONG 1h, SHORT 15m) → dilewati; 15m & 1h dianalisis seperti sebelumnya.
     const sa = (tf) => analysed.filter((a) => a.symbol === SA && a.timeframe === tf);
     expect(sa('5m').map((a) => [a.candles[0].openTime, a.result])).toEqual(range(BOOT, LAST).map((i) => [at5m(i), { symbol: SA, timeframe: '5m', skipped: 'NO_DIRECTION' }]));
     expect(sa('15m').map((a) => a.result.evaluated)).toEqual(range(16, 24).map(() => 1));
@@ -1799,6 +1803,21 @@ describe('worker end-to-end — Reversal Radar: 5m ikut diingesti, dua pipeline 
     ]));
     expect(scanner.status()).toMatchObject({ state: 'running', errors: 0, gaps: 0, queue: 0 });
     expect((await repos.ingestion.getStatus()).recentErrors).toEqual([]);
+    expect(problems(logs)).toEqual([]);
+  });
+
+  it('INT-WRK-RR-003 timeframe radar produksi (REVERSAL_ACTIVE_TIMEFRAMES = 1h, default assembleWorker): 5m/15m tetap diingesti tetapi radar hanya mengevaluasi 1h (tertutup & provisional); kursor radar hanya 1h', async () => {
+    expect(REVERSAL_ACTIVE_TIMEFRAMES).toEqual(['1h']);
+    const { scanner, driver, db, reversalEngine, logs } = await setup({
+      scannerOptions: { timeframes: workerTimeframes() }, directionTimeframes: DIRECTION_TIMEFRAMES, reversalTimeframes: REVERSAL_ACTIVE_TIMEFRAMES,
+    });
+    await scanner.start();
+    expect(scanner.status()).toMatchObject({ state: 'running', symbols: 2, streams: 6 });
+    await driver.runUntil(END);
+    expect(new Set(reversalEngine.calls.evaluate.map((e) => e.timeframe))).toEqual(new Set(['1h']));
+    expect(reversalEngine.calls.evaluate.some((e) => e.provisional)).toBe(true);
+    expect(new Set(cursorRows(db).map((r) => r.timeframe))).toEqual(new Set(['1h']));
+    expect(scanner.status()).toMatchObject({ state: 'running', errors: 0, gaps: 0, queue: 0 });
     expect(problems(logs)).toEqual([]);
   });
 

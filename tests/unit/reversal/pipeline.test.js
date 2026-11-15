@@ -482,6 +482,33 @@ describe('pipeline Reversal Radar — penutupan seri, serialisasi, validasi', ()
     expect(await repos.reversal.closeOpenForSymbol({ symbol: 'ZZZUSDT', reason: 'MONITORING_STOPPED', at: NOW })).toEqual({ closed: [] });
   });
 
+  it('UNIT-RRPL-011 timeframe yang tidak lagi dievaluasi (radar produksi hanya 1h): candle seri itu tetap NOT_SCANNED, kandidat terbuka & provisional-nya ditutup EXPIRED/MONITORING_STOPPED sekali per proses (at = closeTime candle terakhir)', async () => {
+    const script = { stageAt: ({ candle, provisional }) => (provisional ? 'EARLY_FORMATION' : candle.openTime >= at(100) ? 'EARLY_FORMATION' : null) };
+    const { db, repos, pipeline, deps, logger, alerts } = await setup({ script });
+    await feed(repos, 101);
+    await pipeline.onClosedCandles(SERIES);
+    await pipeline.onProvisionalCandle(running(101));
+    expect(await repos.reversal.getOpen(SERIES)).toMatchObject({ id: 1 });
+    expect(count(db, 'reversal_provisional')).toBe(1);
+
+    // Proses baru (mis. setelah pembaruan ke REVERSAL_ACTIVE_TIMEFRAMES = 1h): seri 5m masih diingesti untuk grafik.
+    const only1h = createReversalPipeline({ ...deps, timeframes: ['1h'] });
+    const closeSpy = vi.spyOn(repos.reversal, 'closeOpenForSymbol');
+    expect(await only1h.onClosedCandles(SERIES)).toEqual({ symbol: SYMBOL, timeframe: '5m', skipped: 'NOT_SCANNED' });
+    expect(closeSpy).toHaveBeenCalledWith({ symbol: SYMBOL, timeframes: ['5m'], reason: 'MONITORING_STOPPED', at: ALL[100].closeTime });
+    expect(await repos.reversal.getOpen(SERIES)).toBeNull();
+    expect(count(db, 'reversal_provisional')).toBe(0);
+    const [row] = await repos.reversal.history({ symbol: SYMBOL });
+    expect(row).toMatchObject({ id: 1, status: 'EXPIRED', closeReason: 'MONITORING_STOPPED' });
+    expect(logger.info).toHaveBeenCalledWith({ symbol: SYMBOL, timeframe: '5m', closed: 1 }, 'kandidat reversal ditutup: timeframe tidak lagi dievaluasi Reversal Radar');
+    expect(alerts).toHaveLength(1); // hanya alert OPENED dari proses lama; penutupan paksa tidak di-alert
+
+    // Sekali per proses: candle berikutnya tidak memicu penutupan ulang.
+    await feed(repos, 102);
+    expect(await only1h.onClosedCandles(SERIES)).toEqual({ symbol: SYMBOL, timeframe: '5m', skipped: 'NOT_SCANNED' });
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('UNIT-RRPL-009 serialisasi per seri (evaluasi bersamaan tidak ganda), giliran event loop tiap yieldEvery candle, NOT_SCANNED / NO_DATA, dan timeframe pipeline', async () => {
     const yieldToEventLoop = vi.fn(async () => {});
     const { repos, engine, pipeline } = await setup({ pipeline: { yieldEvery: 2, yieldToEventLoop, timeframes: ['5m', '1h'] } });
