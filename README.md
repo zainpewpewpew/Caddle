@@ -182,7 +182,7 @@ backend/
   ingestion/    klien REST/WebSocket Binance (DNS-over-HTTPS khusus host Binance), validasi candle, discovery, backfill
   indicators/   EMA, ATR, RVOL, swing (fungsi murni)
   research/     formulasi & studi riset (BSV-1h, timing sinyal, pembanding dicocokkan, praregistrasi AL-SA-ATR-01);
-                tidak dipakai worker/scanner live (docs/23–27)
+                tidak dipakai worker/scanner live (docs/23–28)
   patterns/     detektor SA & PVA (LONG) serta SD & PVD (SHORT, cermin SA/PVA) berversi
   timeframe/    trend & alignment multi-timeframe
   scoring/      skor, risk flag, penjelasan

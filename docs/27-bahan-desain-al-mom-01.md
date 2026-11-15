@@ -225,6 +225,11 @@ Daya dihitung dari SE median antarjendela. Efek sebenarnya diasumsikan sama deng
 
 ## 8. Draf keputusan desain (2026-11-16, belum beku)
 
+> **Pembaruan:** inti desain ini sudah dikunci di docs/28 (2026-11-15 UTC, sebelum data uji ada). Yang diputuskan
+> sesudah tinjauan ChatGPT berikutnya: CI 95% dua sisi; beban pembuktian ada pada SA/PVA, dengan tabel keputusan
+> produk; margin 0,25 ATR sebagai batas deskriptif; jendela mulai 2026-11-16 dengan protokol akses; dan estimand pada
+> populasi overlap. Tabel di bawah dipertahankan sebagai catatan proses.
+
 Dari tinjauan ChatGPT (2026-11-16) dan keputusan pemilik pada hari yang sama. Angka pendukungnya di §7.
 
 | Unsur | Draf | Catatan |
