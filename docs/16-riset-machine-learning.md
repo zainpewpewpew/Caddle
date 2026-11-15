@@ -90,7 +90,8 @@ candle → pola SA/PVA/SD/PVD + konteks HTF + fitur v3 → skor konfluensi → s
 
 - **Model primer** (aturan) menentukan arah dan kapan ada sinyal. Tidak diubah.
 - **Model sekunder** (ML) dilatih hanya pada sinyal masa lalu yang sudah selesai, dengan label
-  **1 = trade untung neto (R > 0 setelah fee 4 bps + slippage 2 bps per sisi), 0 = tidak**.
+  **1 = trade untung neto (R > 0 setelah fee + slippage per sisi; bawaan 5 + 2 bps sejak 2026-11-15, sebelumnya
+  4 + 2 bps — atur dengan `--fee-bps`/`--slippage-bps`), 0 = tidak**.
 - Kegunaannya nanti: menyaring sinyal lemah dan/atau menampilkan peluang yang lebih tajam daripada tabel kalibrasi skor.
 
 ### Kenapa label "untung neto", bukan "WIN (TP tersentuh)"

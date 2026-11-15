@@ -1,6 +1,7 @@
 // Parsing argumen CLI backtest (scripts/backtest.js). Dipisah agar dapat diuji tanpa menjalankan backtest.
 
 import { parseArgs } from 'node:util';
+import { LABEL_DEFAULTS } from '../../backend/backtest/labeler.js';
 import { TIMEFRAMES } from '../../backend/market/contracts.js';
 
 export const BACKTEST_USAGE = `Pemakaian: npm run backtest -- [opsi]
@@ -18,6 +19,8 @@ Opsi:
   --to 2025-10-01             akhir rentang (UTC, eksklusif; bawaan sekarang)
   --target-r 2                target dalam kelipatan risiko (R)
   --max-bars 48               batas waktu trade (candle)
+  --fee-bps ${String(LABEL_DEFAULTS.feeBps).padEnd(18)}fee per sisi dalam bps (bawaan = taker Binance Futures VIP 0, 0,05%)
+  --slippage-bps ${String(LABEL_DEFAULTS.slippageBps).padEnd(13)}slippage per sisi dalam bps
   --folds 5                   (cadangan; runner saat ini memakai holdout waktu 60% train / 40% test)
   --embargo 48                (cadangan; embargo runner = max-bars candle + purging)
   --seed 42                   benih data sintetis
@@ -46,6 +49,8 @@ const OPTIONS = Object.freeze({
   to: { type: 'string' },
   'target-r': { type: 'string', default: '2' },
   'max-bars': { type: 'string', default: '48' },
+  'fee-bps': { type: 'string', default: String(LABEL_DEFAULTS.feeBps) },
+  'slippage-bps': { type: 'string', default: String(LABEL_DEFAULTS.slippageBps) },
   folds: { type: 'string', default: '5' },
   embargo: { type: 'string' },
   seed: { type: 'string', default: '42' },
@@ -104,7 +109,8 @@ function calibrationMethod(text) {
  * @param {{ now?: number }} [options] `now` = nilai bawaan --to
  * @returns {{
  *   help: boolean, source: 'binance'|'csv'|'synthetic', symbols: string[]|null, top: number|null, csv: string[]|null,
- *   timeframes: string[], from: number, to: number, rangeExplicit: boolean, targetR: number, maxBars: number, folds: number, embargoBars: number,
+ *   timeframes: string[], from: number, to: number, rangeExplicit: boolean, targetR: number, maxBars: number,
+ *   feeBps: number, slippageBps: number, folds: number, embargoBars: number,
  *   seed: number, syntheticSymbols: number, syntheticBars: number, minQuoteVolume24h: number,
  *   cacheDir: string|null, out: string, writeCalibration: string|null, ml: boolean,
  *   entry: 'nextOpen'|'close', maxCostR: number, calibrationMethod: 'platt'|'isotonic',
@@ -165,6 +171,8 @@ export function parseBacktestArgs(argv, { now = Date.now() } = {}) {
     rangeExplicit: v.from !== undefined || v.to !== undefined,
     targetR: number('target-r', v['target-r'], { min: 0.1, max: 20 }),
     maxBars,
+    feeBps: number('fee-bps', v['fee-bps'], { min: 0, max: 100 }),
+    slippageBps: number('slippage-bps', v['slippage-bps'], { min: 0, max: 100 }),
     folds: number('folds', v.folds, { integer: true, min: 2, max: 50 }),
     embargoBars: v.embargo !== undefined ? number('embargo', v.embargo, { integer: true, min: 0, max: 10_000 }) : maxBars,
     seed: number('seed', v.seed, { integer: true, min: 0, max: 2 ** 32 - 1 }),

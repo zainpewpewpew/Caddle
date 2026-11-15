@@ -82,8 +82,8 @@ file itu peluang historis tidak ditampilkan.
   nyata adalah open candle sesudahnya. Bila open itu sudah melewati level invalidasi, sinyal dilewati dan jumlahnya
   ditulis di bagian *Parameter*. Perilaku lama (masuk di close candle sinyal) tetap tersedia: `--entry close`.
 - **Varian "v3 + filter biaya"** (bagian *Filter biaya (eksperimen)*): sinyal v3 yang sama, tetapi dilewati bila
-  perkiraan biaya pulang-pergi saat entri (2 × (fee 4 + slippage 2 bps) × harga / jarak stop) melebihi `--max-cost-r`
-  (bawaan 0,15R ≈ stop minimal ±80 bps). Stop yang terlalu sempit memakan expectancy karena biaya dalam satuan R
+  perkiraan biaya pulang-pergi saat entri (2 × (fee 5 + slippage 2 bps) × harga / jarak stop) melebihi `--max-cost-r`
+  (bawaan 0,15R ≈ stop minimal ±93 bps). Stop yang terlalu sempit memakan expectancy karena biaya dalam satuan R
   membengkak. Filter ini **belum dipakai scanner live**; aktifkan nanti hanya bila expectancy out-of-sample-nya naik
   pada data nyata. Coba beberapa ambang (mis. 0,1 / 0,15 / 0,25), tetapi ingat: makin banyak ambang dicoba, makin besar
   peluang "menang karena kebetulan".
@@ -108,7 +108,9 @@ npm run backtest -- --top 30 --timeframes 15m,1h --from 2024-01-01 --write-calib
 ## 6. Angka backtest sintetis (seed 7)
 
 Perintah: `npm run backtest -- --synthetic --seed 7 --timeframes 15m,1h` (6 simbol × 3.000 candle 15m + 1h hasil
-agregasi; target 2R, batas 48 candle, biaya 4 bps + slippage 2 bps per sisi; holdout waktu 60/40 + embargo).
+agregasi; target 2R, batas 48 candle, biaya 4 bps + slippage 2 bps per sisi; holdout waktu 60/40 + embargo). Biaya 4 bps
+adalah bawaan saat itu; sejak 2026-11-15 bawaannya 5 bps (taker Binance Futures VIP 0), jadi ulangi angka ini dengan
+`--fee-bps 4`.
 
 | Out-of-sample (test) | n | Win rate (CI 95%) | Expectancy | Profit factor |
 | --- | --- | --- | --- | --- |

@@ -1,10 +1,13 @@
 // Pelabelan trade metode triple barrier (López de Prado, "Advances in Financial ML", bab 3).
 // Tiga penghalang: stop (bawah untuk LONG), target = entry ± targetR·risk, dan batas waktu maxBars.
-// Fungsi murni; hanya membaca candle SETELAH entryIndex (entry = close candle sinyal).
+// Fungsi murni; hanya membaca candle SETELAH entryIndex (= candle sinyal). Entri di close candle sinyal atau di open
+// candle berikutnya (runner bawaan) — keduanya dievaluasi mulai candle entryIndex+1.
 
 export const LABEL_OUTCOMES = Object.freeze(['WIN', 'LOSS', 'TIMEOUT', 'OPEN']);
 
-export const LABEL_DEFAULTS = Object.freeze({ targetR: 2, maxBars: 48, feeBps: 4, slippageBps: 2 });
+// Fee 5 bps per sisi = tarif taker Binance USDⓈ-M Futures VIP 0 (0,05%; entri/keluar dengan order market), sama dengan
+// riset docs/23. Sebelum 2026-11-15 bawaannya 4 bps; angka lama dapat diulang dengan `--fee-bps 4`.
+export const LABEL_DEFAULTS = Object.freeze({ targetR: 2, maxBars: 48, feeBps: 5, slippageBps: 2 });
 
 const isPositive = (v) => Number.isFinite(v) && v > 0;
 
@@ -33,7 +36,7 @@ const isPositive = (v) => Number.isFinite(v) && v > 0;
  * @param {number} args.stopPrice
  * @param {number} [args.targetR=2]
  * @param {number} [args.maxBars=48]
- * @param {number} [args.feeBps=4]         per sisi
+ * @param {number} [args.feeBps=5]         per sisi
  * @param {number} [args.slippageBps=2]    per sisi
  * @returns {null | {
  *   outcome: 'WIN'|'LOSS'|'TIMEOUT'|'OPEN', direction: string, entryIndex: number, entryPrice: number,

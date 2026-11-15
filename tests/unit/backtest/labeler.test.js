@@ -23,16 +23,18 @@ describe('labelTrade (triple barrier)', () => {
     expect(t.barsHeld).toBe(2);
   });
 
-  it('UNIT-BT-LBL-002 biaya mengurangi R: fee 4 + slip 2 bps per sisi', () => {
-    // costR = 0,0006 · (100 + 110) / 5 = 0,0252 → rMultiple = 2 − 0,0252 = 1,9748.
+  it('UNIT-BT-LBL-002 biaya mengurangi R: fee 5 + slip 2 bps per sisi (bawaan)', () => {
+    // costR = 0,0007 · (100 + 110) / 5 = 0,0294 → rMultiple = 2 − 0,0294 = 1,9706.
     const candles = [ENTRY, c(100, 104, 97, 103), c(103, 111, 102, 108)];
     const t = labelTrade({ candles, entryIndex: 0, direction: 'LONG', entryPrice: 100, stopPrice: 95 });
     expect(t.grossR).toBeCloseTo(2, 12);
-    expect(t.costR).toBeCloseTo(0.0252, 12);
-    expect(t.rMultiple).toBeCloseTo(1.9748, 12);
-    // LOSS juga lebih buruk dari −1: costR = 0,0006·(100+95)/5 = 0,0234 → −1,0234.
+    expect(t.costR).toBeCloseTo(0.0294, 12);
+    expect(t.rMultiple).toBeCloseTo(1.9706, 12);
+    // LOSS juga lebih buruk dari −1: costR = 0,0007·(100+95)/5 = 0,0273 → −1,0273.
     const loss = labelTrade({ candles: [ENTRY, c(99, 100, 94, 96)], entryIndex: 0, direction: 'LONG', entryPrice: 100, stopPrice: 95 });
-    expect(loss.rMultiple).toBeCloseTo(-1.0234, 12);
+    expect(loss.rMultiple).toBeCloseTo(-1.0273, 12);
+    // Fee lama (4 bps) tetap bisa dipakai eksplisit: costR = 0,0006·(100+110)/5 = 0,0252.
+    expect(labelTrade({ candles, entryIndex: 0, direction: 'LONG', entryPrice: 100, stopPrice: 95, feeBps: 4 }).costR).toBeCloseTo(0.0252, 12);
   });
 
   it('UNIT-BT-LBL-003 stop & target tersentuh di candle yang sama → LOSS (konservatif)', () => {

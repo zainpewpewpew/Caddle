@@ -12,7 +12,7 @@ describe('parseBacktestArgs', () => {
     const a = parseBacktestArgs(['--symbols', 'btcusdt,ETHUSDT,BTCUSDT'], { now: NOW });
     expect(a).toMatchObject({
       help: false, source: 'binance', symbols: ['BTCUSDT', 'ETHUSDT'], top: null, csv: null, timeframes: ['15m', '1h'],
-      from: Date.UTC(2024, 0, 1), to: NOW, rangeExplicit: false, targetR: 2, maxBars: 48, folds: 5, embargoBars: 48,
+      from: Date.UTC(2024, 0, 1), to: NOW, rangeExplicit: false, targetR: 2, maxBars: 48, feeBps: 5, slippageBps: 2, folds: 5, embargoBars: 48,
       cacheDir: 'data/backtest-cache', out: 'reports', writeCalibration: null, ml: false, entry: 'nextOpen', maxCostR: 0.15, calibrationMethod: 'platt',
     });
   });
@@ -20,10 +20,10 @@ describe('parseBacktestArgs', () => {
   it('UNIT-BTCLI-002 semua opsi', () => {
     const a = parseBacktestArgs(['--top', '30', '--timeframes', '5m,1h', '--from', '2024-01-01', '--to', '2025-10-01', '--target-r', '1.5',
       '--max-bars', '24', '--folds', '4', '--embargo', '10', '--out', 'out/', '--write-calibration', 'config/calibration.json', '--no-cache',
-      '--min-quote-volume', '50000000'], { now: NOW });
+      '--min-quote-volume', '50000000', '--fee-bps', '4', '--slippage-bps', '3.5'], { now: NOW });
     expect(a).toMatchObject({
       source: 'binance', top: 30, symbols: null, timeframes: ['5m', '1h'], from: Date.UTC(2024, 0, 1), to: Date.UTC(2025, 9, 1), rangeExplicit: true,
-      targetR: 1.5, maxBars: 24, folds: 4, embargoBars: 10, out: 'out/', writeCalibration: 'config/calibration.json', cacheDir: null,
+      targetR: 1.5, maxBars: 24, feeBps: 4, slippageBps: 3.5, folds: 4, embargoBars: 10, out: 'out/', writeCalibration: 'config/calibration.json', cacheDir: null,
       minQuoteVolume24h: 50_000_000,
     });
     expect(parseBacktestArgs(['--synthetic', '--seed', '7'], { now: NOW })).toMatchObject({ source: 'synthetic', seed: 7 });
@@ -47,6 +47,8 @@ describe('parseBacktestArgs', () => {
       [['--synthetic', '--from', 'kemarin'], /bukan tanggal valid/],
       [['--synthetic', '--target-r', 'dua'], /--target-r/],
       [['--synthetic', '--max-bars', '1.5'], /--max-bars/],
+      [['--synthetic', '--fee-bps', '-1'], /--fee-bps/],
+      [['--synthetic', '--slippage-bps', 'banyak'], /--slippage-bps/],
       [['--top', '0'], /--top/],
       [['--synthetic', '--bogus'], /Argumen tidak valid/],
       [['posisional'], /Argumen tidak valid/],
@@ -92,7 +94,7 @@ describe('main (end-to-end offline dengan CSV & runner palsu)', () => {
     const arg = runBacktest.mock.calls[0][0];
     expect(arg.symbols).toEqual(['BTCUSDT']);
     expect(arg.candles.BTCUSDT['1h']).toHaveLength(5);
-    expect(arg).toMatchObject({ timeframes: ['1h'], targetR: 2, maxBars: 48, source: 'csv' });
+    expect(arg).toMatchObject({ timeframes: ['1h'], targetR: 2, maxBars: 48, feeBps: 5, slippageBps: 2, source: 'csv' });
     const files = (await readdir(out)).sort();
     expect(files).toHaveLength(2);
     expect(files[0]).toMatch(/^backtest-\d{8}T\d{6}Z\.json$/);

@@ -73,7 +73,7 @@ describe('runner backtest', () => {
     expect(next.trades.v2.length).toBeGreaterThan(0);
     for (const t of next.trades.v2) {
       expect(t.entryPrice).toBe(byTf['15m'][t.entryIndex + 1].open);
-      expect(t.estCostR).toBeCloseTo((2 * 6e-4 * t.entryPrice) / t.risk, 12);
+      expect(t.estCostR).toBeCloseTo((2 * 7e-4 * t.entryPrice) / t.risk, 12); // fee 5 + slippage 2 bps per sisi
     }
     for (const t of close.trades.v2) expect(t.entryPrice).toBe(byTf['15m'][t.entryIndex].close);
     await expect(replaySeries({ symbol, timeframe: '15m', byTf, options: { entry: 'tomorrow' } })).rejects.toThrow(RangeError);
@@ -87,6 +87,34 @@ describe('runner backtest', () => {
     expect(md).toContain('## Filter biaya (eksperimen)');
     expect(md).toContain('Entri di open candle setelah candle sinyal');
     await expect(runBacktest({ candles, timeframes: ['15m'], calibrationMethod: 'x' })).rejects.toThrow(RangeError);
+  }, 90_000);
+
+  it('UNIT-BT-RUN-004 entryTime = waktu eksekusi (open candle berikutnya / close candle sinyal); signalTime = close candle sinyal', async () => {
+    // Temuan audit eksternal: dulu entryTime selalu closeTime candle sinyal, padahal mode bawaan masuk di open candle
+    // berikutnya (selisih 1 ms). Split train/test, purging, dan pengelompokan harian ML memakai entryTime.
+    const candles = universe(1, 900, 40, () => [
+      { type: 'RANDOM_WALK', bars: 200 }, { type: 'ACCUMULATION', bars: 80 }, { type: 'RANDOM_WALK', bars: 150 },
+      { type: 'DISTRIBUTION', bars: 80 }, { type: 'RANDOM_WALK', bars: 150 }, { type: 'ACCUMULATION', bars: 80 }, { type: 'RANDOM_WALK', bars: 100 },
+    ]);
+    const [[symbol, byTf]] = Object.entries(candles);
+    const base = byTf['15m'];
+    const next = await replaySeries({ symbol, timeframe: '15m', byTf });
+    const close = await replaySeries({ symbol, timeframe: '15m', byTf, options: { entry: 'close' } });
+    const nextTrades = [...next.trades.v2, ...next.trades.v3];
+    const closeTrades = [...close.trades.v2, ...close.trades.v3];
+    expect(nextTrades.length).toBeGreaterThan(0);
+    expect(closeTrades.length).toBeGreaterThan(0);
+    for (const t of nextTrades) {
+      expect(t.entryTime).toBe(base[t.entryIndex + 1].openTime);
+      expect(t.entryTime).toBe(base[t.entryIndex].closeTime + 1);
+      expect(t.signalTime).toBe(base[t.entryIndex].closeTime);
+      expect(t.entryTime).toBeLessThan(t.exitTime);
+    }
+    for (const t of closeTrades) {
+      expect(t.entryTime).toBe(base[t.entryIndex].closeTime);
+      expect(t.signalTime).toBe(t.entryTime);
+      expect(t.entryTime).toBeLessThan(t.exitTime);
+    }
   }, 90_000);
 });
 

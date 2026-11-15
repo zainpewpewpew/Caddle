@@ -196,6 +196,8 @@ export async function main(argv = process.argv.slice(2), { loadRunner = () => im
     to: args.to,
     targetR: args.targetR,
     maxBars: args.maxBars,
+    feeBps: args.feeBps,
+    slippageBps: args.slippageBps,
     folds: args.folds,
     embargoBars: args.embargoBars,
     seed: args.seed,

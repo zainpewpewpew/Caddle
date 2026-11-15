@@ -9,7 +9,9 @@
 //   tier "v3 per tier": entri v2 dikelompokkan menurut tier konfluensi saat entri, untuk menguji apakah
 //        tier benar-benar terurut (A ≥ B ≥ C ≥ D). Bila tidak terurut, bobot konfluensi belum bermakna.
 // Entri trade = event pertama sebuah sinyal ke state alert (EARLY_*/MOMENTUM_BUILDING/BREAKOUT/BREAKDOWN),
-// harga entri = close candle itu, stop = level invalidasi sinyal saat itu. Satu trade per sinyal.
+// stop = level invalidasi sinyal saat itu. Satu trade per sinyal. Harga & waktu entri = open candle berikutnya
+// (bawaan `entry: 'nextOpen'`) atau close candle sinyal (`entry: 'close'`); `entryTime` = waktu eksekusi itu,
+// `signalTime` = closeTime candle sinyal (saat keputusan diambil).
 //
 // Pemisahan waktu: trade dengan entri sebelum `testStart` (fraksi `trainFraction` rentang waktu) = train,
 // dikurangi embargo (maxBars candle) dan purging (trade train yang keluar setelah testStart dibuang). Kalibrasi
@@ -24,7 +26,7 @@ import { metaFeatures } from '../ml/metaFeatures.js';
 import { logLoss } from '../ml/metrics.js';
 import { ALERT_STATES_BY_DIRECTION, transition } from '../signals/index.js';
 import { applyCalibration, CALIBRATION_METHODS, fitCalibrationBy, reliabilityReport } from './calibration.js';
-import { labelTrade } from './labeler.js';
+import { LABEL_DEFAULTS, labelTrade } from './labeler.js';
 import { brierScore, summarize } from './metrics.js';
 import { aggregateCandles } from './synthetic.js';
 
@@ -36,11 +38,13 @@ export const BACKTEST_WARMUP = 150;
  * entry: 'nextOpen' (bawaan, realistis: order baru bisa dikirim setelah candle sinyal tutup → harga = open candle
  *   berikutnya) atau 'close' (perilaku lama: masuk tepat di close candle sinyal).
  * maxCostR: ambang varian "v3 + filter biaya" — sinyal dilewati bila perkiraan biaya pulang-pergi saat entri
- *   (2·(fee+slippage)·entry / risiko) > maxCostR R. 0.15R ≈ stop minimal ±80 bps pada biaya 12 bps. HIPOTESIS awal.
+ *   (2·(fee+slippage)·entry / risiko) > maxCostR R. 0.15R ≈ stop minimal ±93 bps pada biaya 14 bps. HIPOTESIS awal.
+ * feeBps/slippageBps: per sisi, bawaan dari labeler (fee 5 bps = taker Binance Futures VIP 0; slippage 2 bps).
  * calibrationMethod: metode tabel kalibrasi untuk config/calibration.json ('platt' bawaan, atau 'isotonic').
  */
 export const RUNNER_DEFAULTS = Object.freeze({
-  targetR: 2, maxBars: 48, trainFraction: 0.6, feeBps: 4, slippageBps: 2, ml: false, entry: 'nextOpen', maxCostR: 0.15, calibrationMethod: 'platt',
+  targetR: 2, maxBars: 48, trainFraction: 0.6, feeBps: LABEL_DEFAULTS.feeBps, slippageBps: LABEL_DEFAULTS.slippageBps,
+  ml: false, entry: 'nextOpen', maxCostR: 0.15, calibrationMethod: 'platt',
 });
 export const ENTRY_MODES = Object.freeze(['nextOpen', 'close']);
 
@@ -109,7 +113,9 @@ export async function replaySeries({ symbol, timeframe, byTf, params = {}, optio
         if (alertState && entered[variant][direction] === false) {
           entered[variant][direction] = true;
           // Entri open berikutnya: candle i+1 dibuka di harga entri, lalu dievaluasi labeler mulai candle i+1 itu sendiri.
+          // Waktu entri ikut waktu eksekusi: openTime candle i+1 (= closeTime candle sinyal + 1 ms), bukan close sinyal.
           const entryPrice = o.entry === 'close' ? last.close : base[i + 1]?.open;
+          const entryTime = o.entry === 'close' ? last.closeTime : base[i + 1]?.openTime;
           const trade = Number.isFinite(entryPrice) ? labelTrade({
             candles: base, entryIndex: i, direction, entryPrice, stopPrice: next.invalidationPrice,
             targetR: o.targetR, maxBars: o.maxBars, feeBps: o.feeBps, slippageBps: o.slippageBps,
@@ -118,12 +124,13 @@ export async function replaySeries({ symbol, timeframe, byTf, params = {}, optio
           if (!trade && o.entry === 'nextOpen' && wrongSide && variant === 'v2') skippedGap += 1;
           if (trade) {
             const c = r.view.confluence ?? null;
+            // Fitur meta sengaja memakai informasi saat keputusan (close & closeTime candle sinyal), bukan eksekusi.
             const ml = o.ml ? metaFeatures({
               direction, timeframe, state: event.toState, view: r.view, features: featuresNow(),
               candles: candlesByTimeframe[timeframe], entryPrice: last.close, stopPrice: next.invalidationPrice, entryTime: last.closeTime,
             }) : undefined;
             trades[variant].push({
-              ...trade, symbol, timeframe, entryTime: last.closeTime, state: event.toState,
+              ...trade, symbol, timeframe, entryTime, signalTime: last.closeTime, state: event.toState,
               tier: c?.tier ?? null, score: c?.score ?? null, patternScore: r.view.patternScore, alignment: r.context?.alignment ?? null,
               // Perkiraan biaya pulang-pergi dalam R yang DIKETAHUI saat entri (tanpa harga exit).
               estCostR: (2 * costRate * entryPrice) / trade.risk,
