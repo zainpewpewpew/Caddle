@@ -142,8 +142,10 @@ Hasil lain dari dua varian kausal:
    - **LONG 1h SA/PVA tidak terbukti menambah informasi** di luar momentum serupa. Selisihnya +0,09…+0,11 ATR, CI memuat 0.
    - **SHORT 15m SD/PVD sedikit lebih buruk** dari momentum serupa: −0,07…−0,08 ATR.
 2. Peluang breakout bersyarat: dibanding semua candle, alert jauh lebih sering diikuti breakout D48 dalam 12 candle
-   (LONG 41% vs 18%, SHORT 39% vs 18%). Dibanding candle dengan momentum serupa, selisihnya tinggal +0,9…+1,4 pp. Rasio
-   besar terhadap candle acak (docs/24 §4) hampir seluruhnya berasal dari momentum.
+   (LONG 41% vs 18%, SHORT 39% vs 18%; rasio 2,1–2,3×). Dibanding candle dengan momentum serupa, selisihnya tinggal
+   +0,9…+1,4 pp (rasio 1,02–1,04×). Jadi rasio besar terhadap candle acak hampir seluruhnya berasal dari momentum. docs/24
+   §4 menghitung rasio serupa (±2,3–2,4×) khusus untuk alert "sebelum breakout"; subkelompok itu belum diukur terpisah
+   dengan pembanding dicocokkan.
 3. Scanner saat ini paling tepat dibaca sebagai **pendeteksi momentum dengan label pola**. Itu tidak berarti trade-nya
    pasti rugi (§2.4). Hanya saja, keunggulan apa pun yang ada belum bisa diatribusikan ke pola.
 

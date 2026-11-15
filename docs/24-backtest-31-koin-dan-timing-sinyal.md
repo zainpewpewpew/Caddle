@@ -163,10 +163,16 @@ Dari alert "sebelum breakout", 33,5% diikuti breakout (ke bawah) dalam 12 candle
 - **Ada informasi, tetapi tidak menutup biaya.** Alert "sebelum breakout" ±2,3–2,4 kali lebih sering diikuti breakout
   daripada candle acak (LONG 32,3% vs 13,5%; SHORT 33,5% vs 14,5%). Detektor membawa informasi tentang gerak lanjutan jangka
   pendek, tetapi dengan geometri stop/target saat ini hasil bersihnya tidak positif.
+  *Pembaruan 2026-11-15 (docs/25 §2.3): candle acak tidak mengontrol momentum.* Dibanding candle dengan momentum serupa
+  (pembanding kausal), alert LONG tidak terbukti membawa informasi tambahan: gerak 12 candle +0,09…+0,11 ATR, CI memuat 0.
+  Alert SHORT sedikit lebih buruk: −0,07…−0,08 ATR. Untuk semua alert, selisih peluang breakout tinggal +0,9…+1,4 pp.
+  Kalimat "detektor membawa informasi" di atas karena itu tidak berlaku.
 - **Satu sel menonjol, belum temuan.** LONG 1h dengan gerak awal ≥ +2,7 ATR: +0,15R [+0,05 … +0,26]. Arahnya sejalan
   dengan literatur momentum time-series, tetapi ini 1 dari 18 sel kelompok/state/tersil yang dilihat; pada 95% sekitar
   satu kelulusan palsu memang diharapkan. Sel ini hanya boleh menjadi hipotesis untuk uji luar sampel terpraregistrasi
   pada data segar (sinyal setelah 2026-10-01, paling cepat dievaluasi setelah 2027-01-03), bukan dasar mengubah scanner.
+  *Pembaruan 2026-11-15:* dipraregistrasi sebagai AL-SA-ATR-01 (docs/26), dengan 100 koin dan data mulai 2026-11-16
+  (sesudah pembekuan), n wajib 600.
 - **Semesta simbol menentukan.** LONG 1h −0,12R pada 6 koin besar vs +0,02R pada 31 koin. Daftar 31 koin dipilih menurut
   volume Oktober 2026, sehingga koin yang sudah naik lebih mungkin masuk (bias survivorship yang menguntungkan LONG); angka
   +0,02R karena itu cenderung optimistis.
@@ -176,6 +182,7 @@ Dari alert "sebelum breakout", 33,5% diikuti breakout (ke bawah) dalam 12 candle
 - Bias survivorship (di atas); satu bursa (Binance USDT-M).
 - Runner tanpa funding; studi kejadian docs/23 mengukur pengaruhnya ±0,004R per trade.
 - Trade tumpang tindih dan berkorelasi antarkoin: CI runner tidak berklaster; CI studi timing berklaster per hari.
+  CI moving-block bootstrap 7/14 hari (docs/25 §2.4) hampir sama dengan CI harian.
 - Satu aturan keluar (2R / 48 candle); hasil trader diskresioner bisa berbeda.
 - Parameter pola dirancang manusia dan mungkin dibuat setelah melihat sebagian periode ini, jadi "periode uji" hanya
   luar sampel untuk kalibrasi, bukan untuk desain pola.
