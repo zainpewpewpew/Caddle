@@ -18,7 +18,6 @@ import { createLiveProviderRegistry } from '../../backend/smartmoney/providers/l
 import { runSmartMoneySync } from '../../backend/smartmoney/sync.js';
 import { createUser } from '../../backend/users/userAdmin.js';
 import { buildScenario } from '../fixtures/smartmoney/scenario.js';
-import { REVERSAL_SEED_ROWS, seedReversalCandidates } from '../helpers/reversalSeed.js';
 import { seedSignals, seedWorkerHistory } from '../helpers/signalSeed.js';
 import { SEED_SYNC_TUNING } from '../helpers/smartMoneyApi.js';
 import { E2E_PORT, E2E_USERS } from './fixtures.js';
@@ -60,10 +59,6 @@ if (seeded) {
   // LONG Scanner produksi hanya 1h (DIRECTION_TIMEFRAMES) → sinyal seed di 1h.
   await seedSignals(repos, { timeframe: '1h' });
   await seedWorkerHistory(repos);
-  // Reversal Radar (LONG Scanner): matriks kandidat SINTETIS per tahap/status/likuiditas/provisional ditulis lewat
-  // repositori asli (tests/helpers/reversalSeed.js) beserta 60 candle tertutup per seri untuk harga & mini-chart.
-  // Radar produksi hanya 1h (REVERSAL_ACTIVE_TIMEFRAMES) → seluruh matriks dipindah ke 1h.
-  await seedReversalCandidates(repos, { withCandles: true, rows: REVERSAL_SEED_ROWS.map((row) => ({ ...row, timeframe: '1h' })) });
   // Peristiwa skenario berumur 2–20 jam: batas basi alert dinaikkan KHUSUS penyemaian ini (SEED_SYNC_TUNING);
   // default produksi (30 menit) tidak berubah.
   const summary = await runSmartMoneySync({

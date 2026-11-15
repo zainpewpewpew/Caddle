@@ -22,10 +22,10 @@ const symbolOrNull = (v) => (typeof v === 'string' && SYMBOL.test(v) ? v : null)
 const timeframeOrNull = (v) => (TIMEFRAMES.includes(v) ? v : null);
 const codeOrNull = (v) => (typeof v === 'string' && CODE.test(v) ? v : null);
 
-/** Hitungan sinyal terbuka ringkasan scan { long, short, radar } atau null. */
+/** Hitungan sinyal terbuka ringkasan scan { long, short } atau null. */
 function summarizeOpen(raw) {
   if (raw === null || typeof raw !== 'object') return null;
-  return { long: countOrNull(raw.long), short: countOrNull(raw.short), radar: countOrNull(raw.radar) };
+  return { long: countOrNull(raw.long), short: countOrNull(raw.short) };
 }
 
 /** Ringkasan scan berkala terakhir (worker/scanner.js status().scan) yang disaring, atau null. */
@@ -65,7 +65,6 @@ const ACTIVITY_FIELDS = Object.freeze({
     symbol: symbolOrNull(e.symbol), timeframe: timeframeOrNull(e.timeframe), direction: e.direction === 'SHORT' ? 'SHORT' : 'LONG',
     state: codeOrNull(e.state), tier: ['A', 'B', 'C', 'D'].includes(e.tier) ? e.tier : null,
   }),
-  reversal: (e) => ({ symbol: symbolOrNull(e.symbol), timeframe: timeframeOrNull(e.timeframe), stage: codeOrNull(e.stage), status: codeOrNull(e.status) }),
   error: (e) => ({
     source: typeof e.source === 'string' && SOURCE.test(e.source) ? e.source : 'scanner',
     symbol: symbolOrNull(e.symbol), timeframe: timeframeOrNull(e.timeframe),

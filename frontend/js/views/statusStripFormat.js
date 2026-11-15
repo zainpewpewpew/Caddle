@@ -4,14 +4,13 @@
 // Sumber data: scanner.scan (scan berkala tiap menit), scanner.activity (worker/activity.js, disaring server),
 // worker (supervisor: state, via, restartAt), scanner.sync (langkah siklus) — lihat backend/system/workerStatus.js.
 import { DISPLAY_TZ_OFFSET_MS, formatInteger, formatRelative } from '../lib/format.js';
-import { stageLabel, statusLabel } from './reversalFormat.js';
 import { syncHeadline, syncMode } from './syncProgress.js';
 import { workerControlLabel } from './workerFormat.js';
 
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const pad2 = (n) => String(n).padStart(2, '0');
 const TF_MS = Object.freeze({ '5m': 300_000, '15m': 900_000, '1h': 3_600_000 });
-/** Timeframe yang ditampilkan "candle berikutnya tutup": SHORT Scanner 15m, LONG Scanner & Reversal Radar 1h. */
+/** Timeframe yang ditampilkan "candle berikutnya tutup": SHORT Scanner 15m, LONG Scanner 1h. */
 export const STRIP_TIMEFRAMES = Object.freeze(['15m', '1h']);
 
 /** Jam WIB HH:MM:SS. */
@@ -53,10 +52,10 @@ const SOURCE_TEXT = Object.freeze({
   monitoring: 'penutupan sinyal', settings: 'pengaturan', scanner: 'scanner',
 });
 
-/** Ringkasan sinyal terbuka hasil scan: "sinyal LONG 4 · SHORT 2 · radar 38" ('' bila tidak dilaporkan). */
+/** Ringkasan sinyal terbuka hasil scan: "sinyal terbuka LONG 4 · SHORT 2" ('' bila tidak dilaporkan). */
 function openText(open) {
   if (!open || typeof open !== 'object') return '';
-  const parts = [['LONG', open.long], ['SHORT', open.short], ['radar', open.radar]].filter(([, v]) => isNum(v));
+  const parts = [['LONG', open.long], ['SHORT', open.short]].filter(([, v]) => isNum(v));
   return parts.length ? `sinyal terbuka ${parts.map(([k, v]) => `${k} ${num(v)}`).join(' · ')}` : '';
 }
 
@@ -90,8 +89,6 @@ export function activityText(e) {
       const state = STATE_TEXT[e.state] ?? codeText(e.state);
       return `Sinyal ${e.direction === 'SHORT' ? 'SHORT' : 'LONG'} ${e.symbol ?? '—'} ${e.timeframe ?? ''} → ${state}${e.tier ? ` (tier ${e.tier})` : ''}`;
     }
-    case 'reversal':
-      return `Reversal Radar ${e.symbol ?? '—'} ${e.timeframe ?? ''} → ${e.stage ? stageLabel(e.stage) : statusLabel(e.status)}`;
     case 'error': {
       const where = e.symbol ? ` ${e.symbol}${e.timeframe ? ` ${e.timeframe}` : ''}` : '';
       return `Galat ${SOURCE_TEXT[e.source] ?? e.source ?? 'scanner'}${where}: ${e.message || 'tanpa pesan'}`;
@@ -116,7 +113,6 @@ export function activityTone(e) {
     case 'discovery': return e.failed ? 'warn' : 'idle';
     case 'scan': return e.stale > 0 ? 'warn' : 'ok';
     case 'signal': return e.direction === 'SHORT' ? 'bear' : 'bull';
-    case 'reversal': return 'bull';
     case 'worker': return 'ok';
     default: return 'idle';
   }
@@ -232,7 +228,7 @@ export function stripModel(d, { now = Date.now(), page = null } = {}) {
     const parts = [];
     if (isNum(symbols)) parts.push(`${num(symbols)} koin`);
     if (isNum(series)) parts.push(isNum(fresh) ? `${num(fresh)}/${num(series)} seri mutakhir` : `${num(series)} seri`);
-    segments.push(seg('coverage', parts.join(' · '), 'Seri = koin × timeframe (5m grafik, 15m SHORT, 1h LONG & Reversal Radar).',
+    segments.push(seg('coverage', parts.join(' · '), 'Seri = koin × timeframe (5m grafik, 15m SHORT, 1h LONG).',
       { tone: isNum(fresh) && isNum(series) && fresh < series ? 'warn' : undefined }));
   }
   // Jumlah seri yang menerima harga candle berjalan (dihitung saat scan) — bukan "x detik lalu": harga mengalir tiap
@@ -244,7 +240,7 @@ export function stripModel(d, { now = Date.now(), page = null } = {}) {
   }
   const closes = STRIP_TIMEFRAMES.map((tf) => ({ tf, at: nextCandleClose(now, tf) }));
   segments.push(seg('candle', `Candle ${closes.map((c) => `${c.tf} tutup ${clockHm(c.at)}`).join(' · ')} (${formatCountdown(closes[0].at - now)})`,
-    'Sinyal baru dikonfirmasi saat candle tertutup: SHORT 15m, LONG & Reversal Radar 1h.'));
+    'Sinyal baru dikonfirmasi saat candle tertutup: SHORT 15m, LONG 1h.'));
   if (page && isNum(page.at)) {
     const next = isNum(page.nextAt) ? ` · berikutnya ${formatCountdown(page.nextAt - now)}` : '';
     segments.push(seg('page', `Tabel diperbarui ${clockHms(page.at)}${next}`, `${page.source}: dimuat ulang otomatis tiap menit selama scanner berjalan.`));

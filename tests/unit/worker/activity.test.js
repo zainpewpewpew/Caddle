@@ -16,11 +16,11 @@ describe('log aktivitas worker (worker/activity.js)', () => {
     clock.advance(1_000);
     feed.discovery({ cycle: 'initial', symbols: 40 });
     feed.ws({ state: 'open', reconnects: 0 });
-    feed.scan({ seq: 1, series: 120, fresh: 120, stale: 0, repaired: 0, priced: 118, durationMs: 4, open: { long: 4, short: 2, radar: 38 } });
+    feed.scan({ seq: 1, series: 120, fresh: 120, stale: 0, repaired: 0, priced: 118, durationMs: 4, open: { long: 4, short: 2 } });
     const list = feed.list();
     expect(list.map((e) => [e.id, e.kind])).toEqual([[2, 'discovery'], [3, 'ws'], [4, 'scan']]);
     expect(list[0]).toEqual({ id: 2, at: clock(), kind: 'discovery', cycle: 'initial', symbols: 40, failed: false });
-    expect(list[2].open).toEqual({ long: 4, short: 2, radar: 38 });
+    expect(list[2].open).toEqual({ long: 4, short: 2 });
     list[2].open.long = 99;
     expect(feed.list()[2].open.long).toBe(4);
     expect(ACTIVITY_LIMIT).toBe(30);
@@ -45,18 +45,18 @@ describe('log aktivitas worker (worker/activity.js)', () => {
     expect(feed.candles({ timeframe: '15m', closeTime: Number.NaN })).toBeNull();
   });
 
-  it('UNIT-ACT-003 sinyal / kandidat / galat disaring: simbol, timeframe, kode, tier, sumber tidak valid → null/default; pesan dipotong 160 karakter', () => {
+  it('UNIT-ACT-003 sinyal / galat disaring: simbol, timeframe, kode, tier, sumber tidak valid → null/default; pesan dipotong 160 karakter', () => {
     const feed = createActivityFeed({ clock: clockFrom() });
     feed.signal({ symbol: 'ETHUSDT', timeframe: '15m', direction: 'SHORT', state: 'EARLY_BEARISH', view: { confluence: { tier: 'B' } } });
     feed.signal({ symbol: 'eth<script>', timeframe: '2h', direction: 'X', state: 'drop table', view: { confluence: { tier: 'Z' } } });
-    feed.reversal({ symbol: 'BTCUSDT', timeframe: '1h', stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING' });
     feed.error({ source: 'Backfill!', symbol: 'BTCUSDT', timeframe: '1h', message: 'x'.repeat(500) });
-    const [ok, bad, rev, err] = feed.list();
+    const [ok, bad, err] = feed.list();
     expect(ok).toMatchObject({ kind: 'signal', symbol: 'ETHUSDT', timeframe: '15m', direction: 'SHORT', state: 'EARLY_BEARISH', tier: 'B' });
     expect(bad).toMatchObject({ kind: 'signal', symbol: null, timeframe: null, direction: 'LONG', state: null, tier: null });
-    expect(rev).toMatchObject({ kind: 'reversal', symbol: 'BTCUSDT', timeframe: '1h', stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING' });
     expect(err).toMatchObject({ kind: 'error', source: 'scanner', symbol: 'BTCUSDT', timeframe: '1h' });
     expect(err.message).toHaveLength(160);
+    // Reversal Radar dihapus (2026-11-15): feed tidak lagi punya jenis 'reversal'.
+    expect(feed.reversal).toBeUndefined();
   });
 
   it('UNIT-ACT-004 NOOP_ACTIVITY tidak menyimpan apa pun; limit tidak valid ditolak', () => {

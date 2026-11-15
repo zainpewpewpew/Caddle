@@ -260,7 +260,8 @@ describe('pipeline Reversal Radar — candle tertutup (replay dari kursor, HTF t
     expect(alerts[0].events.map((e) => e.type)).toEqual(['STAGE_UP']);
     expect(alerts[0].snapshot).toMatchObject({ stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING', lastCandleTime: at(106) });
     expect(alerts[0].evaluation).toMatchObject({ stage: 'DEVELOPING_REVERSAL', provisional: false, candleOpenTime: at(106) });
-    // debug: log info berbahasa manusia untuk alert yang sama ditulis worker (worker/index.js onReversalAlert).
+    // debug: pipeline ini tidak lagi dirakit worker (Reversal Radar dihapus dari website & worker 2026-11-15); logger info
+    // dibiarkan untuk pemanggil lain (alat riset).
     expect(logger.debug).toHaveBeenCalledWith({ symbol: SYMBOL, timeframe: '5m', stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING', events: ['STAGE_UP'] }, 'alert kandidat reversal');
     expect(await repos.reversal.getOpen(SERIES)).toMatchObject({ id: 1, stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING', barsInStage: 0, evidence: IDS_OF.DEVELOPING_REVERSAL });
 

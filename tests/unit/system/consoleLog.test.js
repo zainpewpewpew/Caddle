@@ -64,7 +64,8 @@ describe('tampilan log terminal npm start (backend/system/consoleLog.js)', () =>
     const base = { origin: 'http://127.0.0.1:8080', workerControl: true, workerAutostart: true, openBrowser: true };
     const running = formatBanner({ ...base, scannerState: 'running' });
     expect(running).toContain('AlphaLens berjalan  →  http://127.0.0.1:8080');
-    expect(running).toContain('Scanner : dijalankan otomatis — LONG 1h · SHORT 15m · Reversal Radar 1h');
+    expect(running).toContain('Scanner : dijalankan otomatis — LONG 1h (SA/PVA) · SHORT 15m (SD/PVD)');
+    expect(running).not.toContain('Reversal Radar');
     expect(running).toContain('dipindai tiap 1 menit');
     expect(running).toContain('Browser dibuka otomatis.');
     expect(running).not.toContain('\u001b[');

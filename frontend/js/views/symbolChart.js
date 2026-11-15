@@ -8,8 +8,8 @@ import { h, icon } from '../lib/dom.js';
 import { formatPrice, formatTime } from '../lib/format.js';
 import { alignmentBadge, directionBadge, directionOf, patternBadge, riskBadges, signalStage } from './signalFormat.js';
 
-// Timeframe yang diingesti worker: 5m kembali diingesti untuk Reversal Radar (REVERSAL_TIMEFRAMES, docs/19), di samping
-// 15m (LONG SA/PVA) dan 1h (SHORT SD/PVD + konteks HTF). Grafik hanya menawarkan timeframe yang datanya diperbarui.
+// Timeframe yang diingesti worker: 5m (khusus grafik), 15m (SHORT SD/PVD), dan 1h (LONG SA/PVA + konteks HTF SHORT).
+// Grafik hanya menawarkan timeframe yang datanya diperbarui.
 export const CHART_TIMEFRAMES = Object.freeze(['5m', '15m', '1h']);
 export const SYMBOL_RE = /^[A-Z0-9]{2,30}$/;
 const DEFAULT_TIMEFRAME = '15m';

@@ -1,5 +1,10 @@
 # 19 — Kontrak "Reversal Radar": deteksi dini potensi reversal bullish di LONG Scanner
 
+> **Dihapus dari website & worker (2026-11-15, keputusan pengguna):** LONG Scanner kembali memakai pola SA/PVA 1h,
+> yang dinilai pengguna lebih sesuai (contoh: UNIUSDT, AAVEUSDT, ZECUSDT, HYPEUSDT). UI (`reversalRadar.js`), API
+> `/api/reversal/*`, dan pipeline radar di worker dihapus; mesin `backend/reversal` + `npm run reversal:replay` tetap
+> sebagai alat riset, dan tabel `reversal_*` beserta riwayatnya tetap di database. Dokumen di bawah = arsip kontrak.
+
 Status: kontrak implementasi (2026-10-26). Mengikat modul yang dikembangkan paralel. Semua waktu epoch ms UTC.
 Latar riset & keputusan metode: [20 — riset deteksi dini reversal](20-riset-deteksi-dini-reversal.md).
 

@@ -57,7 +57,7 @@ describe('ringkasan status worker', () => {
 describe('ringkasan scan berkala & log aktivitas (strip status)', () => {
   const SCAN = {
     seq: 57, at: NOW - 2_000, finishedAt: NOW - 1_990, durationMs: 10, symbols: 40, series: 120, fresh: 119, stale: 1, repaired: 0,
-    priced: 118, lastPriceAt: NOW - 1_000, open: { long: 4, short: 2, radar: 38 }, intervalMs: 60_000, nextAt: NOW + 58_000,
+    priced: 118, lastPriceAt: NOW - 1_000, open: { long: 4, short: 2 }, intervalMs: 60_000, nextAt: NOW + 58_000,
   };
 
   it('UNIT-WST-010 scan & jadwal diteruskan apa adanya selama heartbeat segar; jadwal null saat basi; field asing dibuang', () => {
@@ -72,7 +72,8 @@ describe('ringkasan scan berkala & log aktivitas (strip status)', () => {
     expect(summarizeWorker(beat({ state: 'running', scan: [] }), NOW).scanner.scan).toBeNull();
     const odd = summarizeWorker(beat({ state: 'running', scan: { ...SCAN, fresh: '119', open: { long: -1, short: 2.5, radar: 3 } } }), NOW).scanner.scan;
     expect(odd.fresh).toBeNull();
-    expect(odd.open).toEqual({ long: null, short: null, radar: 3 });
+    // Hitungan radar dari worker lama tidak lagi diteruskan (Reversal Radar dihapus 2026-11-15).
+    expect(odd.open).toEqual({ long: null, short: null });
   });
 
   it('UNIT-WST-011 aktivitas: hanya kind dikenal dengan id/at sah; field per kind disaring; pesan galat tanpa karakter kontrol, maks 160; maks 30 entri terbaru', () => {
@@ -83,10 +84,12 @@ describe('ringkasan scan berkala & log aktivitas (strip status)', () => {
       { id: 4, at: NOW - 6, kind: 'signal', symbol: 'ETHUSDT', timeframe: '15m', direction: 'SHORT', state: 'EARLY_BEARISH', tier: 'B', extra: 1 },
       { id: 5, at: NOW - 5, kind: 'error', source: 'backfill', symbol: 'BTCUSDT', timeframe: '1h', message: `a\u001b[31mb‮c${'z'.repeat(300)}` },
       { id: 6, at: NOW - 4, kind: 'candles', timeframe: '15m', closeTime: NOW - 60_001, count: 40 },
-      { id: 7, at: NOW - 3, kind: 'reversal', symbol: 'bad sym', timeframe: '1h', stage: 'CONFIRMED_BREAKOUT', status: 'CONFIRMED' },
+      // Entri 'reversal' dari heartbeat worker lama (sebelum Reversal Radar dihapus) = kind tak dikenal → dibuang.
+      { id: 7, at: NOW - 3, kind: 'reversal', symbol: 'BTCUSDT', timeframe: '1h', stage: 'CONFIRMED_BREAKOUT', status: 'CONFIRMED' },
+      { id: 8, at: NOW - 2, kind: 'signal', symbol: 'bad sym', timeframe: '1h', direction: 'LONG', state: 'BREAKOUT' },
     ];
     const r = summarizeWorker(beat({ state: 'running', activity }), NOW).scanner.activity;
-    expect(r.map((e) => e.id)).toEqual([1, 4, 5, 6, 7]);
+    expect(r.map((e) => e.id)).toEqual([1, 4, 5, 6, 8]);
     expect(r[1]).toEqual({ id: 4, at: NOW - 6, kind: 'signal', symbol: 'ETHUSDT', timeframe: '15m', direction: 'SHORT', state: 'EARLY_BEARISH', tier: 'B' });
     expect(r[2].message.startsWith('a [31mb c')).toBe(true);
     expect(r[2].message).toHaveLength(160);

@@ -9,11 +9,9 @@ import Fastify, { LogController } from 'fastify';
 import { authRoutes } from '../api/authRoutes.js';
 import { healthRoutes } from '../api/healthRoutes.js';
 import { marketRoutes } from '../api/marketRoutes.js';
-import { reversalRoutes } from '../api/reversalRoutes.js';
 import { settingsRoutes } from '../api/settingsRoutes.js';
 import { signalRoutes } from '../api/signalRoutes.js';
 import { DIRECTION_TIMEFRAMES } from '../market/contracts.js';
-import { REVERSAL_ACTIVE_TIMEFRAMES } from '../reversal/constants.js';
 import { smartMoneyRoutes } from '../api/smartMoneyRoutes.js';
 import { systemRoutes } from '../api/systemRoutes.js';
 import { workerRoutes } from '../api/workerRoutes.js';
@@ -78,7 +76,7 @@ const CHART_VENDOR_DIR = resolveChartVendorDir();
 export async function buildApp({
   config, db, clock = Date.now, hasherOptions, logger, workerSupervisor, workerScriptPath, workerRestartCooldownMs,
   smartMoneyRegistry, smartMoneySync, directionTimeframes = DIRECTION_TIMEFRAMES,
-  reversalTimeframes = REVERSAL_ACTIVE_TIMEFRAMES, logStream, requestLogging = true, workerOutput, workerAutoRestart = true,
+  logStream, requestLogging = true, workerOutput, workerAutoRestart = true,
 }) {
   const app = Fastify({
     logger: logger ?? {
@@ -210,8 +208,8 @@ export async function buildApp({
   await app.register(workerRoutes, { supervisor, enabled: config.workerControl, audit: repos.audit, clock });
   await app.register(signalRoutes, { signals: repos.signals, candles: repos.candles, directionTimeframes });
   await app.register(marketRoutes, { candles: repos.candles });
-  // Reversal Radar (docs/19 §7): baca saja, gerbang auth sama dengan /api/signals/* (default registerAuth).
-  await app.register(reversalRoutes, { reversal: repos.reversal, candles: repos.candles, timeframes: reversalTimeframes });
+  // Reversal Radar (/api/reversal/*) dihapus 2026-11-15 (keputusan pengguna: LONG Scanner kembali ke pola SA/PVA);
+  // path lama kini 404 lewat catch-all API. Tabel & riwayatnya tetap di database.
   await app.register(smartMoneyRoutes, {
     repo: repos.smartMoney, signals: repos.signals, registry: smRegistry, config: config.smartMoney, clock, audit: repos.audit,
     syncRunner: smSync,

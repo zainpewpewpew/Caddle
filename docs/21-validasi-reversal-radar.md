@@ -1,5 +1,8 @@
 # 21 — Validasi "Reversal Radar": laporan replay historis
 
+> **Catatan 2026-11-15:** Reversal Radar dihapus dari website & worker atas keputusan pengguna (LONG Scanner kembali ke
+> pola SA/PVA). Laporan ini tetap sebagai arsip; replay masih dapat dijalankan dengan `npm run reversal:replay`.
+
 Status: **hasil sintetis terisi, sebelum dan sesudah penyetelan; data nyata run 1–3 (Jun–Okt 2025) dan uji luar sampel terakhir run 4 (Jun–Okt 2026) terisi; kedua sel keputusan run 4 TIDAK terpenuhi — validasi ditutup, tidak ada uji lanjutan** (2026-10-27). Mesin
 `backend/reversal` **sesudah penyetelan** = commit `1e3bf9b` (parameter `DEFAULT_REVERSAL_PARAMS` bawaan saat ini, juga
 yang dipakai run 1 data nyata); **sebelum penyetelan** = commit `6bdb4d1` (parameter awal agent A). Bagian data nyata (§6)

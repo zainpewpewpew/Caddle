@@ -20,7 +20,6 @@ import { openDatabase } from '../../backend/database/connection.js';
 import { migrate } from '../../backend/database/migrate.js';
 import { createKlineStream } from '../../backend/ingestion/binance/wsClient.js';
 import { DIRECTION_TIMEFRAMES, HIGHER_TIMEFRAMES, TIMEFRAME_MS } from '../../backend/market/contracts.js';
-import { REVERSAL_ACTIVE_TIMEFRAMES, REVERSAL_TIMEFRAMES } from '../../backend/reversal/constants.js';
 import { DEFAULT_SCANNER_SETTINGS, SCANNER_SETTINGS_KEY, normalizeScannerSettings } from '../../backend/settings/scannerSettings.js';
 import { HEARTBEAT_STALE_MS, summarizeWorker } from '../../backend/system/workerStatus.js';
 import { SCAN_INTERVAL_MS, assembleWorker, workerTimeframes } from '../../worker/assemble.js';
@@ -428,53 +427,6 @@ function createMarketDriver({ timers, hub, from, market = MARKET, skip = () => f
   };
 }
 
-// ---------- mesin Reversal Radar palsu ----------
-
-/**
- * Mesin reversal PALSU (docs/19 §3–§4) untuk perakitan produksi: mencatat setiap panggilan evaluate/transition, tidak
- * pernah membuka kandidat (stage null, status NONE). Mesin asli (evaluateReversal/transitionReversal) diuji di
- * tests/unit/reversal; di sini yang diuji adalah PERAKITAN: 5m ikut diingesti, kedua pipeline dipanggil per candle
- * tertutup, kline berjalan mengalir ke evaluasi provisional, dan kegagalan satu pipeline tidak membatalkan yang lain.
- * `failOn(input)` → evaluate melempar untuk input itu (simulasi kegagalan pipeline reversal).
- */
-function createFakeReversalEngine({ failOn = () => false } = {}) {
-  const calls = { evaluate: [], transition: [] };
-  const none = (timeframe) => ({
-    version: 1, timeframe, stage: null, status: 'NONE', setupType: null, setupTypes: [], classification: 'NO_SETUP',
-    firstDetectedAt: null, firstDetectedPrice: null, firstDetectedAtr: null, firstStage: null, stageEnteredAt: null,
-    barsInStage: 0, barsSinceDetection: 0, lastCandleTime: null, lastEvaluatedAt: null, score: 0, scoreComponents: [],
-    evidence: [], evidenceCount: 0, levels: {}, nextConfirmation: { kind: 'NONE', text: '', level: null },
-    cancelCondition: { text: '', level: null }, risks: [], liquidityClass: 'UNKNOWN', markers: [], peakPrice: null, peakStage: null,
-    moveSinceDetectionPct: null, moveSinceDetectionAtr: null, extended: false, pendingStage: null, pendingBars: 0, weakBars: 0, closeReason: null,
-  });
-  return {
-    calls,
-    evaluate(input) {
-      const last = input.candles.at(-1);
-      const entry = {
-        symbol: last.symbol, timeframe: input.timeframe, openTime: last.openTime, provisional: input.provisional === true,
-        candles: input.candles.length, higher: Object.fromEntries(Object.entries(input.higher ?? {}).map(([tf, list]) => [tf, list.length])),
-        lastClosed: input.candles.every((c) => c.isClosed === true), liquidity: input.liquidity ?? null,
-      };
-      calls.evaluate.push(entry);
-      if (failOn(entry)) throw new Error('mesin reversal palsu gagal (disengaja)');
-      return {
-        version: 1, timeframe: input.timeframe, provisional: input.provisional === true, candleOpenTime: last.openTime,
-        evaluatedAt: last.closeTime, classification: 'NO_SETUP', stage: null, setupType: null, setupTypes: [],
-        context: { priorDecline: { ok: false }, htf: { timeframe: null, trend: null, detail: '' }, liquidityClass: 'UNKNOWN' },
-        checks: [], evidence: [], evidenceCount: 0, score: { total: 0, components: [] }, levels: {},
-        nextConfirmation: { kind: 'NONE', text: '', level: null }, cancelCondition: { text: '', level: null },
-        risks: input.provisional === true ? ['PROVISIONAL'] : [], markers: [], measures: {},
-      };
-    },
-    transition(prev, { candle, timeframe }) {
-      calls.transition.push({ symbol: candle.symbol, timeframe, openTime: candle.openTime, prev: prev?.status ?? null });
-      return { next: prev ?? none(timeframe), events: [], alert: false };
-    },
-    resolveParams: (overrides) => ({ ...overrides }),
-  };
-}
-
 // ---------- perakitan worker (worker/assemble.js, dipakai juga oleh worker/index.js) ----------
 
 const cleanups = [];
@@ -497,7 +449,6 @@ const LEGACY_SETTINGS = Object.freeze({ ...DEFAULT_SCANNER_SETTINGS, timeframes:
 
 async function createWorker({
   timers, db, binance, settings = LEGACY_SETTINGS, settleMs = 0, restSleep = unexpectedSleep, scannerOptions = {}, directionTimeframes = null,
-  reversalEngine = createFakeReversalEngine(), reversalTimeframes = REVERSAL_TIMEFRAMES,
 }) {
   const { logger, entries: logs } = createLogger();
   const hub = createFakeWebSocketHub();
@@ -509,18 +460,13 @@ async function createWorker({
   // Perakitan PRODUKSI (worker/assemble.js, sama dengan worker/index.js): jam server (offset terukur dari
   // /fapi/v1/time) dipakai repositori, klien REST, dan scanner. Yang diinjeksi hanya I/O: jam lokal palsu,
   // timer palsu, fetch & WebSocket palsu, jitter deterministik.
-  const reversalAlerts = [];
-  const { repos, rest, pipeline, reversal, scanner, serverClock } = assembleWorker({
+  const { repos, rest, pipeline, scanner, serverClock } = assembleWorker({
     db,
     logger,
     analysisParams: MECHANICS_PARAMS,
-    // Mesin Reversal Radar palsu (lihat createFakeReversalEngine): perakitan & aliran candle-nya yang diuji di sini.
-    reversalEngine,
-    onReversalAlert: (alert) => reversalAlerts.push(alert),
-    // Mekanika ingesti/replay diuji pada 5m dengan semua arah & radar di semua timeframe; timeframe tetap produksi
-    // (LONG 1h, SHORT 15m, radar 1h) diuji INT-WRK-RR-003 dan UNIT-PIPE-TF-001.
+    // Mekanika ingesti/replay diuji pada 5m dengan semua arah; timeframe tetap produksi (LONG 1h, SHORT 15m) diuji
+    // INT-WRK-SCAN-001 dan UNIT-PIPE-TF-001.
     directionTimeframes,
-    reversalTimeframes,
     clock: timers.clock,
     fetch: binance.fetch,
     restSleep,
@@ -544,7 +490,7 @@ async function createWorker({
       timers.setTimer(resolve, ms);
     }),
     onAlert: (alert) => { if (alert.direction === 'LONG') alerts.push(alert); },
-    onAnalysed: ({ result, reversal, ...series }) => analysed.push({ ...series, result, reversal }),
+    onAnalysed: ({ result, ...series }) => analysed.push({ ...series, result }),
     onMonitoringStopped: (e) => stopped.push(e),
   });
   // Repositori sinyal asli; save() hanya diamati agar snapshot per candle dapat dibandingkan dengan replay.
@@ -561,13 +507,12 @@ async function createWorker({
   }
   await pipeline.ensureDefinitions();
   cleanups.push(() => scanner.stop());
-  return { repos, rest, hub, scanner, pipeline, reversal, reversalEngine, reversalAlerts, alerts, analysed, saves, settles, logs, serverClock, stopped };
+  return { repos, rest, hub, scanner, pipeline, alerts, analysed, saves, settles, logs, serverClock, stopped };
 }
 
 /** `serverSkewMs`: jam server Binance palsu berada sekian ms di depan jam lokal worker (negatif = di belakang). */
 async function setup({
-  settings, configure, skip, delayOf, market = MARKET, settleMs, restSleep, serverSkewMs = 0, scannerOptions, reversalEngine, directionTimeframes,
-  reversalTimeframes,
+  settings, configure, skip, delayOf, market = MARKET, settleMs, restSleep, serverSkewMs = 0, scannerOptions, directionTimeframes,
 } = {}) {
   const timers = createFakeTimers(START);
   const db = openDatabase(':memory:');
@@ -577,9 +522,7 @@ async function setup({
   configure?.(binance);
   const worker = await createWorker({
     timers, db, binance, settings, settleMs, restSleep: restSleep?.(timers), scannerOptions,
-    ...(reversalEngine ? { reversalEngine } : {}),
     ...(directionTimeframes !== undefined ? { directionTimeframes } : {}),
-    ...(reversalTimeframes !== undefined ? { reversalTimeframes } : {}),
   });
   const driver = createMarketDriver({ timers, hub: worker.hub, from: START, market, skip, delayOf });
   return { timers, db, binance, driver, ...worker };
@@ -1740,102 +1683,33 @@ describe('worker end-to-end — modul asli, hanya jaringan yang palsu (data SINT
   });
 });
 
-// ---------- Reversal Radar: perakitan dua pipeline (mesin reversal PALSU, lihat createFakeReversalEngine) ----------
+// ---------- Perakitan produksi: timeframe tetap per arah, scan berkala, tanpa Reversal Radar ----------
 
-describe('worker end-to-end — Reversal Radar: 5m ikut diingesti, dua pipeline per candle tertutup, provisional (data SINTETIS)', () => {
-  const cursorRows = (db) => db.prepare(`SELECT s.symbol, c.timeframe, c.last_open_time AS t
-    FROM reversal_cursors c JOIN symbols s ON s.id = c.symbol_id ORDER BY s.symbol, c.timeframe`).all();
-  const provisionalRows = (db) => db.prepare(`SELECT s.symbol, p.timeframe, p.candle_open_time AS openTime, p.stage
-    FROM reversal_provisional p JOIN symbols s ON s.id = p.symbol_id ORDER BY s.symbol, p.timeframe`).all();
-  const htfClosedBy = (index, base, higher) => Math.floor(((index + 1) * TIMEFRAME_MS[base]) / TIMEFRAME_MS[higher]);
-
-  it('INT-WRK-RR-001 ingesti produksi (workerTimeframes = 5m/15m/1h) + mekanika radar di semua REVERSAL_TIMEFRAMES: 5m diingesti & distream; pipeline SA/PVA melewati 5m (NO_DIRECTION); pipeline reversal mengevaluasi tiap candle tertutup 5m/15m/1h sekali (HTF tanpa lookahead, snapshot NONE dibawa antar candle, kursor maju); kline berjalan → evaluasi provisional yang dibersihkan saat candle tutup', async () => {
-    const { scanner, repos, driver, db, analysed, reversalEngine, logs } = await setup({
-      scannerOptions: { timeframes: workerTimeframes() }, directionTimeframes: DIRECTION_TIMEFRAMES, reversalTimeframes: REVERSAL_TIMEFRAMES,
+describe('worker end-to-end — perakitan produksi (LONG SA/PVA 1h, SHORT SD/PVD 15m, 5m grafik; data SINTETIS)', () => {
+  it('INT-WRK-PROD-001 ingesti produksi (workerTimeframes = 5m/15m/1h): 5m diingesti & distream untuk grafik tetapi dilewati pipeline (NO_DIRECTION); SHORT 15m & LONG 1h dianalisis; Reversal Radar sudah dihapus — worker tidak menulis tabel reversal_* sama sekali', async () => {
+    const { scanner, repos, driver, db, analysed, logs } = await setup({
+      scannerOptions: { timeframes: workerTimeframes() }, directionTimeframes: DIRECTION_TIMEFRAMES,
     });
     expect(workerTimeframes()).toEqual(['5m', '15m', '1h']);
     await scanner.start();
     expect(scanner.status()).toMatchObject({ state: 'running', symbols: 2, streams: 6 });
-    // Bootstrap = histori murni: tidak dievaluasi (SA/PVA maupun reversal), belum ada kursor.
-    expect(reversalEngine.calls.evaluate).toEqual([]);
-    expect(count(db, 'reversal_cursors')).toBe(0);
     expect(await storedSeries(repos, SA, '5m')).toEqual(expectedSeries(SA, '5m', [[0, BOOT - 1, 'rest']]));
-
-    // Di tengah candle 5m ke-50: kline berjalan tiap seri → evaluasi provisional (mesin palsu: tahap null) tersimpan.
-    await driver.runUntil(at5m(50) + 150_000);
-    expect(provisionalRows(db)).toEqual([DOWN, SA].flatMap((symbol) => [
-      { symbol, timeframe: '15m', openTime: T0 + 16 * M15, stage: null },
-      { symbol, timeframe: '1h', openTime: T0 + 4 * H1, stage: null },
-      { symbol, timeframe: '5m', openTime: at5m(50), stage: null },
-    ]));
-    const provisionalCalls = reversalEngine.calls.evaluate.filter((e) => e.provisional);
-    expect(provisionalCalls.length).toBeGreaterThan(0);
-    expect(provisionalCalls.every((e) => e.lastClosed === false && e.liquidity !== null)).toBe(true);
-    expect(provisionalCalls.find((e) => e.symbol === SA && e.timeframe === '5m' && e.openTime === at5m(50))).toMatchObject({ candles: 51 });
-    expect(count(db, 'reversal_candidates')).toBe(0);
-
     await driver.runUntil(END);
-    expect(count(db, 'reversal_provisional')).toBe(0); // semua candle berjalan sudah tutup → dibersihkan
-    expect(count(db, 'reversal_candidates')).toBe(0); // mesin palsu tidak pernah membuka kandidat
 
-    // Pipeline SA/PVA: 5m tanpa arah (LONG 1h, SHORT 15m) → dilewati; 15m & 1h dianalisis seperti sebelumnya.
     const sa = (tf) => analysed.filter((a) => a.symbol === SA && a.timeframe === tf);
     expect(sa('5m').map((a) => [a.candles[0].openTime, a.result])).toEqual(range(BOOT, LAST).map((i) => [at5m(i), { symbol: SA, timeframe: '5m', skipped: 'NO_DIRECTION' }]));
     expect(sa('15m').map((a) => a.result.evaluated)).toEqual(range(16, 24).map(() => 1));
     expect(sa('1h').map((a) => a.result.evaluated)).toEqual([1, 1]);
-    // Pipeline reversal: tiap candle tertutup 5m dievaluasi sekali, hasilnya ikut ke onAnalysed.
-    expect(sa('5m').map((a) => [a.reversal.evaluated, a.reversal.status, a.reversal.errors])).toEqual(range(BOOT, LAST).map(() => [1, 'NONE', []]));
-
-    // Mesin palsu: evaluasi tutup SA 5m berurutan, jendela = semua candle tersimpan (< lookback), likuiditas discovery,
-    // HTF hanya yang sudah tutup pada closeTime candle (tanpa lookahead; pada batas HTF boleh kurang karena tiba bersamaan).
-    const closed5m = reversalEngine.calls.evaluate.filter((e) => e.symbol === SA && e.timeframe === '5m' && !e.provisional);
-    expect(closed5m.map((e) => e.openTime)).toEqual(range(BOOT, LAST).map(at5m));
-    expect(closed5m.every((e) => e.lastClosed && e.liquidity?.quoteVolume24h === LIQ_SA.quoteVolume24h)).toBe(true);
-    expect(closed5m.map((e) => e.candles)).toEqual(range(BOOT, LAST).map((i) => i + 1));
-    for (const [k, e] of closed5m.entries()) {
-      const i = BOOT + k;
-      expect(e.higher['15m']).toBeLessThanOrEqual(htfClosedBy(i, '5m', '15m'));
-      expect(e.higher['1h']).toBeLessThanOrEqual(htfClosedBy(i, '5m', '1h'));
-      if ((i + 1) % 3 !== 0) expect(e.higher['15m']).toBe(htfClosedBy(i, '5m', '15m'));
-      if ((i + 1) % 12 !== 0) expect(e.higher['1h']).toBe(htfClosedBy(i, '5m', '1h'));
-    }
-    const closed15m = reversalEngine.calls.evaluate.filter((e) => e.symbol === SA && e.timeframe === '15m' && !e.provisional);
-    expect(closed15m.map((e) => e.openTime)).toEqual(range(16, 24).map((j) => T0 + j * M15));
-    expect(closed15m.every((e, k) => e.higher['1h'] <= htfClosedBy(16 + k, '15m', '1h') && !('15m' in e.higher))).toBe(true);
-    const closed1h = reversalEngine.calls.evaluate.filter((e) => e.symbol === SA && e.timeframe === '1h' && !e.provisional);
-    expect(closed1h.map((e) => [e.openTime, e.higher])).toEqual([[T0 + 4 * H1, {}], [T0 + 5 * H1, {}]]);
-    // Snapshot NONE (histeresis) dibawa antar candle per seri: prev null hanya pada evaluasi pertama.
-    expect(reversalEngine.calls.transition.filter((t) => t.symbol === SA && t.timeframe === '5m').map((t) => t.prev))
-      .toEqual([null, ...range(BOOT + 1, LAST).map(() => 'NONE')]);
-
-    expect(cursorRows(db)).toEqual([DOWN, SA].flatMap((symbol) => [
-      { symbol, timeframe: '15m', t: T0 + 24 * M15 }, { symbol, timeframe: '1h', t: T0 + 5 * H1 }, { symbol, timeframe: '5m', t: at5m(LAST) },
-    ]));
+    for (const table of ['reversal_candidates', 'reversal_events', 'reversal_cursors', 'reversal_provisional']) expect(count(db, table)).toBe(0);
     expect(scanner.status()).toMatchObject({ state: 'running', errors: 0, gaps: 0, queue: 0 });
     expect((await repos.ingestion.getStatus()).recentErrors).toEqual([]);
-    expect(problems(logs)).toEqual([]);
-  });
-
-  it('INT-WRK-RR-003 timeframe radar produksi (REVERSAL_ACTIVE_TIMEFRAMES = 1h, default assembleWorker): 5m/15m tetap diingesti tetapi radar hanya mengevaluasi 1h (tertutup & provisional); kursor radar hanya 1h', async () => {
-    expect(REVERSAL_ACTIVE_TIMEFRAMES).toEqual(['1h']);
-    const { scanner, driver, db, reversalEngine, logs } = await setup({
-      scannerOptions: { timeframes: workerTimeframes() }, directionTimeframes: DIRECTION_TIMEFRAMES, reversalTimeframes: REVERSAL_ACTIVE_TIMEFRAMES,
-    });
-    await scanner.start();
-    expect(scanner.status()).toMatchObject({ state: 'running', symbols: 2, streams: 6 });
-    await driver.runUntil(END);
-    expect(new Set(reversalEngine.calls.evaluate.map((e) => e.timeframe))).toEqual(new Set(['1h']));
-    expect(reversalEngine.calls.evaluate.some((e) => e.provisional)).toBe(true);
-    expect(new Set(cursorRows(db).map((r) => r.timeframe))).toEqual(new Set(['1h']));
-    expect(scanner.status()).toMatchObject({ state: 'running', errors: 0, gaps: 0, queue: 0 });
     expect(problems(logs)).toEqual([]);
   });
 
   it('INT-WRK-SCAN-001 scan berkala produksi (SCAN_INTERVAL_MS 60 dtk): tiap batas menit + 5 dtk ringkasan seri mutakhir, harga live & sinyal terbuka ditulis ke heartbeat SQLite; summarizeWorker meneruskan scan & log aktivitas (scan, candle dianalisis); tanpa REST tambahan saat semua seri mutakhir', async () => {
     expect(SCAN_INTERVAL_MS).toBe(60_000);
     const { scanner, driver, repos, timers, logs, binance } = await setup({
-      scannerOptions: { timeframes: workerTimeframes(), scanIntervalMs: SCAN_INTERVAL_MS },
-      directionTimeframes: DIRECTION_TIMEFRAMES, reversalTimeframes: REVERSAL_ACTIVE_TIMEFRAMES,
+      scannerOptions: { timeframes: workerTimeframes(), scanIntervalMs: SCAN_INTERVAL_MS }, directionTimeframes: DIRECTION_TIMEFRAMES,
     });
     await scanner.start();
     const klinesAfterBoot = binance.klineCalls().length;
@@ -1848,44 +1722,15 @@ describe('worker end-to-end — Reversal Radar: 5m ikut diingesti, dua pipeline 
     expect(st.scan.seq).toBe(16);
     expect((st.scan.at - 5_000) % SCAN_INTERVAL_MS).toBe(0);
     expect(st.nextScanAt).toBe(st.scan.at + SCAN_INTERVAL_MS);
-    expect(st.scan.open).toEqual({ long: expect.any(Number), short: expect.any(Number), radar: 0 });
+    expect(st.scan.open).toEqual({ long: expect.any(Number), short: expect.any(Number) });
     const kinds = new Set(st.activity.map((e) => e.kind));
     for (const kind of ['start', 'discovery', 'ws', 'bootstrap', 'scan', 'candles']) expect(kinds.has(kind)).toBe(true);
-    for (const kind of kinds) expect(['start', 'discovery', 'ws', 'bootstrap', 'scan', 'candles', 'signal', 'reversal']).toContain(kind);
+    for (const kind of kinds) expect(['start', 'discovery', 'ws', 'bootstrap', 'scan', 'candles', 'signal']).toContain(kind);
     // Hanya timeframe yang benar-benar dianalisis pipeline yang dicatat: candle 15m (SHORT), bukan 5m grafik.
     expect(st.activity.filter((e) => e.kind === 'candles')).toEqual([
       expect.objectContaining({ timeframe: '15m', closeTime: T0 + 4 * H1 + M15 - 1, count: 2 }),
     ]);
-    expect(logs.filter((e) => /^scan #\d+: 6\/6 seri mutakhir · harga live \d seri · sinyal terbuka LONG \d+ · SHORT \d+ · radar 0$/.test(e.msg))).toHaveLength(16);
+    expect(logs.filter((e) => /^scan #\d+: 6\/6 seri mutakhir · harga live \d seri · sinyal terbuka LONG \d+ · SHORT \d+$/.test(e.msg))).toHaveLength(16);
     expect(problems(logs)).toEqual([]);
-  });
-
-  it('INT-WRK-RR-002 mesin reversal gagal pada satu candle → pipeline SA/PVA tetap dianalisis (sinyal = replay murni), candle itu dilewati pipeline reversal (dicatat sebagai error ingesti "analysis" + log error), candle berikutnya berjalan normal', async () => {
-    const reversalEngine = createFakeReversalEngine({ failOn: (e) => e.symbol === SA && e.timeframe === '5m' && !e.provisional && e.openTime === at5m(60) });
-    const { scanner, repos, driver, db, analysed, logs } = await setup({ reversalEngine });
-    await scanner.start();
-    await driver.runUntil(END);
-
-    // Candle 60: SA/PVA dianalisis, hasil reversal memuat error; candle lain tanpa error.
-    const live = analysed.filter((a) => a.symbol === SA && a.timeframe === '5m');
-    expect(live.map((a) => [a.candles[0].openTime, a.result.evaluated, a.reversal.evaluated, a.reversal.errors.map((e) => e.message)])).toEqual(
-      range(BOOT, LAST).map((i) => [at5m(i), 1, i === 60 ? 0 : 1, i === 60 ? ['mesin reversal palsu gagal (disengaja)'] : []]),
-    );
-    // Candle gagal tidak dievaluasi ulang (dilewati seperti gap data); kursor tetap maju sampai candle terakhir.
-    const closed5m = reversalEngine.calls.evaluate.filter((e) => e.symbol === SA && e.timeframe === '5m' && !e.provisional);
-    expect(closed5m.map((e) => e.openTime)).toEqual(range(BOOT, LAST).map(at5m));
-    expect(await repos.reversal.lastEvaluatedCandleTime({ symbol: SA, timeframe: '5m' })).toBe(at5m(LAST));
-
-    // Sinyal SA/PVA sama persis dengan replay murni: kegagalan pipeline reversal tidak mengganggu pipeline analisis.
-    expect(withoutIds(await repos.signals.history({ symbol: SA, limit: 10, direction: 'LONG' }))).toEqual(expectedHistory(SA, referenceReplay(SA, LIQ_SA)));
-
-    // Dilaporkan sekali ke scanner sebagai error ingesti 'analysis' (terlihat di status sistem) + log error pipeline.
-    expect(scanner.status()).toMatchObject({ state: 'running', errors: 1, gaps: 0, queue: 0 });
-    expect((await repos.ingestion.getStatus()).recentErrors).toEqual([expect.objectContaining({
-      source: 'analysis', message: `${SA} 5m: pipeline reversal: 1 candle gagal dievaluasi (mesin reversal palsu gagal (disengaja))`,
-    })]);
-    expect(problems(logs)).toEqual(['evaluasi reversal gagal: candle dilewati', 'galat scanner']);
-    expect(logs.find((e) => e.level === 'error').fields).toMatchObject({ symbol: SA, timeframe: '5m', openTime: at5m(60), err: 'mesin reversal palsu gagal (disengaja)' });
-    expect(count(db, 'reversal_candidates')).toBe(0);
   });
 });

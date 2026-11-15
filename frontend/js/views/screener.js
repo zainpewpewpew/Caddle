@@ -201,7 +201,7 @@ export function currentSort(host, columns) {
 /**
  * Kunci baris tabel kandidat dari teks sel Symbol + TF (tbody dibuat ulang saat header diurutkan).
  * Sel Symbol selalu sel pertama (dapat memuat chip "SM ×N" setelah simbol: dibaca teks .mono-nya saja);
- * sel TF pada indeks `tfIndex` (2 pada tabel SA/PVA, 1 pada tabel Reversal Radar).
+ * sel TF pada indeks `tfIndex` (2 pada tabel SA/PVA/SD/PVD).
  */
 export function rowTextKey(tr, tfIndex = 2) {
   const cells = tr.children;
@@ -327,19 +327,15 @@ function emptyResult(filtered, cfg) {
 
 /**
  * Bagian kandidat SA/PVA (LONG) atau SD/PVD (SHORT) tanpa kerangka halaman: filter server, tabel kandidat dengan
- * side panel grafik koin, penyegaran latar 30 s saat scanner berjalan (diff → sorotan baris, fokus dipertahankan),
- * dan ticker kolom "Update". Dipakai halaman SHORT Scanner (scannerPage) dan sebagai panel sekunder
- * "Pola SA/PVA 15m (mesin lama)" di LONG Scanner Reversal Radar (reversalRadar.js) — perilaku tabel lama tidak berubah.
+ * side panel grafik koin, penyegaran latar tiap 1 menit saat scanner berjalan (diff → sorotan baris, fokus
+ * dipertahankan), dan ticker kolom "Update". Dipakai halaman LONG Scanner & SHORT Scanner (scannerPage).
  * Muatan pertama dimulai segera (`ready`); timer latar baru berjalan setelah `start()` dipanggil pemilik halaman.
  * @param {{ user?: { role: string } }|undefined} ctx
  * @param {'LONG'|'SHORT'} direction
- * @param {{ onLoaded?: (info: { rows: object[], count: number, limitReached: boolean, filtered: boolean }) => void }} [options]
+ * @param {{ onLoaded?: (info: { rows: object[], count: number, limitReached: boolean, filtered: boolean }) => void,
+ *   reportRefresh?: boolean }} [options] reportRefresh: kabarkan jam muat ulang ke strip status (default true).
  * @returns {{ el: HTMLElement, ready: Promise<void>, load: (options?: { background?: boolean }) => Promise<void>,
  *   setWorkerActive: (active: boolean) => void, start: () => void, cleanup: () => void }}
- */
-/**
- * @param {{ onLoaded?: Function, reportRefresh?: boolean }} [options] reportRefresh: kabarkan jam muat ulang ke strip
- *   status (default true; panel sekunder di halaman lain mematikannya agar hanya tabel utama yang dilaporkan).
  */
 export function createScannerSection(ctx, direction, { onLoaded, reportRefresh = true } = {}) {
   const dir = directionOf(direction);
@@ -575,9 +571,9 @@ export function shortScannerView(ctx) {
 }
 
 /**
- * Tabel SA/PVA LONG lama sebagai halaman utuh (tanpa Reversal Radar). Route /screener kini memakai screenerView di
- * reversalRadar.js; fungsi ini dipertahankan untuk pemakaian langsung / pembanding.
+ * LONG Scanner (route /screener): pola SA/PVA 1h — GET /api/signals/active (tanpa direction = LONG). Keputusan
+ * pengguna 2026-11-15: mesin SA/PVA lebih sesuai daripada Reversal Radar, yang dihapus dari website & worker.
  */
-export function legacyLongScannerView(ctx) {
+export function longScannerView(ctx) {
   return scannerPage(ctx, 'LONG');
 }

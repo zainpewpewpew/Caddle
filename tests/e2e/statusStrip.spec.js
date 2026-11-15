@@ -10,7 +10,7 @@ const NOW = Date.UTC(2026, 10, 15, 12, 4, 20);
 const RUNNING = { enabled: true, state: 'running', startedAt: NOW - 10 * 60_000, stoppedAt: null, exitCode: null, signal: null, via: 'autostart', autoRestart: true, restartAt: null };
 const SCAN = {
   seq: 57, at: NOW - 15_000, finishedAt: NOW - 14_990, durationMs: 10, symbols: 40, series: 120, fresh: 120, stale: 0, repaired: 0,
-  priced: 118, lastPriceAt: NOW - 2_000, open: { long: 4, short: 2, radar: 38 }, intervalMs: 60_000, nextAt: NOW + 45_000,
+  priced: 118, lastPriceAt: NOW - 2_000, open: { long: 4, short: 2 }, intervalMs: 60_000, nextAt: NOW + 45_000,
 };
 const ACTIVITY = [
   { id: 1, at: NOW - 9 * 60_000, kind: 'start' },
@@ -18,7 +18,7 @@ const ACTIVITY = [
   { id: 3, at: NOW - 8 * 60_000, kind: 'bootstrap', series: 120, candles: 60_000, failed: 0 },
   { id: 4, at: NOW - 4 * 60_000 - 18_000, kind: 'candles', timeframe: '15m', closeTime: Date.UTC(2026, 10, 15, 11, 59, 59, 999), count: 40 },
   { id: 5, at: NOW - 4 * 60_000 - 17_000, kind: 'signal', symbol: 'ETHUSDT', timeframe: '15m', direction: 'SHORT', state: 'EARLY_BEARISH', tier: 'B' },
-  { id: 6, at: NOW - 15_000, kind: 'scan', seq: 57, series: 120, fresh: 120, stale: 0, repaired: 0, priced: 118, durationMs: 10, open: { long: 4, short: 2, radar: 38 } },
+  { id: 6, at: NOW - 15_000, kind: 'scan', seq: 57, series: 120, fresh: 120, stale: 0, repaired: 0, priced: 118, durationMs: 10, open: { long: 4, short: 2 } },
 ];
 
 // Tanpa serverTime: mock tidak mengikuti jam palsu halaman (page.clock), jadi strip memakai jam halaman apa adanya
@@ -86,7 +86,7 @@ test('E2E-STRIP-001 scanner live: strip di semua halaman menampilkan scan terakh
   const items = panel.getByTestId('activity-list').locator('li');
   await expect(items).toHaveCount(7);
   await expect(items.first()).toContainText('19:04:05');
-  await expect(items.first()).toContainText('Scan #57: 120/120 seri mutakhir · harga live 118 seri · sinyal terbuka LONG 4 · SHORT 2 · radar 38');
+  await expect(items.first()).toContainText('Scan #57: 120/120 seri mutakhir · harga live 118 seri · sinyal terbuka LONG 4 · SHORT 2');
   await expect(items.nth(1)).toContainText('Sinyal SHORT ETHUSDT 15m → Early bearish (tier B)');
   await expect(items.nth(2)).toContainText('Candle 15m 19:00 tutup · 40 koin dianalisis');
   await expect(items.last()).toContainText('Scanner dijalankan otomatis saat server start (npm start)');

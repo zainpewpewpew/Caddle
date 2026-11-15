@@ -38,7 +38,7 @@ export const DIRECTION_TIMEFRAMES = Object.freeze({
 
 /**
  * Timeframe grafik Symbol Intelligence (selaras CHART_TIMEFRAMES frontend symbolChart.js). Worker selalu mengingesti
- * timeframe ini walau tidak semuanya dianalisis (mis. 5m hanya untuk grafik sejak Reversal Radar hanya 1h).
+ * timeframe ini walau tidak semuanya dianalisis (5m hanya untuk grafik).
  */
 export const CHART_TIMEFRAMES = TIMEFRAMES;
 

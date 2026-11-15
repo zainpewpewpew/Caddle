@@ -130,16 +130,16 @@ export function createPrettyStream({ write = (text) => process.stdout.write(text
 /**
  * Banner saat server siap: alamat website, status scanner NYATA (state supervisor), cara berhenti.
  * @param {{ origin: string, workerControl: boolean, workerAutostart: boolean, scannerState?: string|null,
- *   openBrowser: boolean, color?: boolean, timeframes?: { long: string, short: string, radar: string } }} options
+ *   openBrowser: boolean, color?: boolean, timeframes?: { long: string, short: string } }} options
  *   scannerState: state supervisor saat banner dicetak (running | starting | external | crashed | stopped …).
  * @returns {string} beberapa baris diakhiri newline
  */
 export function formatBanner({
-  origin, workerControl, workerAutostart, scannerState = null, openBrowser, color = false, timeframes = { long: '1h', short: '15m', radar: '1h' },
+  origin, workerControl, workerAutostart, scannerState = null, openBrowser, color = false, timeframes = { long: '1h', short: '15m' },
 }) {
   const paint = (code, text) => (color ? `${code}${text}${ANSI.reset}` : text);
   const rule = paint(ANSI.dim, '─'.repeat(64));
-  const scope = `LONG ${timeframes.long} · SHORT ${timeframes.short} · Reversal Radar ${timeframes.radar}`;
+  const scope = `LONG ${timeframes.long} (SA/PVA) · SHORT ${timeframes.short} (SD/PVD)`;
   const running = scannerState === 'running' || scannerState === 'starting';
   let scanner;
   if (!workerControl) scanner = 'tidak dijalankan dari website (WORKER_CONTROL=false) — jalankan `npm run worker` di terminal lain';

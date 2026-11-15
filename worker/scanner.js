@@ -6,9 +6,10 @@
 // - timeframe yang dipilih di pengaturan dianalisis; HTF yang dibutuhkan konteksnya (HIGHER_TIMEFRAMES) selalu
 //   ikut diingesti sebagai seri konteks saja (disimpan, tidak pernah memicu analisis) walau tidak dipilih;
 // - duplikat/out-of-order tetap disimpan (idempoten) tetapi tidak memicu analisis ulang;
-// - kline berjalan (x:false) disimpan sebagai provisional (throttle 1 d per stream) dan, bila dependensi opsional
-//   `onProvisionalCandle` diberikan, diteruskan ke sana TANPA ditunggu untuk evaluasi provisional Reversal Radar
-//   (hanya seri yang dianalisis; error dicatat sumber 'provisional');
+// - kline berjalan (x:false) disimpan sebagai provisional (throttle 1 d per stream) — sumber harga live tabel scanner —
+//   dan, bila dependensi opsional `onProvisionalCandle` diberikan, diteruskan ke sana TANPA ditunggu (hanya seri yang
+//   dianalisis; error dicatat sumber 'provisional'). Worker saat ini tidak memakainya (Reversal Radar dihapus);
+//   kait ini dipertahankan untuk evaluasi provisional di masa depan;
 // - sweep berkala menambal stream yang tertinggal (fallback bila WS diam);
 // - discovery yang memilih 0 simbol padahal set pantauan tidak kosong dianggap anomali (seperti discovery gagal)
 //   KECUALI data discovery menjelaskannya (simbol lama delisted / ditolak filter pengaturan dengan alasan sah);
@@ -259,11 +260,11 @@ function liquidityThresholds(raw) {
  *   (stop() di tengah siklus, timeframe dilepas saat worker mati, sinyal yatim dari DB lama) dicoba lagi tiap siklus.
  *   onProvisionalCandle: kline BERJALAN (isClosed false) seri yang dianalisis, dipanggil dari handleProvisional setelah
  *   throttle 1 d yang ada, TANPA ditunggu (promise dilacak agar stop() menunggunya); error dicatat sumber 'provisional'.
- *   Worker meneruskannya ke pipeline Reversal Radar (evaluasi provisional); null = tidak ada.
+ *   Worker tidak memberikannya saat ini (null = tidak ada).
  *   activity: log aktivitas (worker/activity.js createActivityFeed); default tanpa efek. Scanner menambah entri
- *   start/discovery/bootstrap/ws/scan/error/stopping dan menyalin daftar ke status().activity (entri candles, signal,
- *   dan reversal ditambahkan perakitan worker, worker/assemble.js, pada feed yang sama).
- *   countOpen: hitungan sinyal terbuka untuk ringkasan scan berkala → { long, short, radar } (null = tidak dilaporkan).
+ *   start/discovery/bootstrap/ws/scan/error/stopping dan menyalin daftar ke status().activity (entri candles dan
+ *   signal ditambahkan perakitan worker, worker/assemble.js, pada feed yang sama).
+ *   countOpen: hitungan sinyal terbuka untuk ringkasan scan berkala → { long, short } (null = tidak dilaporkan).
  * @returns {{ start(): Promise<void>, stop(): Promise<void>, status(): object, liquidityOf(symbol: string): object|null }}
  */
 export function createScanner({
@@ -687,7 +688,7 @@ export function createScanner({
     track(Promise.resolve()
       .then(() => repos.candles.upsertProvisional(candle))
       .then(() => { lastIngestionAt = localClock(); }, (err) => report('provisional', err, st)));
-    // Evaluasi provisional (Reversal Radar) hanya untuk seri yang dianalisis; tidak ditunggu, tidak mengubah alur ingesti.
+    // Evaluasi provisional opsional hanya untuk seri yang dianalisis; tidak ditunggu, tidak mengubah alur ingesti.
     if (onProvisionalCandle !== null && st.analyze) {
       track(Promise.resolve().then(() => onProvisionalCandle(candle)).then(() => {}, (err) => report('provisional', err, st)));
     }
@@ -853,7 +854,7 @@ export function createScanner({
       try {
         const counts = await countOpen();
         const num = (v) => (Number.isInteger(v) && v >= 0 ? v : null);
-        open = counts ? { long: num(counts.long), short: num(counts.short), radar: num(counts.radar) } : null;
+        open = counts ? { long: num(counts.long), short: num(counts.short) } : null;
       } catch (err) {
         await report('scan', err);
       }
@@ -865,7 +866,7 @@ export function createScanner({
       repaired: Math.max(0, staleBefore - stale), priced, lastPriceAt, open,
     };
     activity.scan(lastScan);
-    const openText = open ? ` · sinyal terbuka LONG ${open.long ?? '—'} · SHORT ${open.short ?? '—'} · radar ${open.radar ?? '—'}` : '';
+    const openText = open ? ` · sinyal terbuka LONG ${open.long ?? '—'} · SHORT ${open.short ?? '—'}` : '';
     logger.info({ seq, series: lastScan.series, fresh: lastScan.fresh, stale, repaired: lastScan.repaired, priced, durationMs: lastScan.durationMs },
       `scan #${seq}: ${lastScan.fresh}/${lastScan.series} seri mutakhir · harga live ${priced} seri`
         + `${lastScan.repaired > 0 ? ` · ${lastScan.repaired} seri ditambal` : ''}${openText}`);

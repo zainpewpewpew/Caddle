@@ -8,9 +8,9 @@ import { designSystemView } from './views/designSystem.js';
 import { healthView } from './views/health.js';
 import { labView } from './views/lab.js';
 import { overviewView } from './views/overview.js';
-// LONG Scanner = Reversal Radar (pelabel struktur proses dasar bullish, bukan prediksi) + panel sekunder tabel SA/PVA 15m lama (reversalRadar.js).
-import { screenerView } from './views/reversalRadar.js';
-import { shortScannerView } from './views/screener.js';
+// LONG Scanner = pola SA/PVA 1h, SHORT Scanner = pola SD/PVD 15m (screener.js). Reversal Radar dihapus dari website &
+// worker atas keputusan pengguna 2026-11-15 (mesin SA/PVA lebih sesuai); riwayatnya tetap di database.
+import { longScannerView, shortScannerView } from './views/screener.js';
 import { settingsView } from './views/settings.js';
 import { signalsView } from './views/signals.js';
 import { smartMoneyView } from './views/smartMoneyRadar.js';
@@ -28,7 +28,7 @@ const PULSE_KINDS = new Set(['bull', 'bear', 'accent']);
 const ROUTES = [
   { section: 'Pasar' },
   { path: '/overview', label: 'Overview', icon: 'overview', view: overviewView },
-  { path: '/screener', label: 'LONG Scanner', icon: 'screener', view: screenerView },
+  { path: '/screener', label: 'LONG Scanner', icon: 'screener', view: longScannerView },
   { path: '/short-scanner', label: 'SHORT Scanner', icon: 'screener-short', view: shortScannerView },
   { path: '/symbol', label: 'Symbol Intelligence', icon: 'symbol', view: symbolView },
   { path: '/signals', label: 'Signal History', icon: 'signals', view: signalsView },

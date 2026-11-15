@@ -3,7 +3,6 @@ import { ConfigError, loadConfig } from './config.js';
 import { openDatabase } from '../database/connection.js';
 import { configureBinanceNetwork } from '../ingestion/binance/network.js';
 import { DIRECTION_TIMEFRAMES } from '../market/contracts.js';
-import { REVERSAL_ACTIVE_TIMEFRAMES } from '../reversal/constants.js';
 import { createPrettyStream, formatBanner, formatLogLine, openBrowser, useColor, usePrettyLogs } from '../system/consoleLog.js';
 import { STOP_TIMEOUT_MS } from '../system/workerSupervisor.js';
 import { DefaultUserError, ensureDefaultUser } from '../users/defaultUser.js';
@@ -117,7 +116,7 @@ async function main() {
       scannerState,
       openBrowser: config.openBrowser,
       color,
-      timeframes: { long: DIRECTION_TIMEFRAMES.LONG.join('/'), short: DIRECTION_TIMEFRAMES.SHORT.join('/'), radar: REVERSAL_ACTIVE_TIMEFRAMES.join('/') },
+      timeframes: { long: DIRECTION_TIMEFRAMES.LONG.join('/'), short: DIRECTION_TIMEFRAMES.SHORT.join('/') },
     }));
   }
   // Browser default ke halaman website (OPEN_BROWSER; hanya `npm start` di terminal interaktif, bukan `npm run dev`).

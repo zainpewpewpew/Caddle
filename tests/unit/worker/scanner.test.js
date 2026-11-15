@@ -543,7 +543,7 @@ describe('event WebSocket', () => {
     await scanner.stop();
   });
 
-  it('UNIT-SCN-030 onProvisionalCandle (Reversal Radar): kline berjalan seri yang dianalisis diteruskan setelah throttle 1 d (candle yang sama dengan upsertProvisional) tanpa ditunggu; seri konteks HTF & candle yang sudah tutup tidak diteruskan; error → recordError sumber "provisional"; stop() menunggu evaluasi yang masih berjalan', async () => {
+  it('UNIT-SCN-030 onProvisionalCandle (kait opsional): kline berjalan seri yang dianalisis diteruskan setelah throttle 1 d (candle yang sama dengan upsertProvisional) tanpa ditunggu; seri konteks HTF & candle yang sudah tutup tidak diteruskan; error → recordError sumber "provisional"; stop() menunggu evaluasi yang masih berjalan', async () => {
     const forwarded = [];
     const pending = [];
     const onProvisionalCandle = vi.fn((c) => {
@@ -1591,7 +1591,7 @@ describe('scan berkala tiap menit & log aktivitas (keputusan pengguna 2026-11-15
     const ctx = setup({
       options: { scanIntervalMs: MIN },
       activity: (timers) => createActivityFeed({ clock: timers.clock }),
-      countOpen: async () => ({ long: 3, short: 1, radar: 7 }),
+      countOpen: async () => ({ long: 3, short: 1 }),
       logger,
       ...extra,
     });
@@ -1612,13 +1612,13 @@ describe('scan berkala tiap menit & log aktivitas (keputusan pengguna 2026-11-15
     expect(rest.klineCalls()).toHaveLength(klinesBefore);
     expect(scanner.status().scan).toMatchObject({
       seq: 1, at: FIRST_SCAN, symbols: 2, series: 6, fresh: 6, stale: 0, repaired: 0, priced: 2,
-      open: { long: 3, short: 1, radar: 7 }, intervalMs: MIN, nextAt: FIRST_SCAN + MIN,
+      open: { long: 3, short: 1 }, intervalMs: MIN, nextAt: FIRST_SCAN + MIN,
     });
     // Heartbeat langsung setelah scan, sudah membawa jadwal scan berikutnya.
     expect(lastBeat(repos)).toMatchObject({ at: FIRST_SCAN, state: { scan: { seq: 1, fresh: 6, nextAt: FIRST_SCAN + MIN }, nextScanAt: FIRST_SCAN + MIN } });
-    expect(infos.map((e) => e.msg)).toContain('scan #1: 6/6 seri mutakhir · harga live 2 seri · sinyal terbuka LONG 3 · SHORT 1 · radar 7');
+    expect(infos.map((e) => e.msg)).toContain('scan #1: 6/6 seri mutakhir · harga live 2 seri · sinyal terbuka LONG 3 · SHORT 1');
     expect(activity.list().filter((e) => e.kind === 'scan')).toEqual([
-      expect.objectContaining({ seq: 1, series: 6, fresh: 6, stale: 0, priced: 2, open: { long: 3, short: 1, radar: 7 } }),
+      expect.objectContaining({ seq: 1, series: 6, fresh: 6, stale: 0, priced: 2, open: { long: 3, short: 1 } }),
     ]);
   });
 
@@ -1634,7 +1634,7 @@ describe('scan berkala tiap menit & log aktivitas (keputusan pengguna 2026-11-15
     // Entri "Candle … dianalisis" dicatat perakitan worker (assemble.js, tahu timeframe yang dianalisis pipeline), bukan scanner.
     expect(activity.list().filter((e) => e.kind === 'candles')).toEqual([]);
     expect(repos.ingestion.heartbeat.mock.calls.length).toBeGreaterThan(beatsBefore + 6);
-    expect(infos.map((e) => e.msg)).toContain('scan #6: 6/6 seri mutakhir · harga live 0 seri · 2 seri ditambal · sinyal terbuka LONG 3 · SHORT 1 · radar 7');
+    expect(infos.map((e) => e.msg)).toContain('scan #6: 6/6 seri mutakhir · harga live 0 seri · 2 seri ditambal · sinyal terbuka LONG 3 · SHORT 1');
   });
 
   it('UNIT-SCN-SCAN-003 stop() membatalkan scan terjadwal; tanpa options.scanIntervalMs (default) tidak ada scan & log aktivitas kosong', async () => {

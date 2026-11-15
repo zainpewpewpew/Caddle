@@ -9,7 +9,7 @@ const NOW = Date.UTC(2026, 10, 15, 12, 4, 20);
 const RUNNING = { enabled: true, state: 'running', startedAt: NOW - 600_000, stoppedAt: null, exitCode: null, signal: null, via: 'autostart', autoRestart: true, restartAt: null };
 const SCAN = {
   seq: 57, at: NOW - 15_000, symbols: 40, series: 120, fresh: 120, stale: 0, repaired: 0, priced: 118, lastPriceAt: NOW - 2_000,
-  open: { long: 4, short: 2, radar: 38 }, intervalMs: 60_000, nextAt: NOW + 45_000,
+  open: { long: 4, short: 2 }, intervalMs: 60_000, nextAt: NOW + 45_000,
 };
 const live = (over = {}) => ({
   serverTime: NOW, requestedAt: NOW, worker: RUNNING, binance: { status: 'ok', ws: 'open' }, recentErrors: [],
@@ -87,12 +87,11 @@ describe('strip status scanner — model tampilan (statusStripFormat.js)', () =>
 
   it('UNIT-STRIP-005 teks & nada log aktivitas per jenis', () => {
     const close = Date.UTC(2026, 10, 15, 12, 14, 59, 999);
-    expect(activityText({ kind: 'scan', seq: 57, series: 120, fresh: 119, stale: 1, repaired: 2, priced: 118, open: { long: 4, short: 2, radar: 38 } }))
-      .toBe('Scan #57: 119/120 seri mutakhir · harga live 118 seri · 2 seri ditambal · 1 seri tertinggal · sinyal terbuka LONG 4 · SHORT 2 · radar 38');
+    expect(activityText({ kind: 'scan', seq: 57, series: 120, fresh: 119, stale: 1, repaired: 2, priced: 118, open: { long: 4, short: 2 } }))
+      .toBe('Scan #57: 119/120 seri mutakhir · harga live 118 seri · 2 seri ditambal · 1 seri tertinggal · sinyal terbuka LONG 4 · SHORT 2');
     expect(activityText({ kind: 'candles', timeframe: '15m', closeTime: close, count: 40 })).toBe('Candle 15m 19:15 tutup · 40 koin dianalisis');
     expect(activityText({ kind: 'signal', symbol: 'ETHUSDT', timeframe: '15m', direction: 'SHORT', state: 'EARLY_BEARISH', tier: 'B' }))
       .toBe('Sinyal SHORT ETHUSDT 15m → Early bearish (tier B)');
-    expect(activityText({ kind: 'reversal', symbol: 'BTCUSDT', timeframe: '1h', stage: 'DEVELOPING_REVERSAL', status: 'DEVELOPING' })).toMatch(/^Reversal Radar BTCUSDT 1h → /);
     expect(activityText({ kind: 'error', source: 'backfill', symbol: 'BTCUSDT', timeframe: '1h', message: 'HTTP 500' })).toBe('Galat backfill REST BTCUSDT 1h: HTTP 500');
     expect(activityText({ kind: 'discovery', cycle: 'initial', symbols: 40 })).toBe('Discovery: 40 koin dipilih untuk dipindai');
     expect(activityText({ kind: 'ws', state: 'open', reconnects: 3 })).toBe('Stream live Binance tersambung ulang (ke-3)');

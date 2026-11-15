@@ -20,11 +20,10 @@ export const ACTIVITY_LIMIT = 30;
  * scan       scan berkala 1 menit { seq, series, fresh, stale, repaired, priced, durationMs, open }
  * candles    candle tertutup dianalisis (digabung per timeframe × waktu tutup) { timeframe, closeTime, count }
  * signal     sinyal SA/PVA/SD/PVD baru / naik tahap { symbol, timeframe, direction, state, tier }
- * reversal   kandidat Reversal Radar dibuka / naik tahap / batal { symbol, timeframe, stage, status }
  * error      galat ingesti tercatat { source, symbol, timeframe, message }
  * stopping   worker diminta berhenti
  */
-export const ACTIVITY_KINDS = Object.freeze(['start', 'discovery', 'bootstrap', 'ws', 'scan', 'candles', 'signal', 'reversal', 'error', 'stopping']);
+export const ACTIVITY_KINDS = Object.freeze(['start', 'discovery', 'bootstrap', 'ws', 'scan', 'candles', 'signal', 'error', 'stopping']);
 
 const SYMBOL = /^[A-Z0-9]{2,30}$/;
 const CODE = /^[A-Z][A-Z0-9_]{0,39}$/;
@@ -98,12 +97,6 @@ export function createActivityFeed({ limit = ACTIVITY_LIMIT, clock = Date.now, o
       state: codeOrNull(alert?.state),
       tier: ['A', 'B', 'C', 'D'].includes(alert?.view?.confluence?.tier) ? alert.view.confluence.tier : null,
     }),
-    reversal: (alert) => push('reversal', {
-      symbol: symbolOrNull(alert?.symbol),
-      timeframe: timeframeOrNull(alert?.timeframe),
-      stage: codeOrNull(alert?.stage),
-      status: codeOrNull(alert?.status),
-    }),
     error: ({ source, symbol, timeframe, message }) => push('error', {
       source: typeof source === 'string' && /^[a-z][a-z-]{0,29}$/.test(source) ? source : 'scanner',
       symbol: symbolOrNull(symbol),
@@ -117,6 +110,6 @@ export function createActivityFeed({ limit = ACTIVITY_LIMIT, clock = Date.now, o
 
 /** Feed tanpa efek (default scanner/tes yang tidak memakai log aktivitas). */
 export const NOOP_ACTIVITY = Object.freeze({
-  start() {}, stopping() {}, discovery() {}, bootstrap() {}, ws() {}, scan() {}, candles() {}, signal() {}, reversal() {}, error() {},
+  start() {}, stopping() {}, discovery() {}, bootstrap() {}, ws() {}, scan() {}, candles() {}, signal() {}, error() {},
   list: () => [],
 });
