@@ -10,6 +10,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configureBinanceNetwork, createBinanceNetwork } from '../../backend/ingestion/binance/network.js';
 import { createBinanceRestClient } from '../../backend/ingestion/binance/restClient.js';
 import { createKlineStream } from '../../backend/ingestion/binance/wsClient.js';
+import { ProviderError } from '../../backend/smartmoney/providers/errors.js';
+import { createBinancePublicMappingProvider } from '../../backend/smartmoney/providers/binanceMapping.js';
+import { createLiveProviderRegistry } from '../../backend/smartmoney/providers/live.js';
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
@@ -135,5 +138,27 @@ describe('transport Binance mode system & default klien', () => {
     stream.start();
     stream.stop();
     expect(opened[0]).toMatch(/^wss:\/\/fstream\.binance\.com\/market/);
+  });
+
+  it('INT-DOH-005 pemetaan Binance Smart Money (registri live & provider tanpa injeksi) lewat lookup DoH', async () => {
+    // Resolver palsu → 127.0.0.1: koneksi TLS lokal gagal (tanpa jaringan sungguhan), tetapi lookup DoH terbukti dipakai.
+    const globalFetch = vi.fn(async () => { throw new Error('fetch global tidak boleh dipakai untuk host Binance'); });
+    vi.stubGlobal('fetch', globalFetch);
+    const resolver = { endpoints: ['resolver-uji'], resolve4: vi.fn(async () => ['127.0.0.1']) };
+    const network = configureBinanceNetwork({ mode: 'doh', resolver });
+    cleanups.push(() => network.close());
+
+    const registry = createLiveProviderRegistry({ nodeEnv: 'development', smartMoney: { providers: ['binance-public'] } }, { env: {} });
+    const [adapter] = registry.list();
+    const viaRegistry = await adapter.fetchBinanceMapping().catch((e) => e);
+    expect(viaRegistry).toBeInstanceOf(ProviderError);
+    expect(viaRegistry.code).toBe('UNAVAILABLE');
+    expect(resolver.resolve4).toHaveBeenCalledWith('www.binance.com');
+
+    resolver.resolve4.mockClear();
+    const direct = await createBinancePublicMappingProvider().fetchBinanceMapping().catch((e) => e);
+    expect(direct).toBeInstanceOf(ProviderError);
+    expect(resolver.resolve4).toHaveBeenCalledWith('www.binance.com');
+    expect(globalFetch).not.toHaveBeenCalled();
   });
 });

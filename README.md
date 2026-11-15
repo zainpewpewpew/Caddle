@@ -98,6 +98,7 @@ Sebagian ISP membajak DNS `*.binance.com`: resolver sistem, dan bahkan DNS biasa
 
 - TLS tidak berubah: SNI dan verifikasi sertifikat tetap memakai nama host asli Binance. DoH hanya memilih IP tujuan; jawaban yang menunjuk jaringan lokal/privat ditolak.
 - Jawaban di-cache sesuai TTL (30 detik–10 menit). Bila semua resolver DoH gagal, jawaban lama dipakai hingga 1 jam; tanpa cache, worker jatuh ke resolver sistem dan mencatat peringatan.
+- Berlaku untuk scanner (REST + WebSocket), funding riset, dan pemetaan kontrak Binance di Smart Money (`binance-public` / `binance-mapping`). Provider non-Binance (Etherscan, Routescan, GeckoTerminal) tetap memakai DNS sistem.
 - Log worker saat start: `DNS Binance: DNS-over-HTTPS (khusus host Binance)`.
 - Jaringan yang memblokir koneksi ke Binance di level TLS/IP (bukan hanya DNS) tetap butuh VPN; DoH tidak menolong di situ. Cek cepat: `curl --resolve fapi.binance.com:443:<IP dari DoH> https://fapi.binance.com/fapi/v1/ping` harus menjawab `{}`.
 - Implementasi: `backend/ingestion/binance/doh.js` dan `network.js` (undici); tes UNIT-DOH-*, INT-DOH-*.

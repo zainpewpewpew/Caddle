@@ -15,7 +15,11 @@
 //   dari endpoint publik situs Binance — jalur Etherscan-saja, 2026-10-26). Adapter berkunci tanpa kunci → null
 //   (dilaporkan "belum dikonfigurasi", tidak pernah memanggil jaringan). Urutan SMART_MONEY_PROVIDERS = prioritas
 //   per chain: Etherscan untuk chain paket gratisnya, Routescan untuk chain sisanya (fallback NOT_SUPPORTED).
+// - Pabrik bertanda `network: 'binance'` (host *.binance.com) menerima fetch transport Binance aplikasi (DoH bila
+//   BINANCE_DNS=doh, sama dengan scanner); provider lain memakai fetch global. fetch yang diinjeksi pemanggil (tes)
+//   tetap diutamakan untuk semua provider, jadi tes tidak pernah menyentuh jaringan.
 
+import { binanceFetch } from '../../ingestion/binance/network.js';
 import { createBinanceMappingProvider, createBinancePublicMappingProvider } from './binanceMapping.js';
 import { createEtherscanProvider } from './etherscan.js';
 import { createGeckoTerminalProvider } from './geckoTerminal.js';
@@ -33,6 +37,7 @@ function secret(value) {
 /**
  * Pabrik adapter yang dikenal. Kunci = id provider di SMART_MONEY_PROVIDERS.
  * @type {Readonly<Record<string, Readonly<{ displayName: string, requiresKey: boolean, isSimulated: boolean,
+ *   network?: 'binance',
  *   create: (env: Record<string, string|undefined>, deps: { fetchImpl?: typeof fetch, clock?: () => number,
  *   sleep?: (ms: number) => Promise<void> }) => object|null, unavailableReason?: string }>>>}
  */
@@ -68,6 +73,7 @@ export const LIVE_PROVIDER_FACTORIES = Object.freeze({
     displayName: 'Pemetaan kontrak Binance (baca saja)',
     requiresKey: true,
     isSimulated: false,
+    network: 'binance',
     create: (env, deps) => {
       const apiKey = secret(env.BINANCE_API_KEY);
       const apiSecret = secret(env.BINANCE_API_SECRET);
@@ -79,6 +85,7 @@ export const LIVE_PROVIDER_FACTORIES = Object.freeze({
     displayName: 'Pemetaan kontrak Binance publik (tanpa kunci)',
     requiresKey: false,
     isSimulated: false,
+    network: 'binance',
     create: (env, deps) => createBinancePublicMappingProvider({ ...deps }),
   }),
 });
@@ -89,10 +96,12 @@ const CREATE_NULL_REASON = 'Adapter belum dapat dibuat — periksa kunci API / k
 /**
  * Registri provider aktif dari konfigurasi aplikasi.
  * @param {{ nodeEnv?: string, smartMoney?: { providers?: string[] } }} config konfigurasi aplikasi (loadConfig())
- * @param {{ fetchImpl?: typeof fetch, clock?: () => number, sleep?: (ms: number) => Promise<void>,
- *   env?: Record<string, string|undefined>, extraAdapters?: object[],
+ * @param {{ fetchImpl?: typeof fetch, binanceFetchImpl?: typeof fetch, clock?: () => number,
+ *   sleep?: (ms: number) => Promise<void>, env?: Record<string, string|undefined>, extraAdapters?: object[],
  *   factories?: Record<string, { displayName: string, requiresKey: boolean, isSimulated: boolean,
- *     create: Function, unavailableReason?: string }> }} [deps]
+ *     network?: 'binance', create: Function, unavailableReason?: string }> }} [deps]
+ *   fetchImpl: fetch semua provider (default fetch global). binanceFetchImpl: fetch khusus pabrik `network: 'binance'`
+ *   (default fetchImpl bila diinjeksi, selain itu transport Binance aplikasi).
  *   extraAdapters: adapter siap pakai (KHUSUS tes/E2E, mis. fixture). Adapter bertanda isSimulated di luar
  *   NODE_ENV=test → TypeError (kesalahan perakitan, bukan kondisi runtime).
  * @returns {ReturnType<typeof createProviderRegistry> & {
@@ -100,7 +109,7 @@ const CREATE_NULL_REASON = 'Adapter belum dapat dibuat — periksa kunci API / k
  *   configuredIds: () => string[] }}
  */
 export function createLiveProviderRegistry(config, {
-  fetchImpl = globalThis.fetch, clock = Date.now, sleep, env = {}, extraAdapters = [], factories = LIVE_PROVIDER_FACTORIES,
+  fetchImpl, binanceFetchImpl, clock = Date.now, sleep, env = {}, extraAdapters = [], factories = LIVE_PROVIDER_FACTORIES,
 } = {}) {
   const ids = [...new Set(config?.smartMoney?.providers ?? [])];
   const isTest = config?.nodeEnv === 'test';
@@ -111,7 +120,8 @@ export function createLiveProviderRegistry(config, {
     }
   }
   const extraIds = new Set(extraAdapters.map((a) => a?.id));
-  const deps = { fetchImpl, clock, sleep };
+  const deps = { fetchImpl: fetchImpl ?? globalThis.fetch, clock, sleep };
+  const binanceDeps = { ...deps, fetchImpl: binanceFetchImpl ?? fetchImpl ?? binanceFetch };
   const adapters = [...extraAdapters];
   const unavailable = [];
   for (const id of ids) {
@@ -121,7 +131,7 @@ export function createLiveProviderRegistry(config, {
       unavailable.push({ id, displayName: id, requiresKey: null, isSimulated: false, reason: NOT_WIRED_REASON });
       continue;
     }
-    const adapter = factory.create(env, deps);
+    const adapter = factory.create(env, factory.network === 'binance' ? binanceDeps : deps);
     if (adapter === null || adapter === undefined) {
       unavailable.push({
         id, displayName: factory.displayName, requiresKey: factory.requiresKey, isSimulated: factory.isSimulated,

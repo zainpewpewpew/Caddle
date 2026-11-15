@@ -2,8 +2,9 @@
 //   - 'doh' (default): undici Agent dengan `lookup` DoH khusus host Binance (doh.js). Di jaringan yang hanya
 //     membajak DNS *.binance.com (diukur di Mac pemilik), scanner jalan tanpa WARP/VPN.
 //   - 'system': fetch & WebSocket global Node apa adanya (perilaku sebelum DoH).
-// Ini default createBinanceRestClient (fetch) dan createKlineStream (WebSocketImpl), jadi worker, server (sinkron
-// Smart Money), backtest, dan replay ikut tanpa perubahan pemanggil. Tes selalu menginjeksi fetch/WebSocket palsu.
+// Ini default createBinanceRestClient (fetch), createKlineStream (WebSocketImpl), dan provider pemetaan Binance Smart
+// Money (binance-public / binance-mapping), jadi worker, server, backtest, replay, dan sinkron Smart Money ikut tanpa
+// perubahan pemanggil. Tes selalu menginjeksi fetch/WebSocket palsu.
 // undici dipin ke versi yang sama dengan undici bawaan Node; fetch & WebSocket undici selalu diberi dispatcher
 // undici sendiri (tidak mencampur dengan dispatcher global Node).
 

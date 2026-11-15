@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { binanceFetch } from '../../../backend/ingestion/binance/network.js';
 import { createFixtureProvider } from '../../../backend/smartmoney/providers/fixtureProvider.js';
 import { LIVE_PROVIDER_FACTORIES, createLiveProviderRegistry } from '../../../backend/smartmoney/providers/live.js';
 import { parseSmartMoneyConfig } from '../../../backend/smartmoney/config.js';
@@ -80,6 +81,34 @@ describe('registri provider live (providers/live.js)', () => {
     expect(auto.withCapability('binanceMapping').map((a) => a.id)).toEqual(['binance-public']);
     expect(auto.withCapability('walletDiscovery', 'ethereum').every((a) => typeof a.trendingTokens === 'function')).toBe(true);
     expect(calls).toEqual([]);
+  });
+
+  it('UNIT-SM-LIVE-008 pabrik network "binance" mendapat transport Binance aplikasi (DoH); fetch injeksi tetap diutamakan', () => {
+    expect(LIVE_PROVIDER_FACTORIES['binance-public'].network).toBe('binance');
+    expect(LIVE_PROVIDER_FACTORIES['binance-mapping'].network).toBe('binance');
+    for (const id of ['etherscan', 'routescan', 'geckoterminal']) expect(LIVE_PROVIDER_FACTORIES[id].network).toBeUndefined();
+
+    const seen = {};
+    const factory = (id, network) => ({
+      displayName: id, requiresKey: false, isSimulated: false, ...(network ? { network } : {}),
+      create: (env, deps) => { seen[id] = deps.fetchImpl; return stubAdapter(id); },
+    });
+    const factories = { bin: factory('bin', 'binance'), lain: factory('lain') };
+
+    // Tanpa injeksi (server, worker, skrip sinkron): host Binance lewat transport Binance, provider lain fetch global.
+    createLiveProviderRegistry(config(['bin', 'lain']), { factories });
+    expect(seen.bin).toBe(binanceFetch);
+    expect(seen.lain).toBe(globalThis.fetch);
+
+    // fetch injeksi (tes) dipakai semua provider; binanceFetchImpl hanya untuk pabrik Binance.
+    const injected = async () => new Response('{}');
+    createLiveProviderRegistry(config(['bin', 'lain']), { factories, fetchImpl: injected });
+    expect(seen.bin).toBe(injected);
+    expect(seen.lain).toBe(injected);
+    const binanceOnly = async () => new Response('{}');
+    createLiveProviderRegistry(config(['bin', 'lain']), { factories, fetchImpl: injected, binanceFetchImpl: binanceOnly });
+    expect(seen.bin).toBe(binanceOnly);
+    expect(seen.lain).toBe(injected);
   });
 
   it('UNIT-SM-LIVE-003 pabrik menerima env & deps; hasil null → alasan pabrik / alasan bawaan kunci', () => {

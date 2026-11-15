@@ -21,7 +21,8 @@
 // X-MBX-APIKEY [R docs/14 §5.1 request-security]. Hanya kunci HMAC ("System generated") yang didukung. Timestamp
 // dibuat tepat sebelum kirim (setelah antrean throttle) agar tidak basi. Rahasia (API key, secret, signature) tidak
 // pernah masuk pesan error; header kunci hanya dikirim ke endpoint bertanda tangan; redirect ditolak; host dibatasi
-// *.binance.com (https).
+// *.binance.com (https). fetch default = transport Binance aplikasi (ingestion/binance/network.js: DNS-over-HTTPS bila
+// BINANCE_DNS=doh, sama dengan scanner), agar pemetaan tetap jalan di jaringan yang membajak DNS *.binance.com.
 //
 // Pemetaan (buildBinanceMappingRows, fungsi murni):
 // - Kode jaringan Binance → chain lewat tabel EKSPLISIT BINANCE_NETWORK_CHAINS; kode lain TIDAK ditebak — dicatat di
@@ -54,6 +55,7 @@
 // NON-enumerable `diagnostics` pada array hasil dan salinannya tersedia lewat `lastDiagnostics()`.
 
 import { createHmac } from 'node:crypto';
+import { binanceFetch } from '../../ingestion/binance/network.js';
 import { CHAINS, NATIVE_TOKEN, ZERO_ADDRESS, normalizeAddress } from '../contracts.js';
 import { notSupported } from './adapter.js';
 import { ProviderError, codeForStatus, parseRetryAfter } from './errors.js';
@@ -395,7 +397,7 @@ export function createBinancePublicMappingProvider({ apiKey: _k, apiSecret: _s, 
 function createMappingProvider({
   apiKey,
   apiSecret,
-  fetchImpl = globalThis.fetch,
+  fetchImpl = binanceFetch,
   clock = Date.now,
   sleep,
   spotBaseUrl = BINANCE_SPOT_BASE_URL,
