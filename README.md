@@ -156,6 +156,8 @@ Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
 | `npm run research:bsv -- --window explore` / `-- --window oos` | Riset formulasi LONG 1h BSV-1h: paritas eksplorasi atau uji luar sampel terpraregistrasi (studi kejadian + funding historis), laporan di `reports/research/` ([docs/23](docs/23-riset-formulasi-candle-short15m-long1h.md)). Hasil 2026-11-15: tidak lulus, tidak dipakai scanner |
 | `npm run research:timing` / `-- --symbols UNIUSDT,ZECUSDT` | Riset timing sinyal live (LONG 1h SA/PVA, SHORT 15m SD/PVD): alert muncul sebelum, saat, atau sesudah breakout, gerak harga sebelum alert, dan hasil trade per kelompok; data dari cache backtest, laporan di `reports/research/` ([docs/24](docs/24-backtest-31-koin-dan-timing-sinyal.md)) |
 | `npm run research:matched` / `-- --symbols UNIUSDT,ZECUSDT` | Riset "informasi di luar momentum": alert pola live vs candle tanpa sinyal yang dicocokkan (simbol, kuartal, gerak awal, posisi rentang, volatilitas), CI moving-block bootstrap 7/14 hari, kohort simbol, sensitivitas Donchian 24/96, persiapan ukuran sampel praregistrasi; laporan di `reports/research/` ([docs/25](docs/25-informasi-di-luar-momentum.md)) |
+| `npm run research:matched-exclusion` / `-- --jobs 1` | Sensitivitas pasca-run docs/25: hasil pembanding dicocokkan dengan tiga jendela pengecualian pembanding (desain terkunci ±12 candle vs dua varian kausal yang hanya memakai masa lalu), 4 proses paralel; laporan di `reports/research/` ([docs/25 §2](docs/25-informasi-di-luar-momentum.md)) |
+| `npm run research:al-sa-atr-01 -- --mode count --to YYYY-MM-DD` / `--mode evaluate` | Praregistrasi AL-SA-ATR-01 (LONG 1h, gerak awal ≥ 2,7 ATR) pada data sesudah 2026-11-16: `count` hanya menghitung trade (tanpa hasil R), `evaluate` menjalankan uji keputusan sekali saja pada commit beku; laporan di `reports/research/` ([docs/26](docs/26-praregistrasi-al-sa-atr-01.md)) |
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |
@@ -176,7 +178,8 @@ backend/
   database/     koneksi, runner migrasi, migrations/, repositories/
   ingestion/    klien REST/WebSocket Binance (DNS-over-HTTPS khusus host Binance), validasi candle, discovery, backfill
   indicators/   EMA, ATR, RVOL, swing (fungsi murni)
-  research/     formulasi & studi riset (BSV-1h, timing sinyal); tidak dipakai worker/scanner live (docs/23, docs/24)
+  research/     formulasi & studi riset (BSV-1h, timing sinyal, pembanding dicocokkan, praregistrasi AL-SA-ATR-01);
+                tidak dipakai worker/scanner live (docs/23–26)
   patterns/     detektor SA & PVA (LONG) serta SD & PVD (SHORT, cermin SA/PVA) berversi
   timeframe/    trend & alignment multi-timeframe
   scoring/      skor, risk flag, penjelasan

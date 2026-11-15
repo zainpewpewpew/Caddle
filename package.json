@@ -30,7 +30,9 @@
     "report:tests": "vitest run --reporter=default --reporter=json --outputFile.json=reports/vitest-results.json && playwright test && node scripts/test-report.js",
     "research:bsv": "node --env-file-if-exists=.env scripts/research-bsv-1h.js",
     "research:timing": "node --env-file-if-exists=.env scripts/research-timing.js",
-    "research:matched": "node --env-file-if-exists=.env scripts/research-matched.js"
+    "research:matched": "node --env-file-if-exists=.env scripts/research-matched.js",
+    "research:matched-exclusion": "node --env-file-if-exists=.env scripts/research-matched-exclusion.js",
+    "research:al-sa-atr-01": "node --env-file-if-exists=.env scripts/research-al-sa-atr-01.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",

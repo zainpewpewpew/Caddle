@@ -74,4 +74,120 @@ menghitung ukuran sampel praregistrasi docs/26.
 
 ## 2. Hasil
 
-Ditulis sesudah run penuh pertama dengan file yang hash-nya tercantum di §1.6.
+Run penuh pertama berjalan 2026-11-15 dengan file yang hash-nya tercantum di §1.6. Laporannya
+`reports/research/matched-20261115T160408Z.{md,json}`: 31 simbol, tidak ada seri dilewati, 1198 s. Sensitivitas pasca-run
+§2.2 ada di `reports/research/matched-exclusion-20261115T163216Z.{md,json}` (421 s, 4 proses). Folder `reports/` tidak
+masuk git; angka di bawah ini salinannya.
+
+### 2.1 Pembacaan yang ditetapkan sebelum run
+
+| Kombinasi | Alert v3 | Cocok | Median pembanding | Gerak lanjutan 12 candle: alert vs pembanding | Selisih [CI blok 7 hari] | Pembacaan §1.5 |
+|---|---|---|---|---|---|---|
+| LONG 1h SA/PVA | 1.713 | 1.550 (90,5%) | 5 | +0,21 vs −0,36 ATR | +0,57 [+0,35 … +0,81] | menambah informasi |
+| SHORT 15m SD/PVD | 19.739 | 19.619 (99,4%) | 22 | −0,07 vs −0,45 ATR | +0,38 [+0,31 … +0,45] | menambah informasi |
+
+Keseimbangan kovariatnya baik. Gerak awal alert vs pembanding: +2,17 vs +2,16 ATR (LONG) dan +1,73 vs +1,72 ATR (SHORT).
+Posisi rentang dan ATR% hanya berselisih ≤ 0,02 dan ≤ 0,1 poin persen. Hasilnya konsisten di:
+
+- CI blok 14 hari dan CI harian;
+- horizon 48 candle: +0,75 [+0,15 … +1,32] dan +0,32 [+0,09 … +0,54];
+- breakout Donchian 24/48/96, misalnya D48 +6,8 pp dan +7,6 pp;
+- kohort lama dan baru.
+
+**Pembacaan ini tidak dapat dipakai** karena desainnya cacat (§2.2).
+
+### 2.2 Cacat desain yang ditemukan sesudah run: pemilihan pembanding memakai data masa depan
+
+§1.2 mengeluarkan kandidat pembanding yang berjarak ≤ 12 candle dari alert mana pun, **termasuk 12 candle sebelum alert**.
+Pada candle k, alert yang baru muncul di k+1…k+12 belum diketahui. Mengeluarkan candle itu berarti memilih pembanding
+menurut masa depannya. Candle yang tidak diikuti alert cenderung tidak menguat, jadi pembanding tampak lebih buruk dan
+selisihnya terlalu besar. Buktinya terlihat langsung:
+
+| Kombinasi | Dikeluarkan hanya karena alert menyusul ≤ 12 candle | Gerak lanjutan 12 candle | Kandidat pembanding terkunci | Gerak lanjutan 12 candle |
+|---|---|---|---|---|
+| LONG 1h | 92.650 candle (gerak awal +0,52 ATR) | **+1,11 ATR** | 359.399 candle (−0,45 ATR) | −0,26 ATR |
+| SHORT 15m | 424.077 candle (+0,53 ATR) | **+1,00 ATR** | 1.306.413 candle (−0,53 ATR) | −0,34 ATR |
+
+Cacat ini ditemukan saat menulis hasil, sesudah laporan run terkunci dibaca. Sensitivitasnya ada di
+`scripts/research-matched-exclusion.js` (`npm run research:matched-exclusion`, tes UNIT-MEX-001…002) dan tidak dikunci
+sebelum run. Skrip itu hanya mengubah kumpulan kandidat pembanding. Strata, hasil, dan bootstrap memakai fungsi terkunci
+apa adanya, dan varian "simetris" mereproduksi §2.1 persis. Uji asap 2 simbol sempat terlihat sebelum run penuh; tidak ada
+yang diubah sesudahnya. Candle k dikeluarkan bila ada alert v2/v3 searah di e dengan e − before ≤ k ≤ e + after:
+
+- **simetris** (12, 12): desain terkunci, memakai masa depan.
+- **lampau** (0, 12): alert di candle k atau 12 candle sebelumnya. Kausal.
+- **tanpa** (0, 0): hanya candle alert itu sendiri. Kausal; pembandingnya semua candle tanpa alert.
+
+| Kombinasi | Pengecualian | Cocok | Gerak 12: alert vs pembanding | Selisih gerak 12 [CI 7 hari] | CI 14 hari · harian | Breakout D48: alert vs pembanding | Pembacaan §1.5 |
+|---|---|---|---|---|---|---|---|
+| LONG 1h | simetris | 90,5% | +0,21 vs −0,36 | +0,57 [+0,35 … +0,81] | [+0,33 … +0,82] · [+0,37 … +0,78] | 41,2% vs 34,4% | menambah informasi |
+| LONG 1h | lampau | 95,4% | +0,23 vs +0,12 | +0,11 [−0,08 … +0,34] | [−0,10 … +0,36] · [−0,07 … +0,31] | 41,0% vs 40,1% | **tidak terbukti** |
+| LONG 1h | tanpa | 98,5% | +0,25 vs +0,16 | +0,09 [−0,09 … +0,31] | [−0,10 … +0,31] · [−0,08 … +0,27] | 41,4% vs 40,3% | **tidak terbukti** |
+| SHORT 15m | simetris | 99,4% | −0,07 vs −0,45 | +0,38 [+0,31 … +0,45] | [+0,32 … +0,45] · [+0,31 … +0,46] | 38,8% vs 31,1% | menambah informasi |
+| SHORT 15m | lampau | 99,7% | −0,07 vs +0,02 | −0,08 [−0,15 … −0,02] | [−0,15 … −0,02] · [−0,15 … −0,01] | 38,8% vs 37,7% | **lebih buruk** |
+| SHORT 15m | tanpa | 99,8% | −0,07 vs −0,00 | −0,07 [−0,13 … −0,00] | [−0,13 … −0,01] · [−0,14 … +0,00] | 38,7% vs 37,4% | **lebih buruk** (CI harian menyentuh 0) |
+
+Hasil lain dari dua varian kausal:
+
+- **LONG 1h.** Gerak lanjutan 48 candle +0,24…+0,28 ATR, dengan CI memuat 0. Selisih breakout: D24 +4,1 pp (CI > 0),
+  D48 +0,9…+1,1 pp dan D96 +1,9…+2,0 pp (CI memuat 0). Selisih gerak 12 candle per kohort: lama +0,05 ATR di kedua varian,
+  baru +0,21…+0,34 ATR; semua CI memuat 0.
+- **SHORT 15m.** Selisih breakout D24 +3,1…+3,3 pp, D48 +1,0…+1,4 pp, dan D96 +5,7…+5,8 pp. Sesudah alert, harga sedikit
+  lebih sering mencetak low baru dibanding momentum serupa, tetapi gerak 12 candle-nya tetap lebih buruk. Kedua kohort
+  negatif.
+
+### 2.3 Kesimpulan
+
+1. Pembacaan terkunci §2.1 gugur karena cacat §2.2. Dengan pembanding kausal, dan konsisten di kedua varian:
+   - **LONG 1h SA/PVA tidak terbukti menambah informasi** di luar momentum serupa. Selisihnya +0,09…+0,11 ATR, CI memuat 0.
+   - **SHORT 15m SD/PVD sedikit lebih buruk** dari momentum serupa: −0,07…−0,08 ATR.
+2. Peluang breakout bersyarat: dibanding semua candle, alert jauh lebih sering diikuti breakout D48 dalam 12 candle
+   (LONG 41% vs 18%, SHORT 39% vs 18%). Dibanding candle dengan momentum serupa, selisihnya tinggal +0,9…+1,4 pp. Rasio
+   besar terhadap candle acak (docs/24 §4) hampir seluruhnya berasal dari momentum.
+3. Scanner saat ini paling tepat dibaca sebagai **pendeteksi momentum dengan label pola**. Itu tidak berarti trade-nya
+   pasti rugi (§2.4). Hanya saja, keunggulan apa pun yang ada belum bisa diatribusikan ke pola.
+
+### 2.4 R trade (tidak terpengaruh cacat §2.2)
+
+Bagian D dan E laporan terkunci tidak memakai pembanding.
+
+| LONG 1h | n | R bersih | CI blok 7 hari | CI 14 hari | CI harian |
+|---|---|---|---|---|---|
+| Semua alert | 1.713 | +0,03 | [−0,07 … +0,13] | [−0,07 … +0,12] | [−0,05 … +0,11] |
+| Periode uji | 945 | +0,02 | [−0,12 … +0,15] | [−0,12 … +0,15] | [−0,10 … +0,13] |
+| Gerak awal ≥ 2,7 ATR, satu posisi per simbol | 560 | +0,17 | [+0,05 … +0,28] | [+0,05 … +0,27] | [+0,06 … +0,27] |
+| Gerak awal < 2,7 ATR, satu posisi per simbol | 1.109 | −0,04 | [−0,13 … +0,07] | [−0,14 … +0,08] | [−0,13 … +0,05] |
+| ≥ 2,7 ATR, satu posisi per simbol, periode uji | 295 | +0,11 | [−0,06 … +0,26] | [−0,06 … +0,26] | [−0,04 … +0,25] |
+| Selisih ≥ − < 2,7 ATR (satu posisi per simbol) | — | +0,20 | [+0,07 … +0,33] | [+0,07 … +0,32] | [+0,07 … +0,33] |
+
+SHORT 15m:
+
+- Semua alert: −0,12R [−0,16 … −0,08], n 19.741.
+- Periode uji: −0,14R [−0,20 … −0,08].
+- Gerak awal ≥ 2,7 ATR, satu posisi per simbol: −0,08R [−0,13 … −0,02].
+
+CI blok 7 dan 14 hari hampir sama dengan CI harian, jadi kritik "CI harian terlalu sempit" tidak mengubah kesimpulan
+docs/24.
+
+Persiapan praregistrasi (bagian E, LONG 1h, ≥ 2,7 ATR, satu posisi per simbol):
+
+- n 560, SD 1,06R, efek desain 1,77;
+- R bersih dengan biaya stres 5 + 5 bps: +0,15R;
+- 0,713 trade per simbol-bulan (785 simbol-bulan).
+
+Ukuran sampel dan dayanya dibahas di docs/26 §4.
+
+### 2.5 Sensitivitas definisi breakout (bagian C)
+
+Porsi alert yang muncul tepat di candle breakout dengan Donchian 24/48/96:
+
+- LONG: 31,6% / 23,8% / 18,2%, dibanding semua candle 4,2% / 2,8% / 1,9%.
+- SHORT: 23,6% / 18,2% / 13,4%, dibanding 4,1% / 2,7% / 1,7%.
+
+Kesimpulan docs/24 bahwa alert terkonsentrasi di candle breakout tidak bergantung pada pilihan Donchian 48.
+
+### 2.6 Pelajaran
+
+- Kelayakan pembanding hanya boleh memakai informasi yang sudah ada pada candle itu. Aturan ini wajib di studi berikutnya.
+- Mengunci desain menjamin urutan yang jujur, bukan desain yang benar. Karena itu hasil terkunci tetap dicatat di §2.1,
+  berdampingan dengan koreksinya.
