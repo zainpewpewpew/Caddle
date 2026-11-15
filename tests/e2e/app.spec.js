@@ -96,6 +96,24 @@ test('E2E-UI-002 tidak ada horizontal overflow halaman di setiap layar', async (
   }
 });
 
+test('E2E-UI-005 SHORT Scanner berlabel eksperimental dengan peringatan hasil backtest; LONG Scanner tidak', async ({ page }) => {
+  const errors = watchErrors(page);
+  await signIn(page);
+  await page.goto('/#/short-scanner');
+  await expect(page.locator('.page h1')).toHaveText('SHORT Scanner');
+  await expect(page.locator('.page__subtitle .badge')).toHaveText('Eksperimental');
+  const note = page.getByTestId('scanner-experimental');
+  await expect(note).toBeVisible();
+  await expect(note).toHaveAttribute('role', 'note');
+  await expect(note).toContainText('Eksperimental:');
+  await expect(note).toContainText('−0,12R per trade');
+  await page.goto('/#/screener');
+  await expect(page.locator('.page h1')).toHaveText('LONG Scanner');
+  await expect(page.getByTestId('scanner-experimental')).toHaveCount(0);
+  await expect(page.locator('.page__subtitle .badge')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test('E2E-SET-001 admin menyimpan pengaturan; validasi klien menolak input tidak valid', async ({ page }) => {
   await signIn(page);
   await page.goto('/#/settings');

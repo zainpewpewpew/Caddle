@@ -121,8 +121,21 @@ const SCANNERS = {
     emptyTitle: 'Belum ada kandidat SHORT',
     emptyText: 'Kandidat muncul setelah worker mengingesti candle tertutup Binance dan detektor SD/PVD menemukan pola distribusi. Tidak ada data contoh yang ditampilkan.',
     footer: 'Klik baris (atau tekan Enter) untuk menampilkan grafik koin di sebelah tabel; Esc menutupnya. Hanya sinyal dari candle tertutup 15m. Alignment = konteks timeframe 1h, tidak membuang pola. Riset saja — tidak ada eksekusi order.',
+    // Keputusan pemilik 2026-11-15: SHORT 15m berlabel eksperimental. Backtest 31 koin 2024–2026 (fee 5 + slippage 2 bps
+    // per sisi): −0,12R per trade (docs/24 §3.2), dan alert sedikit lebih buruk dari momentum serupa (docs/25 §2.3).
+    experimental: {
+      badge: 'Eksperimental',
+      note: 'sinyal SHORT 15m belum terbukti. Backtest 31 koin Binance (2024–2026, dengan fee & slippage) rata-rata −0,12R per trade, dan alertnya tidak lebih baik dari momentum biasa. Gunakan untuk riset, bukan dasar membuka posisi.',
+    },
   },
 };
+
+/** Peringatan halaman scanner eksperimental: label teks + warna warn (warna bukan satu-satunya penanda). */
+function experimentalNote(text) {
+  const el = callout([h('strong', null, 'Eksperimental: '), text], 'warn');
+  el.dataset.testid = 'scanner-experimental';
+  return el;
+}
 
 // Semua filter dikirim ke server (nama field form → parameter query API) dan diterapkan SEBELUM limit.
 // Tidak ada filter di klien: memfilter setelah potongan top-N patternScore membuat hasil diam-diam tidak lengkap.
@@ -558,7 +571,10 @@ export async function scannerPage(ctx, direction) {
   });
 
   // Kontrol scanner di kanan header (bukan bilah selebar halaman) agar tabel kandidat naik ke viewport pertama.
-  const el = page({ title: cfg.title, subtitle: cfg.subtitle, actions: [radar.el, control] }, section.el);
+  // Label eksperimental di subtitle (bukan di h1, agar judul tetap "SHORT Scanner") + satu callout ringkas di atas tabel.
+  const exp = cfg.experimental;
+  const subtitle = exp ? [badge(exp.badge, 'warn'), ' ', cfg.subtitle] : cfg.subtitle;
+  const el = page({ title: cfg.title, subtitle, actions: [radar.el, control] }, exp ? experimentalNote(exp.note) : null, section.el);
   el.classList.add('page--scanner');
   el.dataset.direction = dir;
   section.start();
