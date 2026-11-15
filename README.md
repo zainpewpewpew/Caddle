@@ -159,6 +159,7 @@ Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
 | `npm run research:matched-exclusion` / `-- --jobs 1` | Sensitivitas pasca-run docs/25: hasil pembanding dicocokkan dengan tiga jendela pengecualian pembanding (desain terkunci ±12 candle vs dua varian kausal yang hanya memakai masa lalu), 4 proses paralel; laporan di `reports/research/` ([docs/25 §2](docs/25-informasi-di-luar-momentum.md)) |
 | `npm run research:al-sa-atr-01 -- --mode count --to YYYY-MM-DD` / `--mode evaluate` | Praregistrasi AL-SA-ATR-01 (LONG 1h, gerak awal ≥ 2,7 ATR) pada data sesudah 2026-11-16: `count` hanya menghitung trade (tanpa hasil R), `evaluate` menjalankan uji keputusan sekali saja pada commit beku; laporan di `reports/research/` ([docs/26](docs/26-praregistrasi-al-sa-atr-01.md)) |
 | `npm run research:al-sa-atr-01-audit -- --to YYYY-MM-01` | Audit data bulanan AL-SA-ATR-01 (adendum docs/26 §10): memuat kline, funding, dan bulan kohort ke cache agar evaluasi tahan delisting; mencatat status simbol, celah, dan trade yang tetap terbuka. Tanpa R; jalankan bersama `--mode count` |
+| `npm run research:mom-power` | Bahan desain AL-MOM-01 (SA/PVA vs momentum murni): selisih alert vs pembanding strata untuk gerak 12 candle (A) dan trade dengan stop 1,5 ATR identik (B), lalu daya uji per lama jendela; data cache historis, laporan di `reports/research/` ([docs/27](docs/27-bahan-desain-al-mom-01.md)) |
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |
@@ -180,7 +181,7 @@ backend/
   ingestion/    klien REST/WebSocket Binance (DNS-over-HTTPS khusus host Binance), validasi candle, discovery, backfill
   indicators/   EMA, ATR, RVOL, swing (fungsi murni)
   research/     formulasi & studi riset (BSV-1h, timing sinyal, pembanding dicocokkan, praregistrasi AL-SA-ATR-01);
-                tidak dipakai worker/scanner live (docs/23–26)
+                tidak dipakai worker/scanner live (docs/23–27)
   patterns/     detektor SA & PVA (LONG) serta SD & PVD (SHORT, cermin SA/PVA) berversi
   timeframe/    trend & alignment multi-timeframe
   scoring/      skor, risk flag, penjelasan
