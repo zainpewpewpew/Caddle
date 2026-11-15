@@ -57,7 +57,7 @@ async function firstCachedMonth(cacheDir, symbol, timeframe) {
   return Date.UTC(y, m - 1, 1);
 }
 
-async function loadCached(cacheDir, symbol, timeframe, from, to) {
+export async function loadCached(cacheDir, symbol, timeframe, from, to) {
   const first = await firstCachedMonth(cacheDir, symbol, timeframe);
   if (first === null) return null;
   const { candles } = await loadFromBinance({ symbol, timeframe, from: Math.max(from, first), to, cacheDir });
