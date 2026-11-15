@@ -1,7 +1,8 @@
 # 26 — Praregistrasi AL-SA-ATR-01: alert LONG 1h dengan gerak awal ≥ 2,7 ATR (dibekukan 2026-11-15)
 
-> **Adendum 1 (§10)**, ditulis sebelum data uji ada, menambah audit data bulanan dan laporan pendamping. §1–§8 tidak
-> berubah.
+> **Adendum 1 (§10)**, ditulis sebelum data uji ada, menambah audit data bulanan dan laporan pendamping. **Adendum 2
+> (§11)**, juga sebelum data uji ada, mengunci status data per simbol-bulan, penanganan candle datar sesudah delisting,
+> urutan sumber data, dan versi audit. §1–§8 tidak berubah.
 
 **Status: DIBEKUKAN sebelum data uji ada.** Data uji dimulai **2026-11-16 00:00 UTC**, sehari sesudah pembekuan. Commit
 beku = commit pertama yang menambahkan dokumen ini; aturan, semesta, ukuran sampel, kriteria, dan kode analisis tidak
@@ -155,6 +156,9 @@ aturan, semesta, n wajib, kriteria P0–P4, aturan berhenti, dan commit beku `00
 menambah prosedur data yang tidak membaca R, serta laporan pendamping yang bukan penentu. Pemicunya tinjauan ChatGPT
 (2026-11-16 WIB) tentang delisting, rezim pasar, konsentrasi simbol, dan presisi Monte Carlo.
 
+Sebagian §10.1–§10.3 diperbarui adendum 2 (§11): perilaku API saat delisting, definisi "siap evaluasi", aturan bulan
+kosong, sumber data, dan nama skenario −1R.
+
 ### 10.1 Masalah di kode beku
 
 - **Simbol delisting terbuang seluruhnya.** Kalau API Binance menolak simbol yang sudah delisting, `loadFromBinance` gagal
@@ -227,3 +231,138 @@ ditulis di §9 berdampingan dengan vonis.
   0,8% bila tidak ada efek.
 - **Hash pohon sengaja mencakup seluruh `backend/`.** Evaluasi berjalan di checkout commit beku, jadi perubahan di `main`
   tidak memengaruhinya. Satu-satunya risiko adalah pengambilan data, dan risiko itu ditangani §7 serta §10.2.
+
+## 11. Adendum 2: status data, candle datar sesudah delisting, sumber data, dan versi audit (2026-11-15 UTC, sebelum data uji ada)
+
+Adendum ini ditulis dan di-push sebelum jendela data dimulai (2026-11-16 00:00 UTC); waktunya ada di timestamp commit
+yang menambahkan bagian ini. **§1–§8 tetap**: hipotesis, aturan, semesta, n wajib, kriteria P0–P4, aturan berhenti,
+commit beku `00d33d6`, dan hash pohon. Adendum ini hanya menyangkut prosedur data (tanpa membaca R) dan laporan
+pendamping, dan menyebut per butir bagian §10 mana yang diganti. Pemicunya tinjauan ChatGPT (2026-11-16 WIB) dan probe
+API publik Binance pada 2026-11-15 sekitar 18.30–19.00 UTC.
+
+### 11.1 Temuan: Binance tidak menolak simbol delisting, tetapi menyajikan candle datar
+
+exchangeInfo USDⓈ-M saat probe: 659 perpetual USDT, terdiri dari 522 TRADING, 136 SETTLING, dan 1 PENDING_TRADING.
+Semua simbol TRADING punya `deliveryDate` 2100-12-25, dan semua simbol SETTLING punya `deliveryDate` lain, yaitu waktu
+delisting.
+
+- **Kline tetap tersedia.** Pada 12 delisting terbaru (2026-08-07 → 2026-10-28), REST kline tetap menjawab, dan mulai
+  candle `deliveryDate` (atau satu candle sesudahnya) semua candle datar (open = high = low = close) dan bervolume 0
+  sampai hari probe. Pada delisting tertua (SCUSDT, 2022-06-17), candle di sekitar delisting dan candle terbaru juga
+  datar. Simbol yang sudah hilang dari exchangeInfo (SRMUSDT) masih menjawab, dengan candle terakhir 2024-05-28.
+- **Arsip sama dengan REST.** Arsip data.binance.vision STGUSDT 1h 2026-09 dan 2026-10 (SHA-256 cocok dengan
+  `.CHECKSUM`) identik per candle dengan REST (1.464 candle), termasuk candle datar sesudah delisting 2026-09-24.
+- **Akibat pada kode beku.** Replay dengan backend yang identik dengan `00d33d6`, pada 12 simbol itu (di luar semesta,
+  jendela lampau), menunjukkan:
+  - simbol delisting tidak terbuang. Skenario "API menolak" di §10.1 tidak terjadi dengan perilaku Binance sekarang;
+    cache dari §10.2 tetap dipertahankan sebagai perlindungan bila perilaku itu berubah;
+  - trade yang masih terbuka saat delisting selesai sebagai TIMEOUT di candle datar, jadi dinilai pada harga terakhir
+    (1 kasus, SCRTUSDT SHORT);
+  - sinyal bisa muncul di candle datar (1 kasus, EPICUSDT SHORT, 2 jam sesudah delisting). Sinyal LONG seperti itu di
+    semesta akan masuk evaluasi sebagai trade dengan R kira-kira sebesar −biaya;
+  - harga datar bisa berbeda dari mark price saat delisting: HFTUSDT 0,0238 vs 0,02097 (+13,5%), 11 simbol lainnya
+    ≤ 3,3%. Jadi harga datar belum tentu harga penyelesaian sebenarnya;
+  - penanda "data berhenti sebelum cutoff" di audit adendum 1 tidak pernah menyala untuk simbol delisting, karena candle
+    datar mengisi data sampai cutoff.
+
+### 11.2 Status per simbol-bulan dan "siap evaluasi" (mengganti definisi di §10.2 butir 2)
+
+Setiap audit menulis manifest dengan satu baris per simbol × bulan yang dimuat evaluate: bulan pemanasan, bulan jendela,
+dan bulan kohort Oktober 2025. Cutoff bulanan jatuh pada tanggal 1 pukul 00:00 UTC, jadi semua bulan itu sudah lengkap.
+Pengecualiannya cutoff akhir 2027-11-16 (§4): November 2027 dihitung sampai cutoff dan tidak di-cache oleh dataSource,
+jadi manifest mencatat jumlah candle-nya tanpa SHA-256. Setiap baris punya tepat satu status:
+
+| Status | Arti | Menghalangi evaluasi |
+|---|---|---|
+| `LENGKAP` | Semua candle yang diharapkan ada, tanpa celah | Tidak |
+| `CELAH` | Ada candle hilang saat simbol masih diperdagangkan; jumlahnya dicatat. Count dan evaluate membaca data yang sama | Tidak (dicatat) |
+| `SEBELUM_LISTING` | Seluruh bulan sebelum candle pertama simbol (dari Binance, `startTime=0`) | Tidak |
+| `BULAN_DELISTING` | Bulan yang memuat `deliveryDate`: candle asli sampai delisting, sesudahnya candle datar atau tidak ada candle | Tidak |
+| `SESUDAH_DELISTING` | Seluruh bulan sesudah `deliveryDate`, dengan delisting terverifikasi (lihat bawah) | Tidak |
+| `BELUM_TERSELESAIKAN` | Data hilang atau berhenti sebelum cutoff, atau ada ekor candle datar ≥ 24 candle, tanpa delisting terverifikasi | **Ya** |
+| `GAGAL_DIAMBIL` | Data tidak bisa dimuat dari cache maupun sumber yang diizinkan (§11.4) | **Ya** |
+
+**Delisting terverifikasi** bila dua syarat terpenuhi:
+
+1. exchangeInfo menyebut status selain TRADING dengan `deliveryDate` selain 2100-12-25. Kalau simbol sudah hilang dari
+   exchangeInfo, yang dipakai adalah pengumuman delisting resmi Binance, dicatat di `research-log/al-sa-atr-01/`
+   (tautan, waktu delisting, tanggal dicatat).
+2. Mulai paling lambat 2 candle sesudah waktu delisting, tidak ada lagi candle bervolume: yang ada hanya candle datar
+   bervolume 0, atau tidak ada candle sama sekali.
+
+**Siap evaluasi** bila semua syarat ini terpenuhi:
+
+1. tidak ada baris `BELUM_TERSELESAIKAN` atau `GAGAL_DIAMBIL`;
+2. funding termuat untuk ke-100 simbol;
+3. jumlah trade filter, pelengkap, dan terbuka di audit sama persis dengan laporan `--mode count` dari checkout beku
+   pada cutoff yang sama. Audit membaca JSON count itu; laporan yang tidak ada atau berbeda menghalangi evaluasi;
+4. SHA-256 setiap file cache bulan lengkap tercatat di manifest, dan tidak ada file yang hash-nya berubah dibanding
+   manifest audit sebelumnya. Perubahan menghalangi evaluasi sampai penyebabnya dicatat di §9;
+5. audit dijalankan dari checkout `main` yang bersih (tanpa perubahan yang belum di-commit).
+
+### 11.3 Bulan kosong (mengganti kalimat bulan kosong di §10.2 butir 2)
+
+- File cache bulan kosong hanya boleh ditulis untuk bulan `SEBELUM_LISTING` (aturan §10.2 butir 1, tetap), atau untuk
+  bulan `SESUDAH_DELISTING` yang terverifikasi dan tidak punya candle sama sekali di sumber mana pun (§11.4).
+- Bulan sesudah candle terakhir **tidak pernah** otomatis ditulis kosong. Selama Binance menyajikan candle datar,
+  candle itu dipakai apa adanya, karena itulah yang dibaca kode beku.
+- File yang sudah ada tidak pernah ditimpa.
+
+### 11.4 Sumber data dan konflik (melengkapi §10.2 butir 2)
+
+- **Urutan sumber per simbol-bulan**, ditetapkan sekarang:
+  1. REST Binance USDⓈ-M (`/fapi/v1/klines`, `/fapi/v1/fundingRate`), seperti kode beku;
+  2. bila REST gagal untuk bulan itu: arsip bulanan data.binance.vision (kline 1h dan funding rate USDⓈ-M), dengan
+     SHA-256 ZIP dicocokkan ke file `.CHECKSUM`. Arsip harian dipakai hanya bila arsip bulanan tidak ada;
+  3. bila keduanya tidak punya data: bulan kosong hanya dalam kasus §11.3, selain itu `GAGAL_DIAMBIL`.
+- **Satu sumber per simbol-bulan.** Candle dari sumber berbeda tidak dicampur dalam satu bulan. Bulan yang sudah
+  ter-cache dari REST tetap dipakai walaupun ada celah, karena count memakai file yang sama.
+- **Validasi sebelum ditulis ke cache:** interval tepat 1 jam, openTime di awal jam dan di dalam bulan itu, urut naik
+  tanpa duplikat, closeTime = openTime + 3.599.999 ms, high ≥ max(open, close), low ≤ min(open, close), volume ≥ 0.
+- **Konflik.** Bila kedua sumber tersedia untuk bulan yang sama dan isinya berbeda, yang dipakai REST; jumlah candle yang
+  berbeda dan selisih relatif terbesarnya dicatat di manifest. Sumber tidak pernah dipilih berdasarkan hasil trade.
+  Setiap pengisian dari arsip dicatat di log audit (simbol, bulan, sumber, SHA-256 ZIP dan file cache) sebelum
+  evaluasi.
+
+### 11.5 Versi audit dan log append-only
+
+- **Isi setiap laporan audit:** SHA-256 skrip audit; commit `main` (`git rev-parse HEAD`) dan apakah pohon kerjanya
+  bersih; hash pohon kode `main` dengan fungsi yang sama seperti §8, serta apakah sama dengan hash beku; versi Node; dan
+  SHA-256 serta angka laporan count yang dicocokkan. Path lokal tidak ditulis ke log.
+- **Log.** Laporan dan manifest setiap audit disimpan di `research-log/al-sa-atr-01/` (ter-track git, bukan
+  `reports/`), lalu di-commit dan di-push pada hari yang sama. File log tidak pernah ditimpa. Audit ulang pada cutoff
+  yang sama mendapat akhiran `-r2`, `-r3`, dan seterusnya, dan alasannya ditulis di pesan commit.
+- **Perubahan skrip audit** sesudah audit pertama (2026-12-01) dicatat di `research-log/al-sa-atr-01/PERUBAHAN.md`
+  (tanggal, commit, SHA-256 baru, alasan) sebelum audit berikutnya. Paritas count (§11.2 butir 3) tetap menjadi
+  pengaman: skrip yang berubah tetap harus menghasilkan jumlah trade yang sama dengan kode beku.
+
+### 11.6 Laporan pendamping (melengkapi §10.3)
+
+1. **Nama skenario.** "Kasus terburuk" di §10.3 butir 1 diganti **skenario stop nominal** (−1R dikurangi biaya
+   pulang-pergi dan funding). Kerugian nyata bisa lebih besar dari −1R bila harga melompati stop saat delisting atau
+   likuiditas hilang.
+2. **Trade yang tersentuh delisting.** Audit mencatat, tanpa R, dua jenis trade:
+   - (a) sinyal pada atau sesudah waktu delisting, yaitu sinyal di candle datar;
+   - (b) trade yang entri sebelum waktu delisting dan keluar sesudahnya.
+
+   Sesudah evaluasi, P1–P3 dihitung ulang tiga kali: tanpa trade (a); dengan trade (b) memakai skenario stop nominal;
+   dan dengan trade (b) dinilai pada close mark price 1h terakhir sebelum waktu delisting (`/fapi/v1/markPriceKlines`),
+   dikurangi biaya dan funding. Trade terbuka (§10.3 butir 1) diperlakukan dengan cara yang sama.
+3. **Arti vonis.** Bila salah satu hitungan ulang di butir 2 atau §10.3 butir 1 membalik vonis, vonis formal ditulis
+   bersama catatan **rapuh terhadap delisting**, misalnya "LULUS (rapuh terhadap delisting)". LULUS yang rapuh terhadap
+   delisting atau **dekat batas** (§10.3 butir 4) tidak menjadi dasar untuk memakai modal nyata, walaupun vonis
+   formalnya tetap LULUS (§5).
+
+### 11.7 Rutinitas bulanan (mengganti urutan di §7 butir 3 dan §10.2 butir 1)
+
+1. Di checkout beku: `npm run research:al-sa-atr-01 -- --mode count --to YYYY-MM-01 --cache-dir <main>/data/backtest-cache`.
+2. Dari checkout `main` yang bersih: `npm run research:al-sa-atr-01-audit -- --to YYYY-MM-01 --count-report <JSON count
+   dari langkah 1>`.
+3. Commit dan push `research-log/al-sa-atr-01/` hari itu juga.
+4. Evaluate (§4) hanya dijalankan bila audit pada cutoff yang sama berstatus siap evaluasi.
+
+### 11.8 Yang tidak berubah
+
+- **Kode beku tetap membaca candle datar sebagai data.** Trade (a) dan (b) tetap masuk vonis formal; adendum ini hanya
+  mengukur dampaknya.
+- **Desain uji tetap.** Semesta, n wajib, kriteria, bootstrap, dan aturan berhenti tidak berubah.
