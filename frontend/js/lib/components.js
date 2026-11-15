@@ -1,5 +1,6 @@
 // Komponen UI yang dapat dipakai ulang. Semua merender lewat h() (aman XSS).
 import { h, icon } from './dom.js';
+import { attachScrollHint } from './scrollHint.js';
 
 export function page({ title, subtitle, actions }, ...content) {
   return h('section', { class: 'page' },
@@ -313,11 +314,11 @@ export function dataTable({ columns, rows, empty, initialSort, compact = false, 
 
   updateHeader();
   renderBody();
-  return h('div', null,
-    h('div', { class: 'table-wrap' },
-      h('table', { class: compact ? 'table table--compact' : 'table' },
-        caption && h('caption', { class: 'sr-only' }, caption), thead, tbody)),
-    emptyHost);
+  const wrap = h('div', { class: 'table-wrap' },
+    h('table', { class: compact ? 'table table--compact' : 'table' },
+      caption && h('caption', { class: 'sr-only' }, caption), thead, tbody));
+  attachScrollHint(wrap);
+  return h('div', null, wrap, emptyHost);
 }
 
 /**

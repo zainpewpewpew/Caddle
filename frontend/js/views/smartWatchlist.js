@@ -4,6 +4,7 @@ import { ApiError, api } from '../lib/api.js';
 import { badge, callout, emptyState, page, panel, selectField, toast, toggle } from '../lib/components.js';
 import { h, icon } from '../lib/dom.js';
 import { formatRelative, formatTime } from '../lib/format.js';
+import { attachScrollHint } from '../lib/scrollHint.js';
 import {
   chainBadge, disclaimerBox, loadable, metaHeader, simBadge, txLink, walletLink,
 } from './smartMoneyCommon.js';
@@ -107,6 +108,7 @@ function alertsSection() {
     h('div', { class: 'field sm-toolbar__switch' }, toggle({ name: 'unread', label: 'Hanya belum dibaca', checked: true })),
     selectField({ label: 'Jenis', name: 'kind', options: [{ value: '', label: 'Semua' }, ...ALERT_KINDS.map((k) => ({ value: k, label: alertKindLabel(k) }))] }));
   filters.addEventListener('submit', (e) => e.preventDefault());
+  attachScrollHint(filters);
   const unreadBadge = badge('0 belum dibaca');
   const metaHost = h('div');
 

@@ -114,6 +114,31 @@ test('E2E-UI-005 SHORT Scanner berlabel eksperimental dengan peringatan hasil ba
   expect(errors).toEqual([]);
 });
 
+test('E2E-UI-006 penanda geser: tabel & filter yang lebih lebar dari layar memudar di tepi, mengikuti posisi geser', async ({ page, isMobile }) => {
+  const errors = watchErrors(page);
+  await signIn(page);
+  await page.goto('/#/screener');
+  const wrap = page.getByTestId('screener-results').locator('.table-wrap');
+  const filters = page.locator('form.toolbar');
+  await expect(wrap).toBeVisible();
+  if (!isMobile) {
+    // Desktop: tabel kandidat dan filter muat → tanpa penanda.
+    await expect(wrap).not.toHaveAttribute('data-overflow');
+    await expect(filters).not.toHaveAttribute('data-overflow');
+    expect(errors).toEqual([]);
+    return;
+  }
+  await expect(wrap).toHaveAttribute('data-overflow', 'end');
+  await expect(filters).toHaveAttribute('data-overflow', 'end');
+  await wrap.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+  await expect(wrap).toHaveAttribute('data-overflow', 'start');
+  await wrap.evaluate((el) => { el.scrollLeft = Math.round((el.scrollWidth - el.clientWidth) / 2); });
+  await expect(wrap).toHaveAttribute('data-overflow', 'start end');
+  // Tepinya benar-benar memudar lewat mask CSS, bukan hanya berganti atribut.
+  expect(await wrap.evaluate((el) => getComputedStyle(el).getPropertyValue('mask-image'))).toContain('linear-gradient');
+  expect(errors).toEqual([]);
+});
+
 test('E2E-SET-001 admin menyimpan pengaturan; validasi klien menolak input tidak valid', async ({ page }) => {
   await signIn(page);
   await page.goto('/#/settings');

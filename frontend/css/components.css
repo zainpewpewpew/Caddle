@@ -763,6 +763,29 @@ textarea.input {
   max-width: 100%;
 }
 
+/* Penanda geser horizontal (lib/scrollHint.js): tepi memudar selama masih ada konten tersembunyi ke arah itu dan
+   hilang di ujung. Ponsel menyembunyikan scrollbar, jadi tanpa penanda kolom di kanan mudah terlewat. Mask hanya
+   memakai kanal alfa, jadi warnanya tidak mengikuti tema. */
+.table-wrap[data-overflow],
+.toolbar[data-overflow] {
+  --lr-scroll-fade: 32px;
+}
+
+.table-wrap[data-overflow="end"],
+.toolbar[data-overflow="end"] {
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--lr-scroll-fade)), transparent);
+}
+
+.table-wrap[data-overflow="start"],
+.toolbar[data-overflow="start"] {
+  mask-image: linear-gradient(to left, #000 calc(100% - var(--lr-scroll-fade)), transparent);
+}
+
+.table-wrap[data-overflow="start end"],
+.toolbar[data-overflow="start end"] {
+  mask-image: linear-gradient(to right, transparent, #000 var(--lr-scroll-fade), #000 calc(100% - var(--lr-scroll-fade)), transparent);
+}
+
 .table {
   width: 100%;
   font-size: var(--lr-text-sm);

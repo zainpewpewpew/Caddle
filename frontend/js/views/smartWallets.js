@@ -5,6 +5,7 @@ import { badge, callout, dataTable, emptyState, page, panel, score, selectField,
 import { h, icon } from '../lib/dom.js';
 import { formatInteger, formatRelative, formatTime } from '../lib/format.js';
 import { hashQuery } from '../lib/router.js';
+import { attachScrollHint } from '../lib/scrollHint.js';
 import {
   chainBadge, componentBars, copyButton, disclaimerBox, externalLink, flagChips, labelChips, loadable, metaHeader,
   noSourceState, simBadge, textList, tokenLink, txLink, typeBadge, usdText, walletLink, watchButton,
@@ -68,6 +69,7 @@ export async function smartWalletsView() {
     h('div', { class: 'field sm-toolbar__switch' }, toggle({ name: 'eligible', label: 'Hanya eligible', checked: true })),
     h('div', { class: 'field sm-toolbar__switch' }, toggle({ name: 'includeFlagged', label: 'Tampilkan wallet ber-flag', checked: false })));
   form.addEventListener('submit', (e) => e.preventDefault());
+  attachScrollHint(form);
   const count = badge('0 wallet');
   const metaHost = h('div');
   const readFilters = () => ({

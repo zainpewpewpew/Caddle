@@ -2,6 +2,7 @@ import { api } from '../lib/api.js';
 import { badge, callout, dataTable, emptyState, page, panel, score, selectField } from '../lib/components.js';
 import { h } from '../lib/dom.js';
 import { formatTime } from '../lib/format.js';
+import { attachScrollHint } from '../lib/scrollHint.js';
 import { DATA_REFRESH_MS, priceCell, priceSortValue, reportDataRefresh } from './liveData.js';
 import {
   alignmentBadge, confluenceFieldsOf, confluenceValue, directionOf, formatWinProbability, meetsMinTier, patternBadge,
@@ -381,6 +382,7 @@ export function createScannerSection(ctx, direction, { onLoaded, reportRefresh =
     selectField({ label: 'Skor minimum', name: 'minScore', options: MIN_SCORE_OPTIONS }),
     tierField,
   );
+  attachScrollHint(filters); // ponsel: baris filter dapat digeser (components.css)
 
   const count = badge('0 hasil');
   const host = h('div', { 'data-testid': cfg.testId });

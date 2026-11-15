@@ -11,6 +11,7 @@ import { badge, dataTable, emptyState, page, panel, segmented, selectField, togg
 import { h, icon } from '../lib/dom.js';
 import { formatRelative, formatTime } from '../lib/format.js';
 import { hashQuery } from '../lib/router.js';
+import { attachScrollHint } from '../lib/scrollHint.js';
 import {
   addressLink, binanceBadge, chainBadge, componentBars, disclaimerBox, externalLink, labelChips, loadable, meter,
   metaHeader, noSourceState, simBadge, stateBadge, textList, txLink, typeBadge, usdText, watchButton,
@@ -290,6 +291,7 @@ export async function smartMoneyView(ctx) {
     h('div', { class: 'field sm-toolbar__switch' }, toggle({ name: 'linked', label: 'Hanya yang terhubung ke Binance', checked: initial.linked })));
   setSelect(form, 'chain', initial.chain);
   form.addEventListener('submit', (e) => e.preventDefault());
+  attachScrollHint(form);
 
   const count = badge('0 token');
   const metaHost = h('div');
