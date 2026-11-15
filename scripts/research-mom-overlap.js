@@ -23,6 +23,7 @@ import { cappedDistance, collectMomData, distanceBin } from './research-mom-powe
 import {
   DOCS27_IN_UNIVERSE, Z_ONE, Z_TWO, monthsForUpperBound, rollingWindows, upperBoundPower,
 } from './research-mom-sim.js';
+import { assertBeforeMomWindow } from './research-window-guard.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const COVARIATES = Object.freeze(['pre', 'pos', 'atr', 'dist']);
@@ -465,6 +466,7 @@ async function main(argv) {
   });
   const from = day(v.from, 'from');
   const to = day(v.to, 'to');
+  assertBeforeMomWindow(to);
   if (from >= to) throw new RangeError('--from harus sebelum --to');
   const reps = Number(v.reps);
   if (!Number.isInteger(reps) || reps < 100) throw new RangeError('--reps harus bilangan bulat ≥ 100');

@@ -18,6 +18,7 @@ import { DEFAULT_CACHE_DIR } from '../backend/backtest/dataSource.js';
 import { AL_SA_ATR_01 } from '../backend/research/alSaAtr01.js';
 import { matchAlerts, movingBlockBootstrapDiff, movingBlockBootstrapMean } from '../backend/research/matchedBaseline.js';
 import { MOM_DESIGN, collectMomData, distanceBin } from './research-mom-power.js';
+import { assertBeforeMomWindow } from './research-window-guard.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 export const Z_TWO = 1.959964; // batas atas CI 95% dua sisi (α satu sisi 2,5%), sama dengan docs/25–27
@@ -365,6 +366,7 @@ async function main(argv) {
   });
   const from = day(v.from, 'from');
   const to = day(v.to, 'to');
+  assertBeforeMomWindow(to);
   if (from >= to) throw new RangeError('--from harus sebelum --to');
   const started = Date.now();
   let acc;

@@ -162,6 +162,8 @@ Kontrak lengkap: [docs/07-kontrak-modul.md](docs/07-kontrak-modul.md) §6–§9.
 | `npm run research:mom-power` | Bahan desain AL-MOM-01 (SA/PVA vs momentum murni): selisih alert vs pembanding strata untuk gerak 12 candle (A) dan trade dengan stop 1,5 ATR identik (B), lalu daya uji per lama jendela; data cache historis, laporan di `reports/research/` ([docs/27](docs/27-bahan-desain-al-mom-01.md)). Angka 31 koin docs/27 diulang dengan `--symbols` daftar 31 koin itu |
 | `npm run research:mom-sim` | Simulasi daya AL-MOM-01 di 100 koin semesta AL-SA-ATR-01 (docs/27 §7): SE langsung per jendela 12/24 bulan, efek desain lintas simbol, kovariat jarak alert, jangkar biaya, daya uji batas atas satu/dua sisi. `--save-acc`/`--load-acc` menyimpan agregat supaya analisis bisa diulang tanpa replay |
 | `npm run research:mom-overlap` | Diagnostik overlap & bootstrap AL-MOM-01 (docs/27 §9): cakupan pencocokan (dasar, strata + jarak, fallback), ciri alert tanpa pembanding, SMD kovariat, serta bootstrap blok yang mengambil ulang pembanding per replikasi vs bootstrap alert saja. Data historis 100 koin; `--save-acc`/`--load-acc` (gzip) |
+| `npm run research:al-mom-01 -- --mode validate --from YYYY-MM-DD --to YYYY-MM-DD` / `--mode count --to YYYY-MM-DD` / `--mode evaluate --to 2028-11-16` | Runner AL-MOM-01 (draf; pembekuan ditunda, [docs/28](docs/28-kunci-inti-al-mom-01.md) §9.1, audit [docs/29](docs/29-audit-implementasi-al-mom-01.md)): `validate` hanya data sebelum 2026-11-16 dari cache; `count` jumlah observasi & integritas data tanpa hasil A/B (log append-only di `research-log/al-mom-01/`); `evaluate` sekali saja sesudah cutoff 2028-11-16, ditolak bila belum ada hash beku di docs/28 §9 atau hash pohon berbeda, pohon kerja kotor, data belum beres, atau log evaluasi sudah ada |
+| `npm run research:al-mom-01-coverage -- --sims 1000 --scenarios dasar0,dasar025` | Simulasi coverage AL-MOM-01 pada data sintetis dengan fungsi runner beku: bias, SE empiris vs bootstrap, coverage, galat tipe I superioritas & batas atas, per metode bootstrap dan skenario stres (korelasi, serial, alert tak merata, strata sedikit, ekor tebal, momentum). Worker thread; data seluruhnya sintetis |
 | `npm run lint` | ESLint |
 | `npm test` | Seluruh tes Vitest |
 | `npm run test:e2e` | Tes Playwright (desktop & mobile) |
@@ -183,7 +185,7 @@ backend/
   ingestion/    klien REST/WebSocket Binance (DNS-over-HTTPS khusus host Binance), validasi candle, discovery, backfill
   indicators/   EMA, ATR, RVOL, swing (fungsi murni)
   research/     formulasi & studi riset (BSV-1h, timing sinyal, pembanding dicocokkan, praregistrasi AL-SA-ATR-01);
-                tidak dipakai worker/scanner live (docs/23–28)
+                tidak dipakai worker/scanner live (docs/23–29)
   patterns/     detektor SA & PVA (LONG) serta SD & PVD (SHORT, cermin SA/PVA) berversi
   timeframe/    trend & alignment multi-timeframe
   scoring/      skor, risk flag, penjelasan

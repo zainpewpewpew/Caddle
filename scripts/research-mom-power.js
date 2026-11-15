@@ -28,6 +28,7 @@ import {
 import { breakoutFlags, timingAt } from '../backend/research/signalTiming.js';
 import { exclusionMask } from './research-matched-exclusion.js';
 import { loadCached } from './research-timing.js';
+import { assertBeforeMomWindow } from './research-window-guard.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const LOOK = 12;
@@ -328,6 +329,7 @@ async function main(argv) {
   });
   const from = day(v.from, 'from');
   const to = day(v.to, 'to');
+  assertBeforeMomWindow(to);
   if (from >= to) throw new RangeError('--from harus sebelum --to');
   const symbols = v.symbols ? v.symbols.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean) : null;
   const started = Date.now();
