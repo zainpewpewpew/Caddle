@@ -182,6 +182,10 @@ menambah prosedur data yang tidak membaca R, serta laporan pendamping yang bukan
 
    Jumlah trade filter dan pelengkap hasil audit harus sama dengan count. Kalau berbeda, auditnya salah dan diperbaiki
    sebelum evaluasi. Paritas ini sudah dicek pada uji asap (filter 11, pelengkap 8, terbuka 0, sama dengan skrip beku).
+
+   Skrip audit tidak ada di commit beku, jadi audit dijalankan dari `main`. Count dan evaluate tetap dijalankan dari
+   checkout commit beku. Keduanya memakai folder cache yang sama: dari checkout beku, beri `--cache-dir` yang menunjuk ke
+   `data/backtest-cache` milik checkout `main`.
 2. **Sebelum evaluasi tunggal**, audit pada cutoff evaluasi harus berstatus "siap evaluasi": kline, funding, dan bulan
    kohort ke-100 simbol termuat. Kalau ada simbol yang gagal karena delisting, data yang hilang diisi ke cache sebagai
    deviasi yang diizinkan §7. Sumbernya hanya dua: REST Binance lewat commit lain, atau arsip publik Binance

@@ -2,7 +2,8 @@
 // scanner live. File ini DI LUAR hash pohon beku (docs/26 §8), jadi tidak dapat memengaruhi P0–P4. Audit ini TIDAK
 // menghitung atau menampilkan R, win rate, atau hasil trade apa pun.
 //
-// Pakai (setiap tanggal 1, dengan cutoff yang sama seperti `--mode count`, di checkout yang sama):
+// Pakai (setiap tanggal 1, cutoff sama dengan `--mode count`). Skrip ini tidak ada di commit beku, jadi dijalankan
+// dari `main`; count/evaluate tetap dari checkout commit beku dengan folder cache yang sama (`--cache-dir`):
 //   npm run research:al-sa-atr-01-audit -- --to 2026-12-01
 //
 // Per simbol beku:
