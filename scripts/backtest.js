@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { HIGHER_TIMEFRAMES } from '../backend/market/contracts.js';
 import { BACKTEST_USAGE, parseBacktestArgs } from './lib/backtestArgs.js';
+import { assertNoProtectedCandles, confirmUnlock } from './lib/protectedPeriod.js';
 
 const RUNNER_URL = new URL('../backend/backtest/runner.js', import.meta.url);
 const SYNTHETIC_URL = new URL('../backend/backtest/synthetic.js', import.meta.url);
@@ -118,11 +119,15 @@ async function loadDataset(args) {
     const map = {};
     const files = await expandCsvPaths(args.csv);
     if (files.length === 0) throw new Error('Tidak ada file CSV ditemukan');
+    const cutoff = args.protectedPeriod?.cutoff ?? null;
     for (const file of files) {
       const candles = await ds.loadFromCsv(file);
-      const filtered = args.rangeExplicit ? candles.filter((c) => c.openTime >= args.from && c.openTime < args.to) : candles;
+      const ranged = args.rangeExplicit ? candles.filter((c) => c.openTime >= args.from && c.openTime < args.to) : candles;
+      // Periode terlindungi (docs/29 §19): candle ≥ cutoff dibuang juga bila --to tidak diberikan.
+      const filtered = cutoff === null ? ranged : ranged.filter((c) => c.openTime < cutoff);
       mergeCandles(map, filtered);
-      log(`CSV ${file}: ${filtered.length} candle`);
+      const dropped = ranged.length - filtered.length;
+      log(`CSV ${file}: ${filtered.length} candle${dropped ? ` (${dropped} candle periode terlindungi dibuang)` : ''}`);
     }
     return finalizeCandles(map);
   }
@@ -157,10 +162,10 @@ function timestampSlug(ms) {
 /**
  * Jalankan CLI.
  * @param {string[]} argv
- * @param {{ loadRunner?: () => Promise<{ runBacktest?: Function }|null> }} [deps] injeksi untuk tes
+ * @param {{ loadRunner?: () => Promise<{ runBacktest?: Function }|null>, confirm?: () => Promise<boolean> }} [deps] injeksi untuk tes
  * @returns {Promise<number>} kode keluar
  */
-export async function main(argv = process.argv.slice(2), { loadRunner = () => importOptional(RUNNER_URL) } = {}) {
+export async function main(argv = process.argv.slice(2), { loadRunner = () => importOptional(RUNNER_URL), confirm = confirmUnlock } = {}) {
   let args;
   try {
     args = parseBacktestArgs(argv);
@@ -173,6 +178,12 @@ export async function main(argv = process.argv.slice(2), { loadRunner = () => im
     process.stdout.write(BACKTEST_USAGE);
     return 0;
   }
+  const guard = args.protectedPeriod;
+  if (guard.unlocked && !(await confirm())) {
+    log('Periode terlindungi tidak dibuka; backtest dibatalkan.');
+    return 2;
+  }
+  if (guard.clipped) log(`Periode terlindungi: --to bawaan dipotong ke ${new Date(guard.to).toISOString().slice(0, 10)} karena timeframe 1h ikut dijalankan (docs/29 §19).`);
 
   const runner = await loadRunner();
   if (!runner?.runBacktest) {
@@ -187,6 +198,7 @@ export async function main(argv = process.argv.slice(2), { loadRunner = () => im
     log('Tidak ada data candle untuk dijalankan.');
     return 1;
   }
+  if (guard.applies && !guard.unlocked) assertNoProtectedCandles(candles, args.timeframes, guard.cutoff);
 
   const result = await runner.runBacktest({
     candles,                      // { [symbol]: { [timeframe]: Candle[] } } — termasuk timeframe konteks (HTF)
@@ -213,6 +225,7 @@ export async function main(argv = process.argv.slice(2), { loadRunner = () => im
     generatedAt: startedAt, source: args.source, symbols, timeframes: args.timeframes, from: args.from, to: args.to,
     targetR: args.targetR, maxBars: args.maxBars, folds: args.folds, embargoBars: args.embargoBars,
     ...(args.source === 'synthetic' ? { seed: args.seed } : {}),
+    protectedPeriod: { from: guard.from, applies: guard.applies, clipped: guard.clipped, unlocked: guard.unlocked },
     ...result.meta,
   };
 

@@ -16,14 +16,13 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { DEFAULT_CACHE_DIR } from '../backend/backtest/dataSource.js';
 import { AL_SA_ATR_01 } from '../backend/research/alSaAtr01.js';
 import { DAY_MS, matchAlerts, movingBlockBootstrapMean } from '../backend/research/matchedBaseline.js';
 import { cappedDistance, collectMomData, distanceBin } from './research-mom-power.js';
 import {
   DOCS27_IN_UNIVERSE, Z_ONE, Z_TWO, monthsForUpperBound, rollingWindows, upperBoundPower,
 } from './research-mom-sim.js';
-import { assertBeforeMomWindow } from './research-window-guard.js';
+import { RESEARCH_SNAPSHOT_DIR, assertBeforeMomWindow } from './research-window-guard.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const COVARIATES = Object.freeze(['pre', 'pos', 'atr', 'dist']);
@@ -459,7 +458,7 @@ async function main(argv) {
     args: argv,
     options: {
       from: { type: 'string', default: '2024-01-01' }, to: { type: 'string', default: '2026-10-01' },
-      'cache-dir': { type: 'string', default: DEFAULT_CACHE_DIR }, out: { type: 'string', default: join(ROOT, 'reports', 'research') },
+      'cache-dir': { type: 'string', default: RESEARCH_SNAPSHOT_DIR }, out: { type: 'string', default: join(ROOT, 'reports', 'research') },
       'save-acc': { type: 'string' }, 'load-acc': { type: 'string' }, reps: { type: 'string', default: '2000' },
     },
     strict: true,

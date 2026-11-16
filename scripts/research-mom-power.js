@@ -17,7 +17,6 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { DEFAULT_CACHE_DIR } from '../backend/backtest/dataSource.js';
 import { labelTrade } from '../backend/backtest/labeler.js';
 import { BACKTEST_WARMUP, replaySeries } from '../backend/backtest/runner.js';
 import { atr } from '../backend/indicators/index.js';
@@ -28,7 +27,7 @@ import {
 import { breakoutFlags, timingAt } from '../backend/research/signalTiming.js';
 import { exclusionMask } from './research-matched-exclusion.js';
 import { loadCached } from './research-timing.js';
-import { assertBeforeMomWindow } from './research-window-guard.js';
+import { RESEARCH_SNAPSHOT_DIR, assertBeforeMomWindow } from './research-window-guard.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const LOOK = 12;
@@ -323,7 +322,7 @@ async function main(argv) {
     args: argv,
     options: {
       symbols: { type: 'string' }, from: { type: 'string', default: '2024-01-01' }, to: { type: 'string', default: '2026-10-01' },
-      'cache-dir': { type: 'string', default: DEFAULT_CACHE_DIR }, out: { type: 'string', default: join(ROOT, 'reports', 'research') },
+      'cache-dir': { type: 'string', default: RESEARCH_SNAPSHOT_DIR }, out: { type: 'string', default: join(ROOT, 'reports', 'research') },
     },
     strict: true,
   });

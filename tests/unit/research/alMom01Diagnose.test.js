@@ -118,4 +118,47 @@ describe('Diagnostik AL-MOM-01', () => {
     await expect(X.historical({ from: Date.UTC(2026, 0, 1), to: Date.UTC(2026, 10, 17), cacheDir: '/nonexistent', replayCache: '/nonexistent/x.json' }))
       .rejects.toThrow(/2026-11-16/);
   });
+  it('UNIT-MOM01-026 rezim padat: stressEnter 0 = DGP lama; hazard episode mengubah jumlah alert; lapisan rezim tetap antar-inovasi', () => {
+    const base = { ...C.SCENARIOS.dasar0, symbols: 4, days: 90 };
+    const count = (sc, seed, innovationSeed = null) => {
+      let n = 0;
+      C.simulateMarket(sc, seed, (s) => { n += s.v3Idx.length; }, { innovationSeed });
+      return n;
+    };
+    expect(count({ ...base, stressEnter: 0, stressHazard: 50, stressBeta2: 0.9, stressVol: 3 }, 11)).toBe(count(base, 11));
+    const ep = { ...base, stressEnter: 0.2, stressExit: 0.2, stressBeta2: 0.75, stressVol: 1.6 };
+    expect(count({ ...ep, stressHazard: 3 }, 11)).toBeGreaterThan(count({ ...ep, stressHazard: 0.2 }, 11));
+    // Skenario rezim konfirmasi ada dan berpasangan (efek 0 / ≈ margin), 100 simbol, blok 7 hari.
+    for (const n of ['rezimHistoris100', 'rezimPadat100', 'takMerata100']) {
+      expect(C.SCENARIOS[n]).toMatchObject({ symbols: 100, blocks: [7], delta: 0 });
+      expect(C.SCENARIOS[`${n}M`]).toMatchObject({ symbols: 100, blocks: [7], delta: 0.25, calibrate: 0.25 });
+    }
+    expect(C.SCENARIOS.rezimHistoris100.stressHazard).toBeLessThan(1);
+    expect(C.SCENARIOS.rezimPadat100.stressHazard).toBeGreaterThan(1);
+  });
+
+  it('UNIT-MOM01-027 ciri rezim: korelasi subset dinormalisasi varians subset; hari bergejolak vs hari padat alert', () => {
+    const D = 20;
+    const acc = X.createAccumulator({ from: 0, to: D * 24 * 3_600_000 });
+    // Hari 0–2: gejolak besar, 4 simbol bergerak sama (korelasi 1). Hari lain: tenang, pola ±a (korelasi −1/3).
+    for (let h = 0; h < D * 24; h += 1) {
+      const d = Math.floor(h / 24);
+      const a = d < 3 ? 3 : 0.5;
+      const z = d < 3 ? [a, a, a, a] : [a, -a, a, -a];
+      acc.cross.hS[h] = z.reduce((s, x) => s + x, 0);
+      acc.cross.hQ[h] = z.reduce((s, x) => s + x * x, 0);
+      acc.cross.hN[h] = 4;
+    }
+    // Alert hanya di hari tenang 10–12 (padat), satu per hari di hari lain yang tenang.
+    for (let d = 3; d < D; d += 1) for (let k = 0; k < (d >= 10 && d < 13 ? 5 : 1); k += 1) acc.alerts.push({ day: d, matched: d !== 11, N: 4 });
+    const g = X.regimeCharacter(acc, D, 0.15);
+    expect(g.volCorrTop).toBeCloseTo(1, 12);
+    expect(g.volCorrRest).toBeCloseTo(-1 / 3, 12);
+    expect(g.volAlertShareTop).toBe(0);
+    expect(g.alertCorrTop).toBeCloseTo(-1 / 3, 12);
+    expect(g.alertAlertShareTop).toBeCloseTo(15 / 29, 12);
+    expect(g.alertMatchedTop).toBeCloseTo(10 / 15, 12);
+    expect(g.corrAll).toBeGreaterThan(-1 / 3);
+    expect(g.corrAll).toBeLessThan(1);
+  });
 });

@@ -20,7 +20,6 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { DEFAULT_CACHE_DIR } from '../backend/backtest/dataSource.js';
 import { BACKTEST_WARMUP, replaySeries } from '../backend/backtest/runner.js';
 import { atr } from '../backend/indicators/index.js';
 import {
@@ -30,7 +29,7 @@ import {
 import { breakoutFlags, timingAt } from '../backend/research/signalTiming.js';
 import { OUTCOMES, verdictOf } from './research-matched.js';
 import { TIMING_COMBOS, loadCached } from './research-timing.js';
-import { assertBeforeMomWindow } from './research-window-guard.js';
+import { RESEARCH_SNAPSHOT_DIR, assertBeforeMomWindow } from './research-window-guard.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SCRIPT = fileURLToPath(import.meta.url);
@@ -301,7 +300,7 @@ async function main(argv) {
     args: argv,
     options: {
       symbols: { type: 'string' }, from: { type: 'string', default: '2024-01-01' }, to: { type: 'string', default: '2026-10-01' },
-      'cache-dir': { type: 'string', default: DEFAULT_CACHE_DIR }, out: { type: 'string', default: join(ROOT, 'reports', 'research') },
+      'cache-dir': { type: 'string', default: RESEARCH_SNAPSHOT_DIR }, out: { type: 'string', default: join(ROOT, 'reports', 'research') },
       jobs: { type: 'string', default: '4' }, worker: { type: 'boolean', default: false }, records: { type: 'string' },
     },
     strict: true,

@@ -3,6 +3,7 @@
 import { parseArgs } from 'node:util';
 import { LABEL_DEFAULTS } from '../../backend/backtest/labeler.js';
 import { TIMEFRAMES } from '../../backend/market/contracts.js';
+import { UNLOCK_OPTION, applyProtectedPeriod } from './protectedPeriod.js';
 
 export const BACKTEST_USAGE = `Pemakaian: npm run backtest -- [opsi]
 
@@ -16,7 +17,11 @@ Sumber data (pilih satu; bawaan Binance REST dengan cache di data/backtest-cache
 Opsi:
   --timeframes 15m,1h         timeframe dasar (pilihan: ${TIMEFRAMES.join(', ')}; bawaan 15m,1h)
   --from 2024-01-01           awal rentang (UTC, inklusif; bawaan 2024-01-01)
-  --to 2025-10-01             akhir rentang (UTC, eksklusif; bawaan sekarang)
+  --to 2025-10-01             akhir rentang (UTC, eksklusif; bawaan sekarang). Periode terlindungi: untuk timeframe 1h
+                              (Binance/CSV) data ≥ 2026-11-16 adalah data uji AL-SA-ATR-01/AL-MOM-01, jadi --to bawaan
+                              dipotong ke 2026-11-16 dan --to/--from sesudahnya ditolak (docs/28 §8, docs/29 §19)
+  --buka-periode-terlindungi  buka periode itu; butuh konfirmasi ketik di terminal interaktif, dan pelanggaran
+                              protokol wajib dicatat di docs/28 §10
   --target-r 2                target dalam kelipatan risiko (R)
   --max-bars 48               batas waktu trade (candle)
   --fee-bps ${String(LABEL_DEFAULTS.feeBps).padEnd(18)}fee per sisi dalam bps (bawaan = taker Binance Futures VIP 0, 0,05%)
@@ -65,6 +70,7 @@ const OPTIONS = Object.freeze({
   entry: { type: 'string', default: 'next-open' },
   'max-cost-r': { type: 'string', default: '0.15' },
   'calibration-method': { type: 'string', default: 'platt' },
+  [UNLOCK_OPTION]: { type: 'boolean', default: false },
   help: { type: 'boolean', short: 'h', default: false },
 });
 
@@ -152,8 +158,10 @@ export function parseBacktestArgs(argv, { now = Date.now() } = {}) {
   if (badTf) throw new TypeError(`Timeframe tidak didukung: ${badTf.slice(0, 16)} (pilihan: ${TIMEFRAMES.join(', ')})`);
 
   const from = date('from', v.from ?? DEFAULT_FROM);
-  const to = v.to !== undefined ? date('to', v.to) : now;
-  if (from >= to) throw new RangeError('--from harus sebelum --to');
+  const requestedTo = v.to !== undefined ? date('to', v.to) : now;
+  if (from >= requestedTo) throw new RangeError('--from harus sebelum --to');
+  const protectedPeriod = applyProtectedPeriod({ source, timeframes, from, to: requestedTo, toExplicit: v.to !== undefined, unlock: v[UNLOCK_OPTION] });
+  const { to } = protectedPeriod;
 
   const maxBars = number('max-bars', v['max-bars'], { integer: true, min: 1, max: 1000 });
   const outDir = String(v.out).trim();
@@ -186,5 +194,6 @@ export function parseBacktestArgs(argv, { now = Date.now() } = {}) {
     entry: entryMode(v.entry),
     maxCostR: number('max-cost-r', v['max-cost-r'], { min: 0.01, max: 5 }),
     calibrationMethod: calibrationMethod(v['calibration-method']),
+    protectedPeriod,
   };
 }

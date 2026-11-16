@@ -12,6 +12,7 @@
 //               leave-one-out), dibandingkan dengan estimator plug-in pada sampel yang sama.
 //   landmark    diagnostik landmark waktu keputusan lintas simbol (usulan pelengkap; estimand berbeda).
 //   levels      titik estimasi tiap level pembanding docs/28 §4 (utama, dasar, halus, lampau), komponen dasar & drift.
+//   describe    ciri DGP saja (return, alert, strata, rezim, pasangan) tanpa bootstrap/CI: kalibrasi skenario docs/29 §21.
 //
 // Pakai:
 //   node scripts/research-al-mom-01-diagnose.js --mode historical
@@ -25,7 +26,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
-import { DEFAULT_CACHE_DIR, loadFromBinance } from '../backend/backtest/dataSource.js';
+import { loadFromBinance } from '../backend/backtest/dataSource.js';
 import { mulberry32 } from '../backend/backtest/eventStudy.js';
 import { replaySeries } from '../backend/backtest/runner.js';
 import { atr } from '../backend/indicators/index.js';
@@ -35,7 +36,7 @@ import {
   ratioSeries, runBootstrap,
 } from './research-al-mom-01.js';
 import * as COV from './research-al-mom-01-coverage.js';
-import { assertBeforeMomWindow } from './research-window-guard.js';
+import { RESEARCH_SNAPSHOT_DIR, assertBeforeMomWindow } from './research-window-guard.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SELF = fileURLToPath(import.meta.url);
@@ -178,12 +179,12 @@ export function addReturnStats(acc, candles, atrValues, symbolIndex = 0) {
   return out;
 }
 
-/** Korelasi rata-rata antarsimbol dari akumulator terstandar. */
-export function crossCorrelation(S, Q, N) {
+/** Korelasi rata-rata antarsimbol dari akumulator terstandar (opsional hanya jam dengan keep(h) benar). */
+export function crossCorrelation(S, Q, N, keep = null) {
   let num = 0;
   let den = 0;
   for (let h = 0; h < S.length; h += 1) {
-    if (N[h] < 2) continue;
+    if (N[h] < 2 || (keep && !keep(h))) continue;
     num += S[h] * S[h] - Q[h];
     den += N[h] * (N[h] - 1);
   }
@@ -244,7 +245,7 @@ export function addStrataStructure(acc, rec, sym = 0) {
     for (const ka of list) {
       const ia = rec.i[ka];
       const da = rec.day[ka];
-      const row = { matched: cs.length > 0, N: cs.length, days, y: rec.y[ka], d: rec.d[ka] };
+      const row = { matched: cs.length > 0, N: cs.length, days, y: rec.y[ka], d: rec.d[ka], day: da };
       if (cs.length) {
         let nDay = 0;
         let nWeek = 0;
@@ -293,6 +294,70 @@ export function addStrataStructure(acc, rec, sym = 0) {
   }
 }
 
+/**
+ * Ciri rezim pasar (docs/29 §21, kalibrasi skenario "rezim padat"), tanpa hasil apa pun: hari diurutkan menurut
+ * volatilitas pasar harian √Σ_h m_h² (m_h = rata-rata return terstandar antarsimbol pada jam h); `topShare` hari teratas
+ * = hari bergejolak. Dibandingkan: korelasi antarsimbol 1 jam, porsi alert (konsentrasi), dan porsi alert berpembanding.
+ */
+export function regimeCharacter(acc, D, topShare = 0.15) {
+  const C = acc.cross;
+  const day0 = Math.floor(acc.from / DAY_MS);
+  const vol = new Float64Array(D);
+  const hoursIn = new Float64Array(D);
+  for (let h = 0; h < C.hS.length; h += 1) {
+    if (C.hN[h] < 2) continue;
+    const d = Math.floor((acc.from + h * H) / DAY_MS) - day0;
+    if (d < 0 || d >= D) continue;
+    const m = C.hS[h] / C.hN[h];
+    vol[d] += m * m;
+    hoursIn[d] += 1;
+  }
+  const valid = [...Array(D).keys()].filter((d) => hoursIn[d] >= 12);
+  if (valid.length < 20) return null;
+  const inValid = new Set(valid);
+  const dayOfHour = (h) => Math.floor((acc.from + h * H) / DAY_MS) - day0;
+  const alertsOn = new Float64Array(D);
+  for (const r of acc.alerts) if (inValid.has(r.day - day0)) alertsOn[r.day - day0] += 1;
+  // Korelasi subset = kovarians rata-rata antarpasangan ÷ varians rata-rata pada subset yang sama (return distandarkan
+  // dengan SD seluruh sampel, jadi pembagian dengan varians subset perlu agar hari bergejolak tidak tampak "> 1").
+  const corrOn = (days) => {
+    let num = 0;
+    let pairs = 0;
+    let q = 0;
+    let n = 0;
+    for (let h = 0; h < C.hS.length; h += 1) {
+      if (C.hN[h] < 2 || !days.has(dayOfHour(h))) continue;
+      num += C.hS[h] * C.hS[h] - C.hQ[h];
+      pairs += C.hN[h] * (C.hN[h] - 1);
+      q += C.hQ[h];
+      n += C.hN[h];
+    }
+    return pairs > 0 && q > 0 ? (num / pairs) / (q / n) : null;
+  };
+  const split = (score) => {
+    const sorted = [...valid].sort((a, b) => score[b] - score[a] || a - b);
+    const top = new Set(sorted.slice(0, Math.max(1, Math.round(valid.length * topShare))));
+    const rest = new Set(valid.filter((d) => !top.has(d)));
+    const aTop = acc.alerts.filter((r) => top.has(r.day - day0));
+    const aRest = acc.alerts.filter((r) => rest.has(r.day - day0));
+    const share = (list) => (list.length ? list.filter((r) => r.matched).length / list.length : null);
+    const volTop = meanOf([...top].map((d) => Math.sqrt(vol[d])));
+    const volRest = meanOf([...rest].map((d) => Math.sqrt(vol[d])));
+    const corrTop = corrOn(top);
+    const corrRest = corrOn(rest);
+    const nAll = aTop.length + aRest.length;
+    return {
+      volRatio: volRest > 0 ? volTop / volRest : null, corrTop, corrRest, corrRatio: corrRest > 0 ? corrTop / corrRest : null,
+      alertShareTop: nAll ? aTop.length / nAll : null, alertConcentration: nAll ? aTop.length / nAll / (top.size / valid.length) : null,
+      matchedTop: share(aTop), matchedRest: share(aRest),
+      controlsTop: meanOf(aTop.filter((r) => r.matched).map((r) => r.N)), controlsRest: meanOf(aRest.filter((r) => r.matched).map((r) => r.N)),
+    };
+  };
+  // Datar (rata-rata antar-simulasi per kunci): vol* = hari bergejolak, alert* = hari padat alert.
+  const prefix = (p, o) => Object.fromEntries(Object.entries(o).map(([k, x]) => [`${p}${k[0].toUpperCase()}${k.slice(1)}`, x]));
+  return { topShare, days: valid.length, corrAll: corrOn(inValid), ...prefix('vol', split(vol)), ...prefix('alert', split(alertsOn)) };
+}
+
 /** Ringkasan ciri dari akumulator (D = jumlah hari jendela). */
 export function summarizeAccumulator(acc, D) {
   const ps = acc.perSymbol;
@@ -331,6 +396,7 @@ export function summarizeAccumulator(acc, D) {
       shareSameDay: meanOf(col((r) => r.shareDay)), shareWeek: meanOf(col((r) => r.shareWeek)), shareOverlap: meanOf(col((r) => r.shareNear)),
       sharePre: meanOf(col((r) => r.sharePre)), sharePost: meanOf(col((r) => r.sharePost)),
     },
+    regime: regimeCharacter(acc, D),
     pairing: {
       alertSd: sdOf(col((r) => r.y)),
       controlSd: acc.ctrlMoments[0] > 1 ? Math.sqrt(Math.max(0, (acc.ctrlMoments[2] - acc.ctrlMoments[1] ** 2 / acc.ctrlMoments[0]) / (acc.ctrlMoments[0] - 1))) : null,
@@ -814,6 +880,13 @@ export async function historical({ from, to, cacheDir, replayCache }) {
 
 const proportion = COV.proportion;
 
+/** Rata-rata ciri DGP antar-simulasi (tanpa estimator/CI): returns, alerts, strata, regime, pairing. */
+export function averageCharacter(ok) {
+  return Object.fromEntries(['returns', 'alerts', 'strata', 'regime', 'pairing'].map((sec) => [sec, Object.fromEntries(Object.keys(ok.find((r) => r.character?.[sec])?.character?.[sec] ?? {})
+    .filter((k) => ok.some((r) => typeof r.character?.[sec]?.[k] === 'number'))
+    .map((k) => [k, meanOf(ok.map((r) => r.character?.[sec]?.[k]).filter(Number.isFinite))]))]));
+}
+
 /** Ringkasan antar-simulasi dengan SE Monte Carlo (SD/√n) dan galat satu sisi CI terhadap beberapa definisi target. */
 export function aggregateSim(runs, truths) {
   const ok = runs.filter((r) => r && !r.failed);
@@ -837,7 +910,7 @@ export function aggregateSim(runs, truths) {
       probeCoupledMatches: ok.every((r) => r.boot[7].probeCoupledMatches !== false),
       seBase: b7('base', (x) => x.se), seDrift: b7('drift', (x) => x.se),
     },
-    character: Object.fromEntries(['returns', 'alerts', 'strata', 'pairing'].map((sec) => [sec, Object.fromEntries(Object.keys(ok[0]?.character?.[sec] ?? {}).filter((k) => typeof ok[0].character[sec][k] === 'number' || ok[0].character[sec][k] === null).map((k) => [k, meanOf(ok.map((r) => r.character[sec][k]).filter(Number.isFinite))]))])),
+    character: averageCharacter(ok),
     fwdAcf: Object.fromEntries(FWD_LAGS.map((L) => [L, meanOf(ok.map((r) => r.character.returns.fwdAcf[L]).filter(Number.isFinite))])),
     errors: {},
   };
@@ -913,7 +986,7 @@ async function main(argv) {
       workers: { type: 'string', default: String(Math.max(1, Math.min(4, availableParallelism() - 2))) },
       configs: { type: 'string', default: '8' }, draws: { type: 'string', default: '40' }, truths: { type: 'string' },
       from: { type: 'string', default: '2024-10-01' }, to: { type: 'string', default: '2026-10-01' },
-      'cache-dir': { type: 'string', default: DEFAULT_CACHE_DIR }, out: { type: 'string', default: join(ROOT, 'reports', 'research') }, tag: { type: 'string' },
+      'cache-dir': { type: 'string', default: RESEARCH_SNAPSHOT_DIR }, out: { type: 'string', default: join(ROOT, 'reports', 'research') }, tag: { type: 'string' },
     },
     strict: true,
   });
@@ -941,6 +1014,13 @@ async function main(argv) {
       aggregate: aggregateSim(runs, { nol: 0, delta: sc.delta, thetaInfo: meanDrift, plugInMean: meanFull, ...extra }),
       runs: runs.map((r) => (r && !r.failed ? [r.point.full, r.point.base, r.point.drift, r.boot[7].ci.percentile.lo, r.boot[7].ci.percentile.hi, r.boot[7].ci.basic.lo, r.boot[7].ci.basic.hi, r.boot[7].ci.bc.lo, r.boot[7].ci.bc.hi, r.boot[7].full.se, r.boot[7].full.median] : null)),
     };
+  } else if (v.mode === 'describe') {
+    // Ciri DGP saja (kalibrasi skenario tanpa melihat bias, SE, atau CI): tanpa bootstrap.
+    const set = parseSet(v.set);
+    const sims = Number(v.sims);
+    const runs = await runPool(Array.from({ length: sims }, (_, k) => ({ kind: 'sim', scenario: v.scenario, set, seed: Number(v.seed) + k, reps: 0, opts: { blocks: [], probe: false } })), Number(v.workers));
+    const ok = runs.filter((r) => r?.character);
+    result = { scenario: v.scenario, set, sc: scenarioOf(v.scenario, set), sims, seed: Number(v.seed), ok: ok.length, character: averageCharacter(ok) };
   } else if (v.mode === 'landmark') {
     const set = parseSet(v.set);
     const sims = Number(v.sims);

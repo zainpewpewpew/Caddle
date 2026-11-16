@@ -10,6 +10,9 @@
   - Jendela uji dimulai 2026-11-16 00:00 UTC, di tengah babak ini.
   - Seluruh komputasi babak ini memakai data sintetis atau data historis sampai 2026-10-01 saja.
   - Tidak ada hasil A atau B dari data jendela (≥ 2026-11-16) yang dihitung atau dilihat (docs/28 §8).
+- **Babak ketiga** (§19–§21; 2026-11-16 ±06:00–08:00 UTC): keputusan pemilik soal tujuan AL-MOM-01, penjaga akses
+  `backtest` dan snapshot cache riset, kalibrasi rezim dari ciri historis, dan **praregistrasi simulasi konfirmasi** (§21).
+  Run konfirmasi belum dijalankan. Data yang dipakai: sintetis, dan historis ≤ 2026-10-01 (ciri return dan jumlah saja).
 
 Label klaim:
 
@@ -40,6 +43,14 @@ dan satu masalah estimand, ada di tangan pemilik (§20).**
   batas efek informasi.
 - **Babak pertama keliru di dua klaim:** "komponen waktu = sifat estimand" dan "atenuasi = sifat estimand". Koreksinya di
   §15 dan §18.
+- **Babak ketiga.**
+  - Pemilik memutuskan bahwa AL-MOM-01 adalah **uji konfirmasi superioritas**. Batas 0,25 ATR deskriptif dan berlaku pada
+    skala prosedural (§20.1).
+  - Simulasi konfirmasi menjadi **syarat pembekuan**. Kriterianya dikunci di §21 sebelum run apa pun.
+  - Celah `backtest` ditutup (§19).
+  - Ada temuan baru dari ciri historis: hari yang padat alert LONG 1h justru lebih tenang dan korelasinya lebih rendah.
+    Hipotesis "rezim padat", yaitu korelasi, volatilitas, dan alert naik bersama, bertentangan dengan data historis
+    (HISTORICAL, §21.2).
 
 ## 2. Kondisi awal dan lingkup
 
@@ -332,6 +343,19 @@ Tes baru (UNIT-MOM01-018…022):
 
 Yang tidak dijalankan: mode count/evaluate pada data jendela, dan panggilan jaringan Binance.
 
+**Babak ketiga.** Lint bersih. Vitest: 161 file, 2.391 lulus, 1 dilewati. Tes baru:
+
+- **UNIT-BTCLI-004…006 dan 022.** Periode terlindungi `backtest`:
+  - pemotongan `--to` bawaan;
+  - penolakan `--to`/`--from` sesudah 2026-11-16;
+  - cutoff CSV;
+  - konfirmasi hanya di TTY di luar CI;
+  - pertahanan lapis kedua.
+- **UNIT-SNAP-001.** Snapshot: hanya bulan < 2026-11, baca-saja, hanya bertambah, dan isi yang berubah ditolak.
+- **UNIT-MOM01-023…025.** Evaluasi konfirmasi: batas atas gabungan, T2 antar-konfigurasi, kriteria K1–K3, vonis, dan
+  pencocokan δ oracle.
+- **UNIT-MOM01-026…027.** Rezim padat di DGP (`stressEnter` 0 = DGP lama), dan korelasi subset yang dinormalisasi.
+
 ## 12. Risiko metodologis yang tersisa
 
 1. **Estimand teratenuasi terhadap pertanyaan riset (SIMULATED, §15).** Di DGP, estimand prosedural ≈ 75% estimand
@@ -371,6 +395,8 @@ Semua run memakai pohon `f3004d2c…`. Laporan JSON ada di `reports/research/` (
 | Historis | ciri 100 koin, 2024-10-01 … 2026-10-01; v2 + SD & kelayakan landmark | — | — | `al-mom-01-diag-historical-*` |
 | Pindai | β² 0,42 × `marketKappa` 0–3; 100 simbol × β² 0,42/0,6/0,75 | 16 × 199 | 960001+, 963001+ | `al-mom-01-diag-sim-scan-*` |
 | Kekuatan pasangan | 100 simbol, β² 0,5 dan 0,75; efek 0 dan θ_info 0,25; blok 7 hari | 400 × 999 | 970001+ (pilot 500000+) | `al-mom-01-coverage-20261116T001522Z` |
+| Historis v3 (babak ketiga) | ciri rezim 100 koin (2024-10-01 … 2026-10-01), dibaca dari snapshot | — | — | `al-mom-01-diag-historical-v3-rezim-20261116T063644Z` |
+| Ciri DGP (babak ketiga) | `describe` tanpa bootstrap: dasar0, pasangan084, kandidat rezim (histA, hipA, histB, hist40), rezimHistoris100, rezimPadat100, takMerata100 | 12–16 | 1090001+ / 1090101+ | `al-mom-01-diag-describe-*` |
 
 Kegagalan selama babak ini:
 
@@ -631,7 +657,7 @@ Audit skrip yang memuat cache dan bisa menghitung hasil (VERIFIED, grep + baca k
 | `research-mom-power/-overlap/-sim`, `research-matched-exclusion` | tidak (`--to` ≤ 2026-11-16) | dijaga |
 | `research-al-mom-01-diagnose.js` mode historis | tidak (penjaga sebelum I/O; tes 022) | dijaga |
 | `research-matched.js`, `research-timing.js` | ya, lewat `--to` | **tidak bisa diubah** (hash docs/25 §1.6); hanya protokol |
-| **`scripts/backtest.js`** (CLI produk) | **ya: `--to` bawaan = sekarang; R dan win rate v3 LONG 1h** | **celah; usulan di bawah** |
+| **`scripts/backtest.js`** (CLI produk) | sebelum babak ketiga: ya (`--to` bawaan = sekarang; R dan win rate v3 LONG 1h) | **dijaga sejak babak ketiga** (lihat bawah) |
 | UI produk / database sinyal | status siklus sinyal live (mis. MOMENTUM_BUILDING, `final_outcome`), yaitu info kualitatif gerak sesudah alert | protokol |
 | `research-al-sa-atr-01*.js`, `reversal-replay.js`, `research-bsv-1h.js` | tidak menghitung A/B AL-MOM-01 | — |
 
@@ -646,6 +672,37 @@ Usulan isolasi (keputusan pemilik):
 4. **Keputusan apa pun di babak ini diambil sesudah jendela dimulai,** termasuk §20. Laporan harus menyatakan bahwa
    keputusan didasarkan hanya pada data sintetis dan historis ≤ 2026-10-01, dan bahwa tidak ada hasil jendela yang
    dihitung.
+
+**Diterapkan di babak ketiga** (keputusan pemilik §20.1). Lapisan teknis:
+
+- **Penjaga `backtest`** (`scripts/lib/protectedPeriod.js`, `scripts/lib/backtestArgs.js`, `scripts/backtest.js`). Berlaku
+  bila timeframe dasar memuat 1h dan sumbernya Binance atau CSV; data sintetis tidak dijaga.
+  - `--to` bawaan dipotong ke 2026-11-16 00:00 UTC, dengan pesan.
+  - `--to` eksplisit sesudahnya, atau `--from` di dalam periode itu, ditolak.
+  - CSV tanpa `--to`: candle ≥ 2026-11-16 dibuang saat dimuat.
+  - Sesudah data dimuat, ada pemeriksaan lapis kedua: candle 1h di periode terlindungi menghentikan run.
+  - `--buka-periode-terlindungi` hanya berjalan sesudah frasa persis diketik di terminal interaktif (stdin dan stderr
+    TTY, bukan CI). Skrip otomatis, CI, dan asisten AI tanpa TTY selalu ditolak.
+  - Laporan JSON mencatat `meta.protectedPeriod`.
+  - Penjaga ini mencegah pembukaan tak sengaja; ia bukan pengaman terhadap pelanggaran yang disengaja.
+  - Perilaku produk berubah: run 1h tanpa `--to` kini berhenti di 2026-11-16 sampai jendela selesai. Timeframe lain tidak
+    berubah.
+- **Snapshot cache riset** (`npm run research:snapshot`, `data/research-snapshot`, di-gitignore). Isinya salinan baca-saja
+  bulan cache < 2026-11, saat ini 4.452 file (500,4 MB), 2024-01 … 2026-09. Hash pohonnya
+  `618e0a5c24f5e0cc8c033b19ba5721b67d89bc2c93311e9e8f92aba89793c884` (manifest `MANIFEST.json`).
+  - Snapshot hanya bertambah: file lama tidak pernah ditimpa, dan isi yang berbeda menghentikan proses.
+  - Skrip pengembangan membacanya secara bawaan: `research-al-mom-01-diagnose`, `research-mom-power/-overlap/-sim`, dan
+    `research-matched-exclusion`.
+  - `data/backtest-cache` (cache hidup, yang nanti memuat bulan jendela) hanya dipakai untuk count/audit AL-SA-ATR-01 dan
+    AL-MOM-01, serta untuk evaluate resmi. Skrip beku tidak diubah.
+- **File yang tidak disentuh.** `backend/`, runner AL-MOM-01, `research-al-sa-atr-01*.js`, dan
+  `research-matched.js`/`research-timing.js`. Hash pohon tetap `f3004d2c…`, dan hash AL-SA-ATR-01 tetap `25c02256…`.
+
+Lapisan operasional (protokol, tanpa kode): UI live tetap berjalan, tetapi statistik hasil alert live tidak dipakai untuk
+merevisi hipotesis atau memilih metode selama protokol berjalan. Sisa risikonya:
+
+- skrip beku docs/25 (`research-matched/-timing`) masih bisa membaca cache hidup lewat `--to`;
+- UI dan database sinyal live.
 
 ## 20. Keputusan pemilik
 
@@ -673,3 +730,243 @@ Usulan isolasi (keputusan pemilik):
 4. **Simulasi konfirmasi sebelum beku** (opsional, ±1,5–4 jam komputasi): aturan gabungan pada 9 skenario stres, dan alert
    tak merata pada 100 simbol.
 5. **Kelompok koin kedua** (opsional, dari babak pertama).
+
+### 20.1 Keputusan pemilik babak ketiga (2026-11-16 ±06:20 UTC)
+
+Keputusan ini diambil sesudah tinjauan ChatGPT atas §13–§20, dan berdasarkan data sintetis dan historis ≤ 2026-10-01
+saja.
+
+1. **Tujuan AL-MOM-01: uji konfirmasi superioritas saja.**
+   - Klaim formal satu-satunya adalah batas bawah CI persentil > 0 (kelompok 1–2 docs/28 §6).
+   - Batas 0,25 ATR deskriptif dan hanya berlaku pada skala estimand operasional (§21.4). Ini sejalan dengan docs/28 §6,
+     yang sudah menyebut M sebagai "batas deskriptif".
+   - Kelompok 3 dibaca "superioritas belum terbukti", bukan "SA/PVA tidak punya nilai tambah yang berarti".
+   - Klaim batas atas efek populasi tidak dibuat. Bila klaim itu kelak dibutuhkan, ia butuh penelitian baru dengan estimand
+     dan estimator yang sesuai.
+2. **Aturan gabungan dan landmark: menunggu tinjauan ChatGPT.**
+   - Usulan adendum keputusan produk ditulis di balasan ke ChatGPT, bukan di repo. Isinya: kelompok formal tetap dari CI
+     persentil, ditambah lapisan produk yang menahan konsekuensi kelompok 1/3 bila batas atas basic ≥ 0,25.
+   - Landmark lintas simbol diusulkan sebagai analisis sekunder eksploratif.
+   - Keduanya baru ditulis sebagai adendum bertanggal yang merujuk docs/28 §6 sesudah disepakati, dan sebelum outcome
+     jendela dibuka.
+3. **Simulasi konfirmasi: kriteria dikunci di §21, run menunggu tinjauan ChatGPT.** Sebelum run dimulai, perubahan atas
+   masukan ChatGPT dicatat sebagai versi baru §21.
+4. **Akses data: penjaga `backtest` dan snapshot cache riset diterapkan** (§19).
+
+## 21. Praregistrasi simulasi konfirmasi (v1, 2026-11-16; belum dijalankan)
+
+**Status: DIKUNCI v1, BELUM DIJALANKAN.**
+
+- Kriteria, skenario, benih, dan jumlah simulasi di bagian ini di-commit sebelum run konfirmasi apa pun.
+- Sesuai keputusan pemilik (§20.1), run menunggu tinjauan ChatGPT.
+- Perubahan sebelum run dicatat di §21.9 sebagai versi baru, dengan tanggal dan alasan. Sesudah run pertama dimulai,
+  kriteria tidak boleh diubah.
+
+**Batas kejujuran.**
+
+- Kriteria ini ditulis sesudah hasil eksploratif §8 dan §14–§17 diketahui, dan hasil itu tidak dipraregistrasi.
+- Run konfirmasi memakai benih baru dan empat DGP baru. Sepuluh DGP lainnya sudah pernah dijalankan dengan benih lain.
+
+### 21.1 Pertanyaan
+
+1. Apakah klaim superioritas (batas bawah CI persentil > 0) terkendali di semua DGP bila SA/PVA tidak membawa informasi?
+2. Apakah lapisan produk "< M" (batas atas gabungan = maks(persentil, basic)) terkendali terhadap estimand operasional?
+3. Seberapa besar galat batas atas terhadap estimand populasi (pertanyaan riset)?
+
+### 21.2 Kalibrasi rezim dari ciri historis (bukan hasil CI)
+
+Hari diurutkan dua kali: menurut volatilitas pasar harian (√Σ_h m_h², m_h = rata-rata return terstandar antarsimbol), dan
+menurut jumlah alert harian. Lalu 15% hari teratas dibandingkan dengan sisanya. Korelasi subset dihitung sebagai
+kovarians rata-rata antarpasangan dibagi varians rata-rata pada subset yang sama.
+
+Historis: 100 koin, 2024-10 … 2026-09, dibaca dari snapshot; ciri return dan jumlah saja (HISTORICAL). DGP: 12–16
+simulasi, mode `describe` tanpa bootstrap (SIMULATED).
+
+| Ciri | Historis | dasar0 (40) | pasangan084 (100) | **rezimHistoris100** | rezimPadat100 | takMerata100 |
+|---|---|---|---|---|---|---|
+| Korelasi 1 jam | 0,40 | 0,47 | 0,47 | 0,39 | 0,39 | 0,47 |
+| Alert/simbol-tahun · dispersi harian · porsi 10% hari teratas | 21,5 · 6,5 · 0,34 | 24,2 · 2,6 · 0,32 | 24,6 · 5,0 · 0,29 | 21,8 · 6,7 · 0,34 | 21,8 · 13,8 · 0,43 | 33,6 · 31,5 · 0,53 |
+| **Hari bergejolak:** volatilitas ÷ lainnya | 2,38 | 1,99 | 1,99 | 2,67 | 2,67 | 2,02 |
+| … korelasi (teratas / lainnya) | 0,64 / 0,34 | 0,54 / 0,44 | 0,54 / 0,44 | 0,59 / 0,27 | 0,59 / 0,27 | 0,54 / 0,44 |
+| … konsentrasi alert (1 = merata) | **0,39** | 1,01 | 1,01 | 0,49 | 2,26 | 0,92 |
+| **Hari padat alert:** volatilitas ÷ lainnya | **0,69** | 1,01 | 1,02 | 0,83 | 1,58 | 0,97 |
+| … korelasi (teratas / lainnya) | **0,28 / 0,42** | 0,48 / 0,47 | 0,48 / 0,47 | 0,28 / 0,41 | 0,57 / 0,34 | 0,47 / 0,47 |
+| … konsentrasi alert | 3,02 | 2,85 | 2,60 | 2,98 | 3,52 | 4,26 |
+| Alert berpembanding (%): hari bergejolak / padat alert / hari lain (pembagian volatilitas) | 91,9 / 90,8 / 90,9 | 88,5 / 88,9 / 88,6 | 88,3 / 89,6 / 89,0 | 88,1 / 88,6 / 88,0 | 88,2 / 88,1 / 87,6 | 86,7 / 88,4 / 88,8 |
+
+**Temuan (HISTORICAL).**
+
+- Hari pasar paling bergejolak menekan alert LONG 1h: konsentrasinya 0,39, padahal 1 berarti merata.
+- Hari yang padat alert lebih tenang (volatilitas 0,69×) dan korelasinya lebih rendah (0,28 vs 0,42).
+- Overlap tidak berubah menurut rezim (91–92%).
+- Jadi hipotesis tinjauan, yaitu korelasi, volatilitas, dan kepadatan alert naik bersama, **bertentangan dengan data
+  historis**.
+- DGP lama tidak meniru ketiga pola itu: konsentrasinya 1,0, dan hari padat alert tidak lebih tenang.
+
+**Lapisan rezim baru** (`stressEnter` dkk. di `simulateMarket`). Lapisan ini adalah rantai Markov harian bersama yang
+ditarik dari aliran rezim, jadi tetap sama antar-draw oracle.
+
+- Masuk 0,02 per hari dan keluar 0,15 per hari (episode ±6,7 hari, ±12% hari).
+- Di hari episode: β² naik dari 0,30 ke 0,75, volatilitas pasar ×1,6, dan hazard alert dikali `stressHazard`.
+- Dispersi rezim alert 0,45.
+- Dengan `stressEnter` 0, urutan bilangan acak DGP lama identik. Ini diverifikasi dengan sidik jari SHA-256 enam skenario
+  dan UNIT-MOM01-026.
+
+Parameter dipilih dari empat kandidat `describe`. Hanya ciri di atas yang dibandingkan, tanpa bias, SE, atau CI:
+
+| Kandidat | Konsentrasi alert hari bergejolak | Volatilitas hari padat alert | Dispersi |
+|---|---|---|---|
+| histA (hazard ×0,3, h0 0,00175, dispersi rezim 0,3) | 0,52 | 0,83 | 4,8 |
+| hipA (hazard ×3) | 2,28 | 1,70 | 12,5 |
+| **histB (hazard ×0,2, h0 0,0016, dispersi rezim 0,45)** | 0,49 | 0,83 | 6,7 |
+| hist40 (histB, 40 simbol) | 0,50 | 0,84 | 3,3 |
+
+Hasilnya dua skenario:
+
+- **rezimHistoris100**: histB, alert ×0,2 di hari episode, dikalibrasi ke data historis.
+- **rezimPadat100**: hipotesis tinjauan, alert ×3 dan h0 0,00117 supaya laju alert sama. Ia digolongkan **ekstrem** karena
+  bertentangan dengan data historis.
+
+### 21.3 Skenario dan golongan
+
+| DGP | Efek 0 | Efek ≈ margin | Simbol · simulasi | Golongan | Basis harga martingale? |
+|---|---|---|---|---|---|
+| dasar | `dasar0` | `dasar025` | 40 · 500 | realistis | ya |
+| korelasi β² 0,85 | `korelasi` | `korelasiM` | 40 · 500 | realistis | ya |
+| alert sangat tak merata | `takMerata` | `takMerataM` | 40 · 500 | realistis | ya |
+| strata sedikit | `sedikit` | `sedikitM` | 40 · 500 | realistis | ya |
+| ekor tebal | `ekor` | `ekorM` | 40 · 500 | realistis | ya |
+| momentum pasar | `momentum` | `momentumM` | 40 · 500 | realistis | **tidak** |
+| episode tren per simbol | `episode` | `episode025` | 40 · 500 | realistis | **tidak** |
+| serial (efek per rezim, amplitudo ±0,30 θ) | `serial0` | `serialM` | 40 · 500 | ekstrem* | ya |
+| stres gabungan | `stres0` | `stres025` | 40 · 500 | ekstrem | ya |
+| dasar 100 simbol | `pasangan084` | `pasangan084e` | 100 · 400 | realistis | ya |
+| alert sangat tak merata, 100 simbol | `takMerata100` | `takMerata100M` | 100 · 400 | realistis | ya |
+| rezim episode, kalibrasi historis | `rezimHistoris100` | `rezimHistoris100M` | 100 · 400 | realistis | ya |
+| rezim padat, hipotesis | `rezimPadat100` | `rezimPadat100M` | 100 · 400 | ekstrem | ya |
+
+- "Efek ≈ margin" berarti δ dikalibrasi lewat pilot (40 simulasi × 200 replikasi, benih 500000+) supaya θ_info ≈ 0,25.
+- \* **Serial** digolongkan ekstrem karena menyangkut definisi target, bukan kegagalan metode. Bila efek berubah per rezim,
+  CI berlaku untuk jendela terealisasi (θ_d), bukan rata-rata jangka panjang (§15). Galatnya terhadap θ_d tetap
+  dilaporkan.
+
+### 21.4 Target inferensi
+
+**Jawaban atas pertanyaan tinjauan: apakah T4 target yang didefinisikan sebelum data?**
+
+- docs/28 §2 (dikunci di `7da88ce`, sebelum data) memberi dua hal yang tidak dibedakan:
+  - kata "ATT", yang menyarankan estimand populasi kausal (T2);
+  - rumus operasional "rata-rata selisih antara alert dan rata-rata candle pembanding di strata yang sama (§4)" pada
+    populasi overlap, dengan bootstrap prosedur penuh (§5).
+- **Estimand operasional** θ_op adalah ekspektasi rumus itu di bawah proses data yang sebenarnya, dengan strata, jendela,
+  dan aturan overlap yang dikunci. Definisinya ada sebelum data, karena ia ditentukan seluruhnya oleh prosedur yang dikunci.
+  Ia juga besaran yang ditargetkan CI bootstrap prosedur penuh.
+- **T4 bukan definisi baru,** melainkan nilai θ_op pada satu DGP (rata-rata Monte Carlo θ̂). Nilainya bergantung pada DGP
+  dan tidak diketahui di pasar nyata.
+- Jadi kami tidak menamai T4 estimand penelitian baru. Istilah yang dipakai adalah "estimand operasional docs/28 §2
+  (skala prosedural)". Teks §2 tidak diubah.
+
+| Target | Definisi di simulasi | Dipakai untuk |
+|---|---|---|
+| T1 tanpa informasi | δ = 0, yaitu SA/PVA tidak membawa informasi | **K1** (superioritas palsu) |
+| T4 = θ_op | rata-rata θ̂ antar-simulasi pada run yang sama (SE MC dilaporkan) | **K2**, K4 |
+| T2 populasi overlap | oracle `--configs 20 --draws 10` (serialM 40 × 10): rata-rata antar-konfigurasi (unit independen) dari y alert − rata-rata pembanding sel dari draw lain | **K3** |
+| T3 θ_info | estimator pada komponen drift | dilaporkan |
+| θ_d terealisasi | komponen drift per dataset | dilaporkan (khususnya serial) |
+
+Pada efek 0, T2 = 0 menurut konstruksi bila basis harga martingale (argumen §8.3; oracle dasar0: −0,001 ± 0,005). Untuk
+`momentum` dan `episode` basisnya bukan martingale, jadi T2 efek 0 diestimasi oracle. `rezimPadat100` efek 0 juga diberi
+satu oracle sebagai pemeriksaan DGP baru.
+
+K1 diuji terhadap T1, bukan terhadap θ_op, karena pertanyaan riset adalah informasi di luar momentum. Bila θ_op > 0 tanpa
+informasi, misalnya karena sisa momentum di dalam bin, superioritas tetap merupakan kesimpulan yang keliru.
+
+### 21.5 Kriteria
+
+Semua proporsi memakai interval Wilson 95%. Nominal satu sisi 2,5%. Lulus berarti batas bawah Wilson ≤ 2,5%, artinya
+galat tidak terbukti di atas nominal.
+
+| Kode | Metrik | Run | Lulus bila | Konsekuensi bila gagal |
+|---|---|---|---|---|
+| **K1** | P(lo persentil > 0) | efek 0 | Wilson bawah ≤ 2,5% | realistis → **tinjau desain, tidak beku**; ekstrem → klaim superioritas dibatasi dan rezimnya disebut di laporan |
+| **K2** | P(hi gabungan < T4) | ≈ margin | Wilson bawah ≤ 2,5% | realistis → lapisan produk "< M" tidak dipakai sama sekali (kelompok 1/3 diperlakukan seperti 2/4 untuk produk); ekstrem → lapisan itu dibatasi |
+| **K3** | P(hi gabungan < T2), juga persentil dan basic | ≈ margin | tidak ada (dilaporkan) | > 5% → larangan klaim batas atas efek populasi (§20.1) ditegaskan; kepekaan T2 ± 2 SE dilaporkan |
+| **K4** | coverage dua sisi CI persentil terhadap T4 | ≈ margin | ≥ 85% | realistis → tinjau desain; ekstrem → klaim dibatasi |
+| **K5** | simulasi gagal per run | keduanya | ≤ 1% | realistis → tinjau desain |
+
+- **Daya kriteria** (dihitung tepat dari binomial).
+  - Galat sebenarnya 5% terdeteksi (Wilson bawah > 2,5%) dengan peluang 87% pada 500 simulasi, dan 79% pada 400.
+  - Galat 3,5% hanya terdeteksi 24–30%.
+  - Bila galatnya tepat nominal, peluang "gagal" keliru 2,5–2,9%.
+- **Dilaporkan tanpa kriteria.** Galat basic dan BC di sisi superioritas, galat terhadap θ_d (serial), dan T3.
+- **Kegagalan besar tidak diberi label "sensitivitas" saja.** Konsekuensi di atas mengikat.
+
+**Vonis gabungan** (fungsi `verdict` di `scripts/research-al-mom-01-confirm.js`):
+
+- **BELUM LENGKAP:** ada run atau T2 yang belum ada.
+- **TINJAU DESAIN (tidak dibekukan):** ada golongan realistis yang gagal K1, K4, atau K5.
+- **LULUS DENGAN PEMBATASAN KLAIM:** ada golongan ekstrem yang gagal K1 atau K4, atau golongan realistis yang gagal K2.
+- **LULUS:** selain itu.
+
+Lulus bukan pernyataan siap beku. Pembekuan juga menunggu adendum §6 dan keputusan pemilik.
+
+### 21.6 Benih, jumlah, dan perintah
+
+Kode: commit yang menambahkan §21. Seluruh run memakai `--reps 999 --blocks 7 --workers 6`.
+
+```
+# 40 simbol (18 run, 500 simulasi, benih 1100001 + k; benih sama antarskenario)
+npm run research:al-mom-01-coverage -- --sims 500 --reps 999 --blocks 7 --seed 1100001 --workers 6 \
+  --scenarios dasar0,dasar025,korelasi,korelasiM,takMerata,takMerataM,sedikit,sedikitM,ekor,ekorM,momentum,momentumM,episode,episode025,serial0,serialM,stres0,stres025
+# 100 simbol (8 run, 400 simulasi)
+npm run research:al-mom-01-coverage -- --sims 400 --reps 999 --blocks 7 --seed 1100001 --workers 6 \
+  --scenarios pasangan084,pasangan084e,takMerata100,takMerata100M,rezimHistoris100,rezimHistoris100M,rezimPadat100,rezimPadat100M
+# Oracle T2 untuk tiap skenario ≈ margin (δ dan deltaAmp hasil kalibrasi disalin persis dari laporan coverage),
+# serta efek 0 untuk momentum, episode, dan rezimPadat100. Benih rezim 1200001 + c, inovasi 7.000.000 + 1.000c + k.
+node --max-old-space-size=3072 scripts/research-al-mom-01-diagnose.js --mode oracle --scenario <nama> --set delta=<δ> \
+  [--set deltaAmp=<a>] --configs 20 --draws 10 --seed 1200001 --workers 6 --tag konfirmasi-<nama>   # serialM: --configs 40
+# Evaluasi menurut kriteria §21.5
+npm run research:al-mom-01-confirm -- --coverage <dua laporan coverage> --oracle <laporan oracle>
+```
+
+**Perkiraan biaya** (6 pekerja; dari run sebelumnya):
+
+| Bagian | Waktu |
+|---|---|
+| Coverage 40 simbol (18 run, termasuk pilot kalibrasi) | ±1,5 jam |
+| Coverage 100 simbol (8 run) | ±1,2 jam |
+| Oracle 40 simbol (11 run, 2.400 draw) | ±0,8 jam |
+| Oracle 100 simbol (5 run, 1.000 draw) | ±0,8 jam |
+| **Total** | **±4–5 jam** |
+
+Run yang gagal karena error teknis diulang dengan benih yang sama, dan kejadiannya dicatat.
+
+### 21.7 SHA-256 kode praregistrasi
+
+| File | SHA-256 |
+|---|---|
+| `scripts/research-al-mom-01.js` (runner, tidak berubah) | `25af1b6db48d2e02c5c0be711b78e23e27c11066492439ba1beaa3b2be53af92` |
+| `scripts/research-al-mom-01-coverage.js` | `46cdda87f9518799306262cd3217211ff39611b2d908c3154acca313ea36332b` |
+| `scripts/research-al-mom-01-diagnose.js` | `86f458e15d032f3531a4e7f62503006b003413f7d08b5f4c62b169529df14c07` |
+| `scripts/research-al-mom-01-confirm.js` | `c6b3486aa582291654e043f92bb2e1a1a05e8311d94a66780bed9fc145987973` |
+| `tests/unit/research/alMom01Confirm.test.js` | `867a6d941a85b9f8252434f3f41500a4d3d19fd0b5da43cf149cf5a0d1fcf460` |
+| `tests/unit/research/alMom01Diagnose.test.js` | `ba2acb2c59167bd36e77f1f3e2eb8bc964e7407705a61dba3532d5f49f920844` |
+
+- **Hash pohon** `f3004d2c…` (backend + runner) tidak berubah.
+- **Uji asap teknis** sebelum commit: 2 simulasi × 19 replikasi untuk `serial0`, `serialM`, `stres0`, `rezimPadat100M`,
+  dan `takMerata100`; ditambah satu oracle 1 × 2 dan evaluator. Hasilnya ditulis ke folder sementara di luar repo, dan
+  angkanya tidak dibaca. Yang diperiksa hanya bahwa jalur kode berjalan: 0 simulasi gagal, pencocokan δ oracle, dan vonis
+  "BELUM LENGKAP".
+- **δ untuk oracle disalin persis** dari `overrides` laporan coverage (representasi angka terpendek JavaScript), sehingga
+  pencocokan δ di evaluator tepat.
+
+### 21.8 Yang tidak dicakup
+
+- Alert di DGP berasal dari model hazard, bukan replay SA/PVA.
+- Kalibrasi rezim hanya meniru ciri tingkat hari. Ciri dalam hari dan asimetri arah (crash vs rally) tidak ditiru.
+- Hasil simulasi tidak membuktikan kalibrasi di pasar nyata. Kriteria ini hanya menyaring kegagalan metode pada DGP yang
+  masuk akal.
+
+### 21.9 Riwayat versi
+
+- **v1 (2026-11-16):** versi awal. Belum ditinjau ChatGPT, dan belum ada run.

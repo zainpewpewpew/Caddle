@@ -41,6 +41,15 @@ const BASE = Object.freeze({
   // Hazard alert × exp(marketKappa · gerak pasar 12 jam terstandar − marketKappa²/2): alert serentak lintas simbol saat
   // pasar bergerak (konsentrasi alert harian data historis). 0 = DGP lama, urutan bilangan acak tidak berubah.
   marketKappa: 0,
+  // Rezim padat (docs/29 §21): rantai Markov harian bersama (lapisan rezim). Di hari padat, korelasi antarsimbol naik
+  // (β² → stressBeta2), volatilitas pasar × stressVol, dan hazard alert × stressHazard untuk semua simbol sekaligus.
+  // stressEnter 0 = DGP lama, urutan bilangan acak tidak berubah.
+  stressEnter: 0, stressExit: 0, stressBeta2: 0, stressVol: 1, stressHazard: 1,
+});
+// Lapisan rezim episode bersama untuk skenario rezim (docs/29 §21.2): ±12% hari dalam episode (masuk 0,02/hari, keluar
+// 0,15/hari ≈ 6,7 hari), β² 0,30 → 0,75 dan volatilitas pasar × 1,6 di hari episode; dispersi rezim alert 0,45.
+const STRESS_REGIME = Object.freeze({
+  symbols: 100, beta2: 0.3, stressEnter: 0.02, stressExit: 0.15, stressBeta2: 0.75, stressVol: 1.6, alertRegimeSd: 0.45,
 });
 export const SCENARIOS = Object.freeze({
   dasar0: { label: 'Dasar, efek 0', ...BASE },
@@ -68,6 +77,52 @@ export const SCENARIOS = Object.freeze({
   pasangan084e: { label: 'Pasangan sedang (100 simbol, β² 0,5), efek +0,25 ATR', ...BASE, symbols: 100, beta2: 0.5, delta: 0.25, calibrate: 0.25, blocks: [7] },
   pasangan071: { label: 'Pasangan kuat (100 simbol, β² 0,75), efek 0', ...BASE, symbols: 100, beta2: 0.75, blocks: [7] },
   pasangan071e: { label: 'Pasangan kuat (100 simbol, β² 0,75), efek +0,25 ATR', ...BASE, symbols: 100, beta2: 0.75, delta: 0.25, calibrate: 0.25, blocks: [7] },
+  // ── Simulasi konfirmasi (docs/29 §21, praregistrasi v1; belum dijalankan) ──
+  // Varian "M" = efek dikalibrasi ke θ_info ≈ 0,25 (margin); varian tanpa akhiran = efek 0. Skenario stres 40 simbol yang
+  // belum punya pasangan nol/M dilengkapi di sini; parameter lain identik dengan skenario asalnya.
+  korelasiM: { label: 'Korelasi antarsimbol tinggi (β² 0,85), efek +0,25 ATR', ...BASE, beta2: 0.85, delta: 0.25, calibrate: 0.25 },
+  serial0: {
+    label: 'Korelasi serial antarhari + efek berubah per rezim (rata-rata 0, amplitudo ±0,30 θ)', ...BASE,
+    mktVolPhi: 0.995, mktVolSd: 0.035, delta: 0, deltaAmp: 0.37,
+  },
+  serialM: {
+    label: 'Korelasi serial antarhari + efek berubah per rezim (rata-rata +0,25, amplitudo ±0,30 θ)', ...BASE,
+    mktVolPhi: 0.995, mktVolSd: 0.035, delta: 0.25, deltaAmp: 0.3, calibrate: 0.25,
+  },
+  takMerataM: { label: 'Alert sangat tidak merata, efek +0,25 ATR', ...BASE, alertRegimeSd: 1.0, symbolRateSd: 0.8, delta: 0.25, calibrate: 0.25 },
+  sedikitM: { label: 'Strata pembanding sedikit, efek +0,25 ATR', ...BASE, kappa: 0.35, lambda: 3, h0: 0.0014, delta: 0.25, calibrate: 0.25 },
+  ekorM: { label: 'Ekor tebal, efek +0,25 ATR', ...BASE, nu: 2.5, jumpProb: 0.002, jumpScale: 5, delta: 0.25, calibrate: 0.25 },
+  momentumM: { label: 'Momentum pasar lemah, efek +0,25 ATR', ...BASE, momentumSd: 0.02, delta: 0.25, calibrate: 0.25 },
+  stres0: {
+    label: 'Gabungan stres (korelasi 0,85, ekor tebal, alert tak merata, strata sedikit), efek 0', ...BASE,
+    beta2: 0.85, nu: 2.5, jumpProb: 0.002, jumpScale: 5, alertRegimeSd: 1.0, symbolRateSd: 0.8, kappa: 0.35, lambda: 3, h0: 0.0008,
+  },
+  // 100 simbol (skala data nyata).
+  takMerata100: { label: 'Alert sangat tidak merata, 100 simbol (β² 0,5), efek 0', ...BASE, symbols: 100, beta2: 0.5, alertRegimeSd: 1.0, symbolRateSd: 0.8, blocks: [7] },
+  takMerata100M: {
+    label: 'Alert sangat tidak merata, 100 simbol (β² 0,5), efek +0,25 ATR', ...BASE, symbols: 100, beta2: 0.5, alertRegimeSd: 1.0, symbolRateSd: 0.8,
+    delta: 0.25, calibrate: 0.25, blocks: [7],
+  },
+  // Rezim episode bersama, dikalibrasi ke ciri historis 2024-10 … 2026-09 (docs/29 §21.2; ciri saja, bukan hasil CI):
+  // di hari episode korelasi & volatilitas naik dan alert LONG BERKURANG (hazard × 0,2).
+  rezimHistoris100: {
+    label: 'Rezim episode (kalibrasi historis: korelasi & volatilitas naik, alert berkurang), 100 simbol, efek 0', ...BASE, ...STRESS_REGIME,
+    stressHazard: 0.2, h0: 0.0016, blocks: [7],
+  },
+  rezimHistoris100M: {
+    label: 'Rezim episode (kalibrasi historis), 100 simbol, efek +0,25 ATR', ...BASE, ...STRESS_REGIME, stressHazard: 0.2, h0: 0.0016,
+    delta: 0.25, calibrate: 0.25, blocks: [7],
+  },
+  // Hipotesis tinjauan ChatGPT (korelasi, volatilitas, DAN kepadatan alert naik bersama; hazard × 3). Bertentangan dengan
+  // ciri historis (docs/29 §21.2), jadi digolongkan skenario ekstrem.
+  rezimPadat100: {
+    label: 'Rezim padat (hipotesis: korelasi, volatilitas, dan alert naik bersama), 100 simbol, efek 0', ...BASE, ...STRESS_REGIME,
+    stressHazard: 3, h0: 0.00117, blocks: [7],
+  },
+  rezimPadat100M: {
+    label: 'Rezim padat (hipotesis), 100 simbol, efek +0,25 ATR', ...BASE, ...STRESS_REGIME, stressHazard: 3, h0: 0.00117,
+    delta: 0.25, calibrate: 0.25, blocks: [7],
+  },
 });
 
 // ── Bilangan acak ──
@@ -138,17 +193,25 @@ export function simulateMarket(sc, seed, onSeries = null, { innovationSeed = nul
   const mktVol = new Float64Array(n);
   const alertReg = new Float64Array(days);
   const effectSign = new Int8Array(days);
+  const stressDay = new Uint8Array(days);
   const mom = new Float64Array(n);
   let lv = 0;
   let ar = 0;
   let sign = rf.u() < 0.5 ? 1 : -1;
+  let stress = 0;
   for (let d = 0; d < days; d += 1) {
     lv = sc.mktVolPhi * lv + sc.mktVolSd * rf.normal();
     ar = sc.alertRegimePhi * ar + Math.sqrt(1 - sc.alertRegimePhi ** 2) * rf.normal();
     alertReg[d] = Math.exp(sc.alertRegimeSd * ar - (sc.alertRegimeSd ** 2) / 2);
     if (rf.u() < 1 / sc.effectRegimeDays) sign = -sign;
     effectSign[d] = sign;
-    for (let h = 0; h < 24; h += 1) mktVol[d * 24 + h] = Math.exp(lv);
+    if (sc.stressEnter > 0) {
+      const u = rf.u();
+      stress = stress ? (u < sc.stressExit ? 0 : 1) : (u < sc.stressEnter ? 1 : 0);
+      stressDay[d] = stress;
+    }
+    const volMult = stressDay[d] ? sc.stressVol : 1;
+    for (let h = 0; h < 24; h += 1) mktVol[d * 24 + h] = Math.exp(lv) * volMult;
   }
   let m = 0;
   for (let t = 0; t < n; t += 1) {
@@ -158,8 +221,10 @@ export function simulateMarket(sc, seed, onSeries = null, { innovationSeed = nul
       mom[t] = m;
     }
   }
-  const beta = Math.sqrt(sc.beta2);
-  const idioW = Math.sqrt(1 - sc.beta2);
+  const betaCalm = Math.sqrt(sc.beta2);
+  const idioCalm = Math.sqrt(1 - sc.beta2);
+  const betaStress = sc.stressEnter > 0 ? Math.sqrt(sc.stressBeta2) : betaCalm;
+  const idioStress = sc.stressEnter > 0 ? Math.sqrt(1 - sc.stressBeta2) : idioCalm;
   // Gerak pasar 12 jam terstandar (Σ f[t−11..t] / √12), hanya dari candle ≤ t.
   const mHaz = sc.marketKappa ? new Float64Array(n).fill(1) : null;
   if (mHaz) {
@@ -191,7 +256,8 @@ export function simulateMarket(sc, seed, onSeries = null, { innovationSeed = nul
     for (let t = 0; t < n; t += 1) {
       if (t % 24 === 0) iv = sc.idioVolPhi * iv + sc.idioVolSd * rf.normal();
       const s = sigma * mktVol[t] * Math.exp(iv);
-      let z = beta * f[t] + idioW * R.student(sc.nu);
+      const st = stressDay[Math.floor(t / 24)];
+      let z = (st ? betaStress : betaCalm) * f[t] + (st ? idioStress : idioCalm) * R.student(sc.nu);
       if (sc.jumpProb > 0 && R.u() < sc.jumpProb) z += sc.jumpScale * R.normal();
       if (sc.symMomSd > 0) sm = sc.symMomPhi * sm + sc.symMomSd * Math.sqrt(1 - sc.symMomPhi ** 2) * R.normal();
       const ret = Math.max(-0.5, s * z + (sc.momentumSd > 0 ? s * mom[t] : 0) + s * sm);
@@ -230,7 +296,8 @@ export function simulateMarket(sc, seed, onSeries = null, { innovationSeed = nul
         const pos = h48 > l48 ? (close - l48) / (h48 - l48) : 0.5;
         const since = lastAny >= 0 ? t - lastAny : Infinity;
         const cl = since <= 12 ? sc.cluster12 : since <= 48 ? sc.cluster48 : 1;
-        const hz = sc.h0 * Math.exp(sc.kappa * Math.max(-4, Math.min(8, pre))) * Math.exp(sc.lambda * (pos - 1)) * cl * alertReg[Math.floor(t / 24)] * symRate * (mHaz ? mHaz[t] : 1);
+        const hz = sc.h0 * Math.exp(sc.kappa * Math.max(-4, Math.min(8, pre))) * Math.exp(sc.lambda * (pos - 1)) * cl * alertReg[Math.floor(t / 24)] * symRate * (mHaz ? mHaz[t] : 1)
+          * (st ? sc.stressHazard : 1);
         const isV3 = R.u() < hz;
         const isV2 = R.u() < hz * sc.v2Ratio;
         if (isV3 || isV2) {
@@ -516,9 +583,13 @@ async function main(argv) {
       sims: { type: 'string', default: '1000' }, reps: { type: 'string', default: '999' }, scenarios: { type: 'string' },
       workers: { type: 'string', default: String(Math.max(1, Math.min(4, availableParallelism() - 2))) }, out: { type: 'string', default: join(ROOT, 'reports', 'research') },
       'calibrate-sims': { type: 'string', default: '40' }, seed: { type: 'string', default: '900001' },
+      // Panjang blok bootstrap untuk SEMUA skenario yang dijalankan (mis. "7"); bawaan: blok skenario atau 7,14,1.
+      blocks: { type: 'string' },
     },
     strict: true,
   });
+  const blocksOverride = v.blocks ? v.blocks.split(',').map(Number) : null;
+  if (blocksOverride && !blocksOverride.every((b) => Number.isInteger(b) && b >= 1)) throw new RangeError(`--blocks tidak sah: ${v.blocks}`);
   const sims = Number(v.sims);
   const reps = Number(v.reps);
   const workers = Number(v.workers);
@@ -539,6 +610,7 @@ async function main(argv) {
     overrides[n] = { delta: sc.calibrate / factor, deltaAmp: sc.deltaAmp ? sc.deltaAmp / factor : 0 };
     process.stderr.write(`kalibrasi ${n}: θ pada δ ${sc.delta} = ${theta.toFixed(4)} → δ ${overrides[n].delta.toFixed(4)}\n`);
   }
+  if (blocksOverride) for (const n of names) overrides[n] = { ...(overrides[n] ?? {}), blocks: blocksOverride };
   const scenarios = [];
   for (const n of names) {
     const tasks = Array.from({ length: sims }, (_, k) => ({ scenario: n, seed: baseSeed + k, reps, override: overrides[n] ?? null }));

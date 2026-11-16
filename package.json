@@ -39,7 +39,9 @@
     "research:mom-overlap": "node --env-file-if-exists=.env --max-old-space-size=8192 scripts/research-mom-overlap.js",
     "research:al-mom-01": "node --env-file-if-exists=.env --max-old-space-size=4096 scripts/research-al-mom-01.js",
     "research:al-mom-01-coverage": "node scripts/research-al-mom-01-coverage.js",
-    "research:al-mom-01-diagnose": "node --max-old-space-size=3072 scripts/research-al-mom-01-diagnose.js"
+    "research:al-mom-01-diagnose": "node --max-old-space-size=3072 scripts/research-al-mom-01-diagnose.js",
+    "research:al-mom-01-confirm": "node scripts/research-al-mom-01-confirm.js",
+    "research:snapshot": "node scripts/research-snapshot.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.3",

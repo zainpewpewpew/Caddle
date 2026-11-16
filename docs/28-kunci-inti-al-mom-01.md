@@ -15,6 +15,16 @@ hasil AL-MOM-01 (§8). Keputusan diambil pemilik pada 2026-11-16 WIB berdasarkan
 >   §13–§19. Keputusan yang menunggu pemilik ada di docs/29 §20.
 > - **Temuan utama:** terhadap estimand populasi ("informasi di luar momentum"), estimator §2–§4 bias ke bawah ±25% pada
 >   data sintetis. Karena itu bacaan "< 0,25 ATR" hanya berlaku pada skala estimand prosedural.
+>
+> **Pembaruan ketiga 2026-11-16** (sesudah jendela dimulai; tidak ada hasil jendela yang dihitung; §2–§8 tidak berubah):
+>
+> - **Keputusan pemilik (docs/29 §20.1):** AL-MOM-01 adalah uji konfirmasi **superioritas**, dengan batas bawah CI
+>   persentil > 0. M = 0,25 tetap batas deskriptif (§6), dan hanya pada skala estimand operasional §2 (docs/29 §21.4).
+>   Kelompok 3 dibaca "superioritas belum terbukti".
+> - **Adendum keputusan produk §6** (lapisan "< M" dengan CI basic) dan **landmark lintas simbol** sebagai analisis
+>   sekunder eksploratif masih menunggu tinjauan. Keduanya belum berlaku.
+> - **Simulasi konfirmasi** menjadi syarat pembekuan. Kriterianya dikunci di docs/29 §21 sebelum run apa pun.
+> - **`npm run backtest`** kini menolak membuka statistik 1h ≥ 2026-11-16 tanpa konfirmasi interaktif (docs/29 §19).
 
 ## 1. Latar
 
