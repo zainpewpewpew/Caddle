@@ -38,6 +38,9 @@ const BASE = Object.freeze({
   mktVolPhi: 0.97, mktVolSd: 0.08, idioVolPhi: 0.98, idioVolSd: 0.05, sigmaLog: Math.log(0.007), sigmaLogSd: 0.3,
   h0: 0.0016, kappa: 0.17, lambda: 2, cluster12: 6, cluster48: 6, alertRegimeSd: 0.3, alertRegimePhi: 0.9,
   symbolRateSd: 0.3, v2Ratio: 5, delta: 0, deltaAmp: 0, effectRegimeDays: 60, momentumSd: 0, momentumPhi: 0.985, symMomSd: 0, symMomPhi: 0.98,
+  // Hazard alert × exp(marketKappa · gerak pasar 12 jam terstandar − marketKappa²/2): alert serentak lintas simbol saat
+  // pasar bergerak (konsentrasi alert harian data historis). 0 = DGP lama, urutan bilangan acak tidak berubah.
+  marketKappa: 0,
 });
 export const SCENARIOS = Object.freeze({
   dasar0: { label: 'Dasar, efek 0', ...BASE },
@@ -59,6 +62,12 @@ export const SCENARIOS = Object.freeze({
     beta2: 0.85, nu: 2.5, jumpProb: 0.002, jumpScale: 5, alertRegimeSd: 1.0, symbolRateSd: 0.8, kappa: 0.35, lambda: 3, h0: 0.0008,
     delta: 0.25, calibrate: 0.25,
   },
+  // Kekuatan pasangan (docs/29 §16): 100 simbol seperti data historis; β² dinaikkan sampai rasio SE penuh ÷ alert saja
+  // ≈ 0,84 (sedang) dan ≈ 0,71 (kuat, setara historis). Hanya blok 7 hari (biaya).
+  pasangan084: { label: 'Pasangan sedang (100 simbol, β² 0,5), efek 0', ...BASE, symbols: 100, beta2: 0.5, blocks: [7] },
+  pasangan084e: { label: 'Pasangan sedang (100 simbol, β² 0,5), efek +0,25 ATR', ...BASE, symbols: 100, beta2: 0.5, delta: 0.25, calibrate: 0.25, blocks: [7] },
+  pasangan071: { label: 'Pasangan kuat (100 simbol, β² 0,75), efek 0', ...BASE, symbols: 100, beta2: 0.75, blocks: [7] },
+  pasangan071e: { label: 'Pasangan kuat (100 simbol, β² 0,75), efek +0,25 ATR', ...BASE, symbols: 100, beta2: 0.75, delta: 0.25, calibrate: 0.25, blocks: [7] },
 });
 
 // ── Bilangan acak ──
@@ -105,13 +114,22 @@ function rng(seed) {
   return { u, normal, student };
 }
 
+/** simulateMarket menerima `innovationSeed` (dipakai mode oracle scripts/research-al-mom-01-diagnose.js). */
+export const SUPPORTS_INNOVATION_SEED = true;
+
 /**
  * Satu dataset sintetis. Per simbol: candles, v3Idx, anyIdx, cumDrift (drift kumulatif dalam satuan harga). Dengan
  * `onSeries`, tiap simbol diserahkan lalu dibuang (hemat memori; urutan bilangan acak sama). ATR online memakai rumus
  * backend/indicators/atr.js (SMA 14 TR lalu Wilder).
+ *
+ * Lapisan rezim (rf): rezim volatilitas pasar & idiosinkratik, rezim alert, tanda efek, σ dan laju alert per simbol.
+ * Inovasi (R): return pasar & idiosinkratik, lompatan, momentum, high/low, volume, undian alert. Tanpa `innovationSeed`
+ * keduanya satu aliran dengan urutan undian identik dengan versi sebelumnya; dengan `innovationSeed`, lapisan rezim
+ * tetap (benih `seed`) dan inovasi berganti (strata simbol × kuartal berarti sama antar-draw).
  */
-export function simulateMarket(sc, seed, onSeries = null) {
-  const R = rng(seed);
+export function simulateMarket(sc, seed, onSeries = null, { innovationSeed = null } = {}) {
+  const rf = rng(seed);
+  const R = innovationSeed === null ? rf : rng(innovationSeed);
   const days = sc.days + WARMUP_DAYS;
   const n = days * 24;
   const start = T0 - WARMUP_DAYS * DAY_MS;
@@ -123,12 +141,12 @@ export function simulateMarket(sc, seed, onSeries = null) {
   const mom = new Float64Array(n);
   let lv = 0;
   let ar = 0;
-  let sign = R.u() < 0.5 ? 1 : -1;
+  let sign = rf.u() < 0.5 ? 1 : -1;
   for (let d = 0; d < days; d += 1) {
-    lv = sc.mktVolPhi * lv + sc.mktVolSd * R.normal();
-    ar = sc.alertRegimePhi * ar + Math.sqrt(1 - sc.alertRegimePhi ** 2) * R.normal();
+    lv = sc.mktVolPhi * lv + sc.mktVolSd * rf.normal();
+    ar = sc.alertRegimePhi * ar + Math.sqrt(1 - sc.alertRegimePhi ** 2) * rf.normal();
     alertReg[d] = Math.exp(sc.alertRegimeSd * ar - (sc.alertRegimeSd ** 2) / 2);
-    if (R.u() < 1 / sc.effectRegimeDays) sign = -sign;
+    if (rf.u() < 1 / sc.effectRegimeDays) sign = -sign;
     effectSign[d] = sign;
     for (let h = 0; h < 24; h += 1) mktVol[d * 24 + h] = Math.exp(lv);
   }
@@ -142,16 +160,25 @@ export function simulateMarket(sc, seed, onSeries = null) {
   }
   const beta = Math.sqrt(sc.beta2);
   const idioW = Math.sqrt(1 - sc.beta2);
+  // Gerak pasar 12 jam terstandar (Σ f[t−11..t] / √12), hanya dari candle ≤ t.
+  const mHaz = sc.marketKappa ? new Float64Array(n).fill(1) : null;
+  if (mHaz) {
+    let run = 0;
+    for (let t = 0; t < n; t += 1) {
+      run += f[t] - (t >= 12 ? f[t - 12] : 0);
+      if (t >= 11) mHaz[t] = Math.exp(sc.marketKappa * Math.max(-4, Math.min(8, run / Math.sqrt(12))) - (sc.marketKappa ** 2) / 2);
+    }
+  }
   const series = onSeries ? null : [];
   for (let j = 0; j < sc.symbols; j += 1) {
-    const sigma = Math.exp(sc.sigmaLog + sc.sigmaLogSd * R.normal());
-    const symRate = Math.exp(sc.symbolRateSd * R.normal() - (sc.symbolRateSd ** 2) / 2);
+    const sigma = Math.exp(sc.sigmaLog + sc.sigmaLogSd * rf.normal());
+    const symRate = Math.exp(sc.symbolRateSd * rf.normal() - (sc.symbolRateSd ** 2) / 2);
     const candles = new Array(n);
     const cumDrift = new Float64Array(n);
     const drift = new Float64Array(n + 13);
     const v3Idx = [];
     const anyIdx = [];
-    let price = 100 * Math.exp(R.normal());
+    let price = 100 * Math.exp(rf.normal());
     let iv = 0;
     let atrPrev = null;
     let trSum = 0;
@@ -162,7 +189,7 @@ export function simulateMarket(sc, seed, onSeries = null) {
     const highs = new Float64Array(n);
     const lows = new Float64Array(n);
     for (let t = 0; t < n; t += 1) {
-      if (t % 24 === 0) iv = sc.idioVolPhi * iv + sc.idioVolSd * R.normal();
+      if (t % 24 === 0) iv = sc.idioVolPhi * iv + sc.idioVolSd * rf.normal();
       const s = sigma * mktVol[t] * Math.exp(iv);
       let z = beta * f[t] + idioW * R.student(sc.nu);
       if (sc.jumpProb > 0 && R.u() < sc.jumpProb) z += sc.jumpScale * R.normal();
@@ -203,7 +230,7 @@ export function simulateMarket(sc, seed, onSeries = null) {
         const pos = h48 > l48 ? (close - l48) / (h48 - l48) : 0.5;
         const since = lastAny >= 0 ? t - lastAny : Infinity;
         const cl = since <= 12 ? sc.cluster12 : since <= 48 ? sc.cluster48 : 1;
-        const hz = sc.h0 * Math.exp(sc.kappa * Math.max(-4, Math.min(8, pre))) * Math.exp(sc.lambda * (pos - 1)) * cl * alertReg[Math.floor(t / 24)] * symRate;
+        const hz = sc.h0 * Math.exp(sc.kappa * Math.max(-4, Math.min(8, pre))) * Math.exp(sc.lambda * (pos - 1)) * cl * alertReg[Math.floor(t / 24)] * symRate * (mHaz ? mHaz[t] : 1);
         const isV3 = R.u() < hz;
         const isV2 = R.u() < hz * sc.v2Ratio;
         if (isV3 || isV2) {
@@ -356,7 +383,7 @@ export function aggregateScenario(name, sc, runs, margin = AL_MOM_01.margin) {
     };
   }
   return {
-    name, label: sc.label, delta: sc.delta, deltaAmp: sc.deltaAmp, sims: runs.length, failed: runs.length - ok.length,
+    name, label: sc.label, symbols: sc.symbols, beta2: sc.beta2, delta: sc.delta, deltaAmp: sc.deltaAmp, sims: runs.length, failed: runs.length - ok.length,
     alerts: meanOf(ok.map((r) => r.alerts)), matchedShare: meanOf(ok.map((r) => r.share)), d12Share: meanOf(ok.map((r) => r.d12Share)),
     extremeShare: meanOf(ok.map((r) => (r.alerts ? r.extreme / r.alerts : 0))), extremeCovered: meanOf(ok.filter((r) => r.extreme).map((r) => r.extremeMatched / r.extreme)),
     thetaInfo, thetaSd: sdOf(thetas), meanEst, sdEmp, mcSeMean: sdEmp ? sdEmp / Math.sqrt(ok.length) : null,
@@ -476,7 +503,8 @@ if (!isMainThread && workerData?.batch) {
     if (task === null) {
       process.exit(0);
     }
-    const result = analyzeSimulation(SCENARIOS[task.scenario] ? { ...SCENARIOS[task.scenario], ...(task.override ?? {}) } : task.sc, task.seed, task.reps);
+    const sc = SCENARIOS[task.scenario] ? { ...SCENARIOS[task.scenario], ...(task.override ?? {}) } : task.sc;
+    const result = analyzeSimulation(sc, task.seed, task.reps, sc.blocks ? { blocks: sc.blocks } : {});
     parentPort.postMessage({ k: task.k, result });
   });
 }

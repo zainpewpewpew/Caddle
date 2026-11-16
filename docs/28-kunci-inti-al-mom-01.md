@@ -7,8 +7,14 @@ hasil AL-MOM-01 (§8). Keputusan diambil pemilik pada 2026-11-16 WIB berdasarkan
 
 > **Pembaruan 2026-11-16:** kode analisis dan rincian §9 sudah ditulis sebagai **draf** (§9.1). §2–§8 tidak berubah.
 > Pembekuan ditunda atas keputusan pemilik. Simulasi coverage menunjukkan CI persentil §5 punya galat satu sisi yang
-> tidak simetris (docs/29 §8); keputusannya menunggu hasil skenario stres dan tinjauan berikutnya. Selama belum ada hash
-> beku, `--mode evaluate` menolak berjalan.
+> tidak simetris (docs/29 §8). Selama belum ada hash beku, `--mode evaluate` menolak berjalan.
+>
+> **Pembaruan lanjutan 2026-11-16** (sesudah jendela dimulai; tidak ada hasil jendela yang dihitung):
+>
+> - Skenario stres, investigasi asimetri CI, target inferensi, kekuatan pasangan, dan diagnostik landmark ada di docs/29
+>   §13–§19. Keputusan yang menunggu pemilik ada di docs/29 §20.
+> - **Temuan utama:** terhadap estimand populasi ("informasi di luar momentum"), estimator §2–§4 bias ke bawah ±25% pada
+>   data sintetis. Karena itu bacaan "< 0,25 ATR" hanya berlaku pada skala estimand prosedural.
 
 ## 1. Latar
 
